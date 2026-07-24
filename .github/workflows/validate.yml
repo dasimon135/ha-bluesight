@@ -1,0 +1,70 @@
+name: Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  hassfest:
+    name: Hassfest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run hassfest
+        uses: home-assistant/actions/hassfest@master
+
+  hacs:
+    name: HACS
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run HACS validation
+        uses: hacs/action@main
+        with:
+          category: integration
+
+  tests:
+    name: pytest (pure + HA integration)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # The current Home Assistant release pulled in by
+          # pytest-homeassistant-custom-component requires Python >= 3.14.2
+          # (HA 2026.7 -> Requires-Python >=3.14.2), so a 3.13 leg would fail
+          # to install HA. Pin 3.14 to match.
+          python-version: "3.14"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements_test.txt homeassistant
+
+      # `pyproject.toml` sets `addopts = "-p no:homeassistant"` so that the
+      # LOCAL (Windows) dev run does not autoload the
+      # pytest-homeassistant-custom-component plugin, which imports the Unix-only
+      # `fcntl` module at collection time and would crash on Windows.
+      #
+      # On Linux `fcntl` exists, so that workaround is neither needed nor wanted:
+      # we WANT the HA plugin loaded so the HA-fixture tests (config_flow,
+      # coordinator_shell) actually run. `--override-ini "addopts="` clears ONLY
+      # the addopts key (dropping `-p no:homeassistant`); `pythonpath` and
+      # `testpaths` from pyproject are preserved. `-p pytest_homeassistant_custom_component.plugins`
+      # force-loads the plugin, so the `pytest.importorskip(...plugins)` guards
+      # in those tests do NOT trip — they collect and execute for real here.
+      - name: Run full test suite (with HA plugin)
+        run: >-
+          python -m pytest
+          --override-ini "addopts="
+          -p pytest_homeassistant_custom_component.plugins
+          -v
