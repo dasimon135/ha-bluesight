@@ -1,1 +1,31 @@
-pytest-homeassistant-custom-component
+# Test dependencies for the full suite.
+#
+# The pure tests (detectors, model, window, coordinator assembly, notification
+# policy, options schema) need none of the below — they import no Home Assistant
+# and run under plain pytest on any platform. The HA-integration tests
+# (config_flow, coordinator_shell) require Home Assistant and its test harness
+# and are guarded with pytest.importorskip, so they stay skipped until the
+# packages below are installed. CI installs all of them and runs the full suite.
+
+# Home Assistant + its custom-component test harness (provides the `hass`
+# fixture, enable_custom_integrations, socket guard, etc.). Pinning phcc pins a
+# matching Home Assistant release; the per-component pins below must match it.
+pytest-homeassistant-custom-component==0.13.346
+pytest-cov
+
+# Requirements of the HA bluetooth/usb components. BlueSight's config flow and
+# coordinator import `homeassistant.components.bluetooth`, which transitively
+# imports the usb component (serialx / aiousbwatcher) and the bluetooth stack;
+# phcc does NOT install per-component requirements, so they are listed here.
+# Versions track the Home Assistant release pinned by phcc above.
+home-assistant-frontend==20260624.5
+aioesphomeapi==45.3.1
+aiousbwatcher==1.1.2
+bleak==3.0.2
+bleak-retry-connector==4.6.1
+bluetooth-adapters==2.4.0
+bluetooth-auto-recovery==1.6.4
+bluetooth-data-tools==1.29.18
+dbus-fast==5.0.22
+habluetooth==6.26.5
+serialx==1.8.2
