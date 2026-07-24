@@ -40,8 +40,17 @@ async def async_setup_entry(
     )
     await coordinator.async_setup()
     entry.runtime_data = coordinator
+    # Reload the entry when the user edits options so new tunables take effect.
+    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     # No platforms forwarded yet; sensors arrive in a later task.
     return True
+
+
+async def _async_update_listener(
+    hass: HomeAssistant, entry: BleTriageConfigEntry
+) -> None:
+    """Reload the entry so edited options are re-read at setup."""
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(
