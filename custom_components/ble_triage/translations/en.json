@@ -1,0 +1,25 @@
+{
+  "config": {
+    "abort": {
+      "single_instance_allowed": "Only a single instance of BLE Triage is allowed. There is one Bluetooth stack per Home Assistant."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "BLE Triage options",
+        "description": "Tune the pairing-storm window and the poll backstop.",
+        "data": {
+          "storm_window_s": "Storm window (seconds)",
+          "storm_threshold": "Storm threshold (failures)",
+          "poll_interval_s": "Poll interval (seconds)"
+        },
+        "data_description": {
+          "storm_window_s": "Sliding window over which repeated connection failures are counted.",
+          "storm_threshold": "Number of failures within the window that raises a pairing-storm incident.",
+          "poll_interval_s": "How often the slot snapshot is refreshed as a backstop to push updates."
+        }
+      }
+    }
+  }
+}
