@@ -49,11 +49,15 @@ class SlotAdapter:
         self._unsub: Callable[[], None] | None = None
 
     def start(self) -> None:
+        """Register the allocation callback; no-op if already started."""
+        if self._unsub is not None:
+            return
         self._unsub = self._manager.async_register_allocation_callback(
             lambda _alloc: self._on_change()
         )
 
     def stop(self) -> None:
+        """Unsubscribe the allocation callback; no-op if already stopped."""
         if self._unsub is not None:
             self._unsub()
             self._unsub = None

@@ -11,12 +11,14 @@ class _FakeManager:
     def __init__(self, allocs):
         self._a = allocs
         self.registered = None
+        self.register_count = 0
 
     def async_current_allocations(self, source=None):
         return self._a
 
     def async_register_allocation_callback(self, cb, source=None):
         self.registered = cb
+        self.register_count += 1
         return lambda: setattr(self, "registered", None)
 
 
@@ -50,3 +52,13 @@ def test_adapter_stop_is_idempotent():
     ad.start()
     ad.stop()
     ad.stop()   # must not raise
+
+
+def test_adapter_start_is_idempotent():
+    mgr = _FakeManager([])
+    ad = SlotAdapter(mgr, on_change=lambda: None)
+    ad.start()
+    ad.start()                       # second start must be a no-op
+    assert mgr.register_count == 1   # no orphaned subscription
+    ad.stop()
+    assert mgr.registered is None    # single stop fully unsubscribes
