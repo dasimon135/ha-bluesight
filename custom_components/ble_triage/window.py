@@ -27,6 +27,17 @@ class FailureWindow:
         self._evict(address)
         return len(self._events.get(address, ()))
 
+    def addresses(self) -> list[str]:
+        """Return a snapshot of currently-tracked addresses.
+
+        Evicts stale events first so a fully-expired address is neither
+        reported nor left lingering in the store. Iterates over a copy of the
+        keys because ``_evict`` may delete entries. Never creates a key.
+        """
+        for address in list(self._events):
+            self._evict(address)
+        return list(self._events)
+
     def _evict(self, address: str) -> None:
         q = self._events.get(address)
         if q is None:

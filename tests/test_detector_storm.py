@@ -49,3 +49,26 @@ def test_multi_address_isolation():
     w.record("BB")
     assert w.count("AA") == 3
     assert w.count("BB") == 1
+
+
+def test_addresses_lists_tracked_addresses():
+    now = [0.0]
+    w = FailureWindow(window_s=300, threshold=5, clock=lambda: now[0])
+    w.record("AA")
+    w.record("BB")
+    assert sorted(w.addresses()) == ["AA", "BB"]
+
+
+def test_addresses_empty_when_nothing_recorded():
+    w = FailureWindow(window_s=300, threshold=5, clock=lambda: 0.0)
+    assert w.addresses() == []
+
+
+def test_addresses_evicts_stale_and_does_not_leak():
+    now = [0.0]
+    w = FailureWindow(window_s=300, threshold=5, clock=lambda: now[0])
+    w.record("AA")
+    now[0] += 400   # advance past the 300s window
+    # A fully-expired address must not be reported and must not linger.
+    assert w.addresses() == []
+    assert "AA" not in w._events
