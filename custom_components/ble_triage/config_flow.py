@@ -63,9 +63,13 @@ class BleTriageConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Create the sole entry, aborting if one already exists."""
-        await self.async_set_unique_id(DOMAIN)
-        self._abort_if_unique_id_configured()
+        """Create the sole entry.
+
+        Single-instance enforcement lives in the manifest
+        (``single_config_entry: true``): HA's flow manager auto-aborts a
+        second entry with reason ``single_instance_allowed`` before this step
+        runs, so no unique-id guard is needed here. Nothing to enter to start.
+        """
         return self.async_create_entry(title="BLE Triage", data={})
 
     @staticmethod
