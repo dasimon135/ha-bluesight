@@ -21,11 +21,20 @@ class FailureWindow:
         self._evict(address)
 
     def count(self, address: str) -> int:
+        # Do not auto-create a key for a never-seen address on read.
+        if address not in self._events:
+            return 0
         self._evict(address)
-        return len(self._events[address])
+        return len(self._events.get(address, ()))
 
     def _evict(self, address: str) -> None:
+        q = self._events.get(address)
+        if q is None:
+            return
         cutoff = self._clock() - self.window_s
-        q = self._events[address]
         while q and q[0] < cutoff:
             q.popleft()
+        # Self-clean: drop the address entirely once its window is empty so the
+        # store does not accumulate stale deques in the 24/7 coordinator loop.
+        if not q:
+            del self._events[address]
