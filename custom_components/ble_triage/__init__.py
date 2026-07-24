@@ -33,6 +33,7 @@ async def async_setup_entry(
     opts = {**entry.data, **entry.options}
     coordinator = BleTriageCoordinator(
         hass,
+        config_entry=entry,
         storm_window_s=opts.get("storm_window_s", DEFAULT_STORM_WINDOW_S),
         storm_threshold=opts.get("storm_threshold", DEFAULT_STORM_THRESHOLD),
         poll_interval_s=opts.get("poll_interval_s", DEFAULT_POLL_INTERVAL_S),

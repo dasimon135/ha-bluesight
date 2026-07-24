@@ -12,6 +12,8 @@ import logging
 import time
 from datetime import timedelta
 
+from homeassistant.components.bluetooth import async_address_present
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
@@ -23,6 +25,13 @@ from .model import normalize_address
 from .window import FailureWindow
 
 _LOGGER = logging.getLogger(__name__)
+
+# Availability-lookup failures we treat as "signal temporarily unavailable"
+# rather than crashing the coordinator: the bluetooth integration not yet
+# loaded / torn down (RuntimeError, KeyError, AttributeError) or an API
+# signature drift (TypeError). Anything outside this set is a genuine bug and
+# is allowed to surface instead of being silently swallowed.
+_AVAILABILITY_ERRORS = (RuntimeError, KeyError, AttributeError, TypeError)
 
 
 class BleTriageCoordinator(DataUpdateCoordinator[BleTriageData]):
@@ -36,6 +45,7 @@ class BleTriageCoordinator(DataUpdateCoordinator[BleTriageData]):
         self,
         hass: HomeAssistant,
         *,
+        config_entry: ConfigEntry,
         storm_window_s: float,
         storm_threshold: int,
         poll_interval_s: int,
@@ -43,6 +53,7 @@ class BleTriageCoordinator(DataUpdateCoordinator[BleTriageData]):
         super().__init__(
             hass,
             _LOGGER,
+            config_entry=config_entry,
             name=DOMAIN,
             update_interval=timedelta(seconds=poll_interval_s),
         )
@@ -54,11 +65,20 @@ class BleTriageCoordinator(DataUpdateCoordinator[BleTriageData]):
         # Previous snapshot's availability for allocated addresses, used to
         # detect present->absent flaps that feed the storm window (v1 signal).
         self._prev_availability: dict[str, bool] = {}
+        # Set once if the availability lookup ever fails, so a broken signal
+        # is observable instead of masquerading as "all devices present".
+        self._availability_degraded = False
 
     async def async_setup(self) -> None:
-        """Start the push subscription and take the first snapshot."""
-        self._adapter.start()
+        """Take the first snapshot, then start the push subscription.
+
+        Refresh-before-start is deliberate: if the first refresh raises
+        (ConfigEntryNotReady), the habluetooth callback was never registered,
+        so there is no subscription to leak and no push can interleave with
+        setup. HA retries setup from a clean slate.
+        """
         await self.async_config_entry_first_refresh()
+        self._adapter.start()
 
     @callback
     def _handle_push(self) -> None:
@@ -68,6 +88,9 @@ class BleTriageCoordinator(DataUpdateCoordinator[BleTriageData]):
         an executor thread, so hop back onto the loop before touching
         coordinator state via ``async_set_updated_data``.
         """
+        # M3 (deferred): each push produces its own snapshot; coalescing rapid
+        # bursts into a single snapshot is an efficiency-only concern, out of
+        # scope for v1.
         self.hass.loop.call_soon_threadsafe(
             lambda: self.async_set_updated_data(self._snapshot())
         )
@@ -78,11 +101,14 @@ class BleTriageCoordinator(DataUpdateCoordinator[BleTriageData]):
 
     def _snapshot(self) -> BleTriageData:
         proxies = current_proxy_slots(self._manager, self._name_for)
-        availability = {
-            normalize_address(a): self._is_available(a)
-            for p in proxies
-            for a in p.allocated
-        }
+        # Normalize each allocated address exactly once and key availability by
+        # that normalized form, matching what build_triage_data's detectors
+        # normalize to internally.
+        availability: dict[str, bool] = {}
+        for p in proxies:
+            for a in p.allocated:
+                norm = normalize_address(a)
+                availability[norm] = self._is_available(norm)
         self._record_flaps(availability)
         return build_triage_data(proxies, availability, self._window)
 
@@ -111,15 +137,24 @@ class BleTriageCoordinator(DataUpdateCoordinator[BleTriageData]):
         """v1 availability signal: is the address currently advertising?
 
         A held slot whose address is not currently present is a ghost-slot
-        candidate. Wrapped defensively: availability must never crash the
-        coordinator, so any failure defaults to ``True`` (assume present).
+        candidate. If the lookup breaks we fail toward ``True`` (present) on
+        purpose: returning ``False`` would fabricate a ghost incident for
+        every address, which is just as trust-destroying as hiding real ones.
+        Instead we flag the signal as degraded and warn (once) so the
+        breakage is loud and observable rather than silently masking incidents.
         """
         try:
-            from homeassistant.components.bluetooth import async_address_present
-
             return async_address_present(self.hass, address, connectable=False)
-        except Exception:  # noqa: BLE001 - availability is best-effort
-            _LOGGER.debug("availability lookup failed for %s", address, exc_info=True)
+        except _AVAILABILITY_ERRORS:
+            if not self._availability_degraded:
+                _LOGGER.warning(
+                    "BLE Triage availability lookup failed; ghost-slot "
+                    "detection is degraded (assuming devices present). "
+                    "First failure for %s",
+                    address,
+                    exc_info=True,
+                )
+            self._availability_degraded = True
             return True
 
     async def async_shutdown(self) -> None:
