@@ -1,4 +1,4 @@
-"""Thin Home Assistant glue for BLE Triage persistent notifications.
+"""Thin Home Assistant glue for BlueSight persistent notifications.
 
 All of the decision logic (dedup/precedence, create/dismiss reconciliation,
 message wording, id sanitizing) lives in the HA-free :mod:`.incident_policy`
@@ -64,7 +64,7 @@ class NotificationManager:
     def async_shutdown(self) -> None:
         """Dismiss every still-active notification (integration unload).
 
-        Avoids leaving stale BLE Triage notifications behind after the
+        Avoids leaving stale BlueSight notifications behind after the
         integration is removed or reloaded.
         """
         for key in self._active_keys:

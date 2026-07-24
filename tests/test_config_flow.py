@@ -1,4 +1,4 @@
-"""Config and options flow tests for BLE Triage.
+"""Config and options flow tests for BlueSight.
 
 These require the ``hass`` fixture from
 ``pytest-homeassistant-custom-component``, whose pytest plugin does not load
@@ -20,12 +20,12 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.ble_triage.const import DOMAIN
+from custom_components.bluesight.const import DOMAIN
 
 
 @pytest.fixture(autouse=True)
 def _auto_enable_custom_integrations(enable_custom_integrations):
-    """Load custom_components.ble_triage for every test in this module."""
+    """Load custom_components.bluesight for every test in this module."""
     yield
 
 
@@ -35,7 +35,7 @@ async def test_user_step_creates_entry(hass: HomeAssistant) -> None:
         DOMAIN, context={"source": SOURCE_USER}
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["title"] == "BLE Triage"
+    assert result["title"] == "BlueSight"
     assert result["data"] == {}
 
 

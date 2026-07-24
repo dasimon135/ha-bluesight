@@ -1,6 +1,6 @@
-from custom_components.ble_triage.window import FailureWindow
-from custom_components.ble_triage.detector import detect_storm
-from custom_components.ble_triage.model import IncidentKind
+from custom_components.bluesight.window import FailureWindow
+from custom_components.bluesight.detector import detect_storm
+from custom_components.bluesight.model import IncidentKind
 
 
 def test_burst_of_failures_is_storm():

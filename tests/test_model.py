@@ -1,4 +1,4 @@
-from custom_components.ble_triage.model import (
+from custom_components.bluesight.model import (
     ProxySlots, Incident, IncidentKind, normalize_address,
 )
 

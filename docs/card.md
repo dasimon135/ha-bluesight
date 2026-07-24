@@ -1,20 +1,20 @@
-# BLE Triage dashboard
+# BlueSight dashboard
 
-BLE Triage ships an optional Lovelace custom card, plus a **native-card
+BlueSight ships an optional Lovelace custom card, plus a **native-card
 fallback** you can paste with zero custom JavaScript. Both read the same
 entities the integration creates:
 
 - `sensor.<proxy>_slots_used` — state = used count; attributes `total`, `free`,
   `allocated` (list of MACs), `source`.
 - `sensor.<proxy>_slots_free` — state = free count.
-- `binary_sensor.ble_triage_incident` — `on` when incidents exist; attributes
+- `binary_sensor.bluesight_incident` — `on` when incidents exist; attributes
   `incident_count` (int) and `incidents` (list of
   `{kind, address, sources, detail}`, `kind` ∈ `deadlock` / `ghost_slot` /
   `storm`).
 
 ---
 
-## Option A — the custom card (`custom:ble-triage-card`)
+## Option A — the custom card (`custom:bluesight-card`)
 
 The custom card auto-discovers every proxy from `hass` (any
 `sensor.*_slots_used` that carries a `total` attribute), draws a slot-pip row
@@ -23,15 +23,15 @@ file — no build step, no dependencies.
 
 ### 1. Make the JS file available to Home Assistant
 
-The file lives at `www/ble-triage-card.js` in this repository. Home Assistant
+The file lives at `www/bluesight-card.js` in this repository. Home Assistant
 serves anything under its own `config/www/` directory at the URL `/local/`.
 
 **If you installed via HACS:** HACS copies the file for you and can register
 the resource automatically — you usually only need step 2 to confirm it. If
 HACS did not register it, add it manually as in step 2.
 
-**Manual install:** copy `www/ble-triage-card.js` into your Home Assistant
-`config/www/` folder, e.g. `config/www/ble-triage-card.js`.
+**Manual install:** copy `www/bluesight-card.js` into your Home Assistant
+`config/www/` folder, e.g. `config/www/bluesight-card.js`.
 
 ### 2. Register the dashboard resource
 
@@ -39,7 +39,7 @@ Add it as a **module** resource so the browser loads it.
 
 **Via the UI** (Settings → Dashboards → ⋮ → *Resources* → *Add resource*):
 
-- **URL:** `/local/ble-triage-card.js`
+- **URL:** `/local/bluesight-card.js`
 - **Resource type:** `JavaScript Module`
 
 > The *Resources* menu only appears when dashboards are in *Advanced Mode*
@@ -50,7 +50,7 @@ Add it as a **module** resource so the browser loads it.
 
 ```yaml
 resources:
-  - url: /local/ble-triage-card.js
+  - url: /local/bluesight-card.js
     type: module
 ```
 
@@ -62,15 +62,15 @@ new module is picked up.
 Minimal config — everything is auto-discovered:
 
 ```yaml
-type: custom:ble-triage-card
+type: custom:bluesight-card
 ```
 
 Override form (all keys optional):
 
 ```yaml
-type: custom:ble-triage-card
-title: BLE Triage                                  # card header text
-incident_entity: binary_sensor.ble_triage_incident # default shown
+type: custom:bluesight-card
+title: BlueSight                                  # card header text
+incident_entity: binary_sensor.bluesight_incident # default shown
 proxies:                                            # skip auto-discovery
   - sensor.living_room_proxy_slots_used
   - sensor.garage_proxy_slots_used
@@ -116,15 +116,15 @@ cards:
   # --- Incident panel: only shown when an incident is active ----------------
   - type: conditional
     conditions:
-      - entity: binary_sensor.ble_triage_incident
+      - entity: binary_sensor.bluesight_incident
         state: "on"
     card:
       type: markdown
       content: >
         ## ⚠️ BLE incidents:
-        {{ state_attr('binary_sensor.ble_triage_incident', 'incident_count') }}
+        {{ state_attr('binary_sensor.bluesight_incident', 'incident_count') }}
 
-        {% for inc in state_attr('binary_sensor.ble_triage_incident',
+        {% for inc in state_attr('binary_sensor.bluesight_incident',
         'incidents') or [] %}
         - **{{ inc.kind | replace('_', ' ') }}** — `{{ inc.address }}`{% if
         inc.detail %} — {{ inc.detail }}{% endif %}
@@ -133,7 +133,7 @@ cards:
   # --- Optional: a subtle "all clear" panel when there are no incidents -----
   - type: conditional
     conditions:
-      - entity: binary_sensor.ble_triage_incident
+      - entity: binary_sensor.bluesight_incident
         state: "off"
     card:
       type: markdown

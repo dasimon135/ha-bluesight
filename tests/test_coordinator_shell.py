@@ -1,4 +1,4 @@
-"""Shell-logic tests for BleTriageCoordinator.
+"""Shell-logic tests for BlueSightCoordinator.
 
 These exercise the coordinator's own (non-HA-runtime) helpers by bypassing
 ``__init__`` and injecting fakes, so no real ``hass`` fixture is required.
@@ -14,15 +14,15 @@ import pytest
 
 pytest.importorskip("homeassistant.helpers.update_coordinator")
 
-from custom_components.ble_triage import coordinator as coordinator_module
-from custom_components.ble_triage.coordinator import BleTriageCoordinator
-from custom_components.ble_triage.model import IncidentKind
-from custom_components.ble_triage.window import FailureWindow
+from custom_components.bluesight import coordinator as coordinator_module
+from custom_components.bluesight.coordinator import BlueSightCoordinator
+from custom_components.bluesight.model import IncidentKind
+from custom_components.bluesight.window import FailureWindow
 
 
-def _bare_coordinator() -> BleTriageCoordinator:
+def _bare_coordinator() -> BlueSightCoordinator:
     """A coordinator instance without HA wiring (no hass, no habluetooth)."""
-    c = object.__new__(BleTriageCoordinator)
+    c = object.__new__(BlueSightCoordinator)
     c._window = FailureWindow(window_s=300, threshold=5, clock=lambda: 0.0)
     c._prev_availability = {}
     c._availability_degraded = False

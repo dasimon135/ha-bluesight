@@ -1,4 +1,4 @@
-"""Per-proxy GATT slot sensors for BLE Triage.
+"""Per-proxy GATT slot sensors for BlueSight.
 
 Each ESPHome/Bluetooth proxy gets its own HA device carrying two sensors:
 ``Slots Used`` and ``Slots Free``. Proxies can appear after startup, so the
@@ -13,15 +13,15 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import BleTriageConfigEntry
+from . import BlueSightConfigEntry
 from .const import DOMAIN
-from .coordinator import BleTriageCoordinator
+from .coordinator import BlueSightCoordinator
 from .model import ProxySlots
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: BleTriageConfigEntry,
+    entry: BlueSightConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up slot sensors, adding entities for proxies as they appear."""
@@ -44,14 +44,14 @@ async def async_setup_entry(
     entry.async_on_unload(coordinator.async_add_listener(_add_new_proxies))
 
 
-class _BaseSlotSensor(CoordinatorEntity[BleTriageCoordinator], SensorEntity):
+class _BaseSlotSensor(CoordinatorEntity[BlueSightCoordinator], SensorEntity):
     """Common wiring for a sensor scoped to one proxy source MAC."""
 
     _attr_has_entity_name = True
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "slots"
 
-    def __init__(self, coordinator: BleTriageCoordinator, source: str) -> None:
+    def __init__(self, coordinator: BlueSightCoordinator, source: str) -> None:
         super().__init__(coordinator)
         self._source = source
         proxy = self._proxy
@@ -80,7 +80,7 @@ class SlotsUsedSensor(_BaseSlotSensor):
     _attr_name = "Slots Used"
     _attr_icon = "mdi:bluetooth-connect"
 
-    def __init__(self, coordinator: BleTriageCoordinator, source: str) -> None:
+    def __init__(self, coordinator: BlueSightCoordinator, source: str) -> None:
         super().__init__(coordinator, source)
         self._attr_unique_id = f"{source}_slots_used"
 
@@ -108,7 +108,7 @@ class SlotsFreeSensor(_BaseSlotSensor):
     _attr_name = "Slots Free"
     _attr_icon = "mdi:bluetooth"
 
-    def __init__(self, coordinator: BleTriageCoordinator, source: str) -> None:
+    def __init__(self, coordinator: BlueSightCoordinator, source: str) -> None:
         super().__init__(coordinator, source)
         self._attr_unique_id = f"{source}_slots_free"
 

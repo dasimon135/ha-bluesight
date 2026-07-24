@@ -5,25 +5,25 @@ Runs under plain pytest: the entity is built against a fake coordinator, so no
 """
 from __future__ import annotations
 
-from custom_components.ble_triage.binary_sensor import IncidentBinarySensor
-from custom_components.ble_triage.coordinator_data import BleTriageData
-from custom_components.ble_triage.model import Incident, IncidentKind
+from custom_components.bluesight.binary_sensor import IncidentBinarySensor
+from custom_components.bluesight.coordinator_data import BlueSightData
+from custom_components.bluesight.model import Incident, IncidentKind
 
 
 class _FakeCoordinator:
-    def __init__(self, data: BleTriageData) -> None:
+    def __init__(self, data: BlueSightData) -> None:
         self.data = data
         self.last_update_success = True
 
 
 def _coord(*incidents: Incident) -> _FakeCoordinator:
-    return _FakeCoordinator(BleTriageData(proxies=[], incidents=list(incidents)))
+    return _FakeCoordinator(BlueSightData(proxies=[], incidents=list(incidents)))
 
 
 def test_off_when_no_incidents() -> None:
     sensor = IncidentBinarySensor(_coord())
     assert sensor.is_on is False
-    assert sensor.unique_id == "ble_triage_incident"
+    assert sensor.unique_id == "bluesight_incident"
     assert sensor.extra_state_attributes == {"incident_count": 0, "incidents": []}
 
 
@@ -57,5 +57,5 @@ def test_on_when_incidents_present() -> None:
 
 def test_device_info_is_service_device() -> None:
     sensor = IncidentBinarySensor(_coord())
-    assert sensor.device_info["identifiers"] == {("ble_triage", "service")}
-    assert sensor.device_info["name"] == "BLE Triage"
+    assert sensor.device_info["identifiers"] == {("bluesight", "service")}
+    assert sensor.device_info["name"] == "BlueSight"

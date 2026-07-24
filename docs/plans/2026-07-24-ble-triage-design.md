@@ -1,5 +1,7 @@
 # BLE Triage — Design
 
+> **Note (historical):** This project shipped as **BlueSight** (domain `bluesight`). The names below reflect the original working name and are kept as a historical record.
+
 **Date:** 2026-07-24
 **Status:** Validated brainstorm, pre-implementation
 **Working name:** BLE Triage (`ha-ble-triage`)

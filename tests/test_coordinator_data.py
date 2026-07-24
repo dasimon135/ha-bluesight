@@ -1,9 +1,9 @@
-from custom_components.ble_triage.coordinator_data import (
-    BleTriageData,
+from custom_components.bluesight.coordinator_data import (
+    BlueSightData,
     build_triage_data,
 )
-from custom_components.ble_triage.model import IncidentKind, ProxySlots
-from custom_components.ble_triage.window import FailureWindow
+from custom_components.bluesight.model import IncidentKind, ProxySlots
+from custom_components.bluesight.window import FailureWindow
 
 
 def _empty_window():
@@ -41,7 +41,7 @@ def test_storm_surfaces():
 
 def test_empty_inputs_produce_empty_data():
     data = build_triage_data([], {}, _empty_window())
-    assert data == BleTriageData([], [])
+    assert data == BlueSightData([], [])
 
 
 def test_proxies_passed_through_unchanged():

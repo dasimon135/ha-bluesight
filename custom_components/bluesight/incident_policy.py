@@ -1,4 +1,4 @@
-"""Pure notification policy for BLE Triage.
+"""Pure notification policy for BlueSight.
 
 No Home Assistant dependency: incident de-duplication/precedence, create /
 dismiss reconciliation, actionable message wording, and the notification-id
@@ -65,7 +65,7 @@ def notification_content(incident: Incident) -> tuple[str, str]:
     """
     address = incident.address
     if incident.kind is IncidentKind.STORM:
-        title = "BLE Triage: pairing storm"
+        title = "BlueSight: pairing storm"
         message = (
             f"Repeated connection failures on {address} ({incident.detail}). "
             "If this is a Daikin/BRC1H-type device, toggle its Bluetooth off "
@@ -73,7 +73,7 @@ def notification_content(incident: Incident) -> tuple[str, str]:
         )
     elif incident.kind is IncidentKind.DEADLOCK:
         sources = ", ".join(incident.sources)
-        title = "BLE Triage: proxy slot deadlock"
+        title = "BlueSight: proxy slot deadlock"
         message = (
             f"{address} is holding a connection slot on {len(incident.sources)} "
             f"proxies at once ({sources}) with no working link — this stalls "
@@ -82,14 +82,14 @@ def notification_content(incident: Incident) -> tuple[str, str]:
         )
     elif incident.kind is IncidentKind.GHOST_SLOT:
         proxy = incident.sources[0] if incident.sources else "a proxy"
-        title = "BLE Triage: ghost slot"
+        title = "BlueSight: ghost slot"
         message = (
             f"A slot on {proxy} is held for {address} but the device is "
             "unavailable. If it stays stuck, restart that proxy to free the "
             "slot."
         )
     else:  # pragma: no cover - defensive; IncidentKind is a closed enum
-        title = "BLE Triage: incident"
+        title = "BlueSight: incident"
         message = f"An incident was detected on {address}."
     return title, message
 

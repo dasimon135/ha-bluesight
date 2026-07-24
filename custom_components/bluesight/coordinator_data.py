@@ -1,4 +1,4 @@
-"""Pure snapshot container + assembly for BLE Triage.
+"""Pure snapshot container + assembly for BlueSight.
 
 No Home Assistant dependency: the whole correlation/assembly step lives here
 so it is fully unit-testable with plain pytest. The ``DataUpdateCoordinator``
@@ -14,7 +14,7 @@ from .window import FailureWindow
 
 
 @dataclass(frozen=True, slots=True)
-class BleTriageData:
+class BlueSightData:
     proxies: list[ProxySlots] = field(default_factory=list)
     incidents: list[Incident] = field(default_factory=list)
 
@@ -23,7 +23,7 @@ def build_triage_data(
     proxies: list[ProxySlots],
     availability: dict[str, bool],
     storm_window: FailureWindow,
-) -> BleTriageData:
+) -> BlueSightData:
     """Pure assembly: run all three detectors over a snapshot + the rolling
     failure window and return the combined incident list. No HA, no I/O.
 
@@ -38,4 +38,4 @@ def build_triage_data(
         inc = detect_storm(addr, storm_window)
         if inc is not None:
             incidents.append(inc)
-    return BleTriageData(proxies=proxies, incidents=incidents)
+    return BlueSightData(proxies=proxies, incidents=incidents)

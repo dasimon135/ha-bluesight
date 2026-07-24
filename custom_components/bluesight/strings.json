@@ -1,13 +1,13 @@
 {
   "config": {
     "abort": {
-      "single_instance_allowed": "Only a single instance of BLE Triage is allowed. There is one Bluetooth stack per Home Assistant."
+      "single_instance_allowed": "Only a single instance of BlueSight is allowed. There is one Bluetooth stack per Home Assistant."
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "BLE Triage options",
+        "title": "BlueSight options",
         "description": "Tune the pairing-storm window and the poll backstop.",
         "data": {
           "storm_window_s": "Storm window (seconds)",

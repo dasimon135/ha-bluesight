@@ -1,12 +1,12 @@
-# BLE Triage
+# BlueSight
 
-Make the **connection layer** of Home Assistant's Bluetooth visible. BLE Triage
+Make the **connection layer** of Home Assistant's Bluetooth visible. BlueSight
 shows how many GATT connection slots each ESPHome Bluetooth proxy is using, who
 is holding them, and — the point — flags the failure modes that today leave you
 staring at `unavailable` devices with no explanation: slot-leak **deadlocks**,
 **ghost slots**, and **pairing storms**.
 
-> **Status:** v1 — read-only diagnostics. BLE Triage detects and advises; it
+> **Status:** v1 — read-only diagnostics. BlueSight detects and advises; it
 > never touches your proxies or bonds. Installs through HACS with no reflash.
 
 ## The problem
@@ -33,7 +33,7 @@ The **connection** layer — the finite pool of GATT slots a proxy can actually
   proxy.
 
 The Advertisement Monitor cannot show any of this, because it covers *what a
-proxy sees*, not *what a proxy is connected to*. BLE Triage fills exactly that
+proxy sees*, not *what a proxy is connected to*. BlueSight fills exactly that
 gap.
 
 ## What it does (v1)
@@ -52,7 +52,7 @@ It surfaces the state as:
 - **Per-proxy sensors** — `sensor.<proxy>_slots_used` and
   `sensor.<proxy>_slots_free`, with the total, free count, and the list of
   allocated device addresses as attributes.
-- **A global incident binary sensor** — `binary_sensor.ble_triage_incident`
+- **A global incident binary sensor** — `binary_sensor.bluesight_incident`
   (device class `problem`), `on` whenever any incident is open, with the full
   incident list in its attributes.
 - **Persistent notifications** — a human-readable alert is raised (and cleared)
@@ -61,13 +61,13 @@ It surfaces the state as:
   pips and shows a live incident feed, plus a zero-JavaScript native-card
   fallback. See [Dashboard](#dashboard).
 
-Everything is **read-only**. BLE Triage never frees a slot, forces an unbond, or
+Everything is **read-only**. BlueSight never frees a slot, forces an unbond, or
 reflashes anything. It observes and reports.
 
 ## Requirements
 
 - **Home Assistant ≥ 2025.2** — this is when the `habluetooth` slot-allocation
-  API BLE Triage rides became available.
+  API BlueSight rides became available.
 - **One or more ESPHome Bluetooth proxies** (or local adapters) that expose
   connection slots. With a single adapter you still get slot visibility and
   ghost/storm detection; the deadlock detector is most meaningful across
@@ -75,14 +75,14 @@ reflashes anything. It observes and reports.
 
 ## Install
 
-BLE Triage is a HACS custom repository.
+BlueSight is a HACS custom repository.
 
 1. In HACS, open the three-dot menu → **Custom repositories**.
-2. Add `https://github.com/dasimon135/ha-ble-triage` with category
+2. Add `https://github.com/dasimon135/ha-bluesight` with category
    **Integration**.
-3. Install **BLE Triage**, then restart Home Assistant.
+3. Install **BlueSight**, then restart Home Assistant.
 4. Go to **Settings → Devices & Services → Add Integration** and add
-   **BLE Triage**. It is single-instance and needs no configuration to start.
+   **BlueSight**. It is single-instance and needs no configuration to start.
 
 ### Options
 
@@ -100,22 +100,22 @@ Open the integration's **Configure** dialog to tune:
 | --- | --- | --- | --- |
 | `sensor.<proxy>_slots_used` | sensor | slots allocated on that proxy | `total`, `free`, `allocated` (list of MACs), `source` |
 | `sensor.<proxy>_slots_free` | sensor | slots still free on that proxy | — |
-| `binary_sensor.ble_triage_incident` | binary_sensor (`problem`) | `on` when any incident is open | `incident_count`, `incidents` (list of `{kind, address, sources, detail}`; `kind` ∈ `deadlock` / `ghost_slot` / `storm`) |
+| `binary_sensor.bluesight_incident` | binary_sensor (`problem`) | `on` when any incident is open | `incident_count`, `incidents` (list of `{kind, address, sources, detail}`; `kind` ∈ `deadlock` / `ghost_slot` / `storm`) |
 
 Each proxy is registered as its own Home Assistant device carrying its two slot
-sensors; the incident binary sensor lives on a single **BLE Triage** service
+sensors; the incident binary sensor lives on a single **BlueSight** service
 device.
 
 ## Dashboard
 
-BLE Triage ships an optional custom Lovelace card plus a native-card fallback
+BlueSight ships an optional custom Lovelace card plus a native-card fallback
 you can paste with no custom JavaScript. Both read the entities above. Full
-setup — resource registration, the `custom:ble-triage-card` config, and the
+setup — resource registration, the `custom:bluesight-card` config, and the
 native fallback YAML — is in **[docs/card.md](docs/card.md)**.
 
 ## How it works
 
-BLE Triage is deliberately split into pure logic and a thin Home Assistant
+BlueSight is deliberately split into pure logic and a thin Home Assistant
 shell:
 
 - **Pure detectors** (`model.py`, `detector.py`, `window.py`,
@@ -150,7 +150,7 @@ proxies.
 
 ## Limitations
 
-BLE Triage v1 is honest about its edges:
+BlueSight v1 is honest about its edges:
 
 - **Storm detection is a best-effort heuristic.** With HA-only data there are no
   raw SMP-failure counters, so v1 infers storms from availability flaps within
@@ -159,7 +159,7 @@ BLE Triage v1 is honest about its edges:
 - **The custom card needs a browser to eyeball.** The entities and notifications
   work headless, but the pip/feed visualisation is a dashboard card you have to
   look at.
-- **Internal-API coupling is contained, not eliminated.** BLE Triage rides the
+- **Internal-API coupling is contained, not eliminated.** BlueSight rides the
   semi-public `habluetooth` allocation API. That coupling is isolated to
   `adapter.py`, so an upstream change touches one module — but a sufficiently
   large `habluetooth` change could still require an adapter update.

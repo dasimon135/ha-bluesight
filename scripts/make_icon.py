@@ -1,4 +1,4 @@
-"""Generate the BLE Triage brand icon (an original connection-slot motif).
+"""Generate the BlueSight brand icon (an original connection-slot motif).
 
 Home Assistant (>= 2026.3) loads a custom integration's brand images from the
 ``custom_components/<domain>/brand/`` directory, taking priority over the
@@ -17,7 +17,7 @@ Run with a Python that has Pillow::
 
     python scripts/make_icon.py
 
-Outputs are written under ``custom_components/ble_triage/brand/``.
+Outputs are written under ``custom_components/bluesight/brand/``.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from PIL import Image, ImageDraw, ImageFilter
 SS = 4
 OUT = os.path.join(
     os.path.dirname(os.path.dirname(__file__)),
-    "custom_components", "ble_triage", "brand",
+    "custom_components", "bluesight", "brand",
 )
 
 # Palette: a deep slate/teal field (diagnostic tooling) with health-coded pips.

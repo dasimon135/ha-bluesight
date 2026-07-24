@@ -7,19 +7,19 @@ here (native_value / attributes / availability); wiring is CI-only.
 """
 from __future__ import annotations
 
-from custom_components.ble_triage.coordinator_data import BleTriageData
-from custom_components.ble_triage.model import ProxySlots
-from custom_components.ble_triage.sensor import SlotsFreeSensor, SlotsUsedSensor
+from custom_components.bluesight.coordinator_data import BlueSightData
+from custom_components.bluesight.model import ProxySlots
+from custom_components.bluesight.sensor import SlotsFreeSensor, SlotsUsedSensor
 
 
 class _FakeCoordinator:
-    def __init__(self, data: BleTriageData) -> None:
+    def __init__(self, data: BlueSightData) -> None:
         self.data = data
         self.last_update_success = True
 
 
 def _coord(*proxies: ProxySlots) -> _FakeCoordinator:
-    return _FakeCoordinator(BleTriageData(proxies=list(proxies), incidents=[]))
+    return _FakeCoordinator(BlueSightData(proxies=list(proxies), incidents=[]))
 
 
 def test_slots_used_native_value_and_attributes() -> None:
@@ -71,5 +71,5 @@ def test_device_info_groups_by_source() -> None:
     free = SlotsFreeSensor(_coord(proxy), "AA:BB")
 
     assert used.device_info == free.device_info
-    assert used.device_info["identifiers"] == {("ble_triage", "AA:BB")}
+    assert used.device_info["identifiers"] == {("bluesight", "AA:BB")}
     assert used.device_info["name"] == "proxy-a"

@@ -1,5 +1,5 @@
-from custom_components.ble_triage.adapter import current_proxy_slots, SlotAdapter
-from custom_components.ble_triage.model import ProxySlots
+from custom_components.bluesight.adapter import current_proxy_slots, SlotAdapter
+from custom_components.bluesight.model import ProxySlots
 
 
 class _FakeAlloc:

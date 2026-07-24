@@ -1,6 +1,6 @@
-"""Global incident binary sensor for BLE Triage.
+"""Global incident binary sensor for BlueSight.
 
-A single ``binary_sensor.ble_triage_incident`` that reports a PROBLEM whenever
+A single ``binary_sensor.bluesight_incident`` that reports a PROBLEM whenever
 the coordinator has any open incidents (deadlock, ghost slot, or storm). The
 full incident list is exposed as state attributes for at-a-glance triage.
 """
@@ -15,14 +15,14 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import BleTriageConfigEntry
+from . import BlueSightConfigEntry
 from .const import DOMAIN
-from .coordinator import BleTriageCoordinator
+from .coordinator import BlueSightCoordinator
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: BleTriageConfigEntry,
+    entry: BlueSightConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the single global incident binary sensor."""
@@ -30,7 +30,7 @@ async def async_setup_entry(
 
 
 class IncidentBinarySensor(
-    CoordinatorEntity[BleTriageCoordinator], BinarySensorEntity
+    CoordinatorEntity[BlueSightCoordinator], BinarySensorEntity
 ):
     """On whenever the coordinator is tracking one or more incidents."""
 
@@ -39,12 +39,12 @@ class IncidentBinarySensor(
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
     _attr_icon = "mdi:bluetooth-alert"
 
-    def __init__(self, coordinator: BleTriageCoordinator) -> None:
+    def __init__(self, coordinator: BlueSightCoordinator) -> None:
         super().__init__(coordinator)
         self._attr_unique_id = f"{DOMAIN}_incident"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, "service")},
-            name="BLE Triage",
+            name="BlueSight",
         )
 
     @property

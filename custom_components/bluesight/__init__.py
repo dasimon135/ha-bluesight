@@ -1,4 +1,4 @@
-"""BLE Triage — Home Assistant custom integration.
+"""BlueSight — Home Assistant custom integration.
 
 Makes the connection layer of Home Assistant's Bluetooth stack visible:
 GATT slot allocations per ESPHome proxy, deadlocks (core issue #176516),
@@ -18,24 +18,24 @@ from .const import (
     DEFAULT_STORM_THRESHOLD,
     DEFAULT_STORM_WINDOW_S,
 )
-from .coordinator import BleTriageCoordinator
+from .coordinator import BlueSightCoordinator
 from .notify import NotificationManager
 
-type BleTriageConfigEntry = ConfigEntry[BleTriageCoordinator]
+type BlueSightConfigEntry = ConfigEntry[BlueSightCoordinator]
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
 
 
 async def async_setup_entry(
-    hass: HomeAssistant, entry: BleTriageConfigEntry
+    hass: HomeAssistant, entry: BlueSightConfigEntry
 ) -> bool:
-    """Set up BLE Triage from a config entry.
+    """Set up BlueSight from a config entry.
 
     The config flow (Task 7) defines the option keys read here; until then
     they simply fall back to the module defaults.
     """
     opts = {**entry.data, **entry.options}
-    coordinator = BleTriageCoordinator(
+    coordinator = BlueSightCoordinator(
         hass,
         config_entry=entry,
         storm_window_s=opts.get("storm_window_s", DEFAULT_STORM_WINDOW_S),
@@ -65,14 +65,14 @@ async def async_setup_entry(
 
 
 async def _async_update_listener(
-    hass: HomeAssistant, entry: BleTriageConfigEntry
+    hass: HomeAssistant, entry: BlueSightConfigEntry
 ) -> None:
     """Reload the entry so edited options are re-read at setup."""
     await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(
-    hass: HomeAssistant, entry: BleTriageConfigEntry
+    hass: HomeAssistant, entry: BlueSightConfigEntry
 ) -> bool:
     """Unload the platforms first, then tear down the coordinator."""
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

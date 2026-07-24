@@ -12,8 +12,8 @@ import voluptuous as vol
 
 pytest.importorskip("homeassistant.config_entries")
 
-from custom_components.ble_triage.config_flow import build_options_schema
-from custom_components.ble_triage.const import (
+from custom_components.bluesight.config_flow import build_options_schema
+from custom_components.bluesight.const import (
     DEFAULT_POLL_INTERVAL_S,
     DEFAULT_STORM_THRESHOLD,
     DEFAULT_STORM_WINDOW_S,

@@ -1,4 +1,4 @@
-"""Tests for the BLE Triage notification layer.
+"""Tests for the BlueSight notification layer.
 
 The policy functions in ``incident_policy`` are HA-free and always run. The
 ``NotificationManager`` is exercised on any platform by injecting a fake
@@ -6,13 +6,13 @@ The policy functions in ``incident_policy`` are HA-free and always run. The
 recorder, so the full create/dismiss/resolve cycle is verified without a
 running Home Assistant.
 """
-from custom_components.ble_triage.incident_policy import (
+from custom_components.bluesight.incident_policy import (
     dedupe_incidents,
     notification_content,
     notification_id_for_key,
     reconcile,
 )
-from custom_components.ble_triage.model import Incident, IncidentKind
+from custom_components.bluesight.model import Incident, IncidentKind
 
 
 def _deadlock(address: str, sources=("AA", "BB")) -> Incident:
@@ -97,7 +97,7 @@ def test_reconcile_empty_is_empty():
 
 def test_content_storm_is_actionable():
     title, message = notification_content(_storm("11:22", detail="7 fails/5m"))
-    assert title == "BLE Triage: pairing storm"
+    assert title == "BlueSight: pairing storm"
     assert "11:22" in message
     assert "7 fails/5m" in message
     assert "reconnect" in message.lower()
@@ -105,7 +105,7 @@ def test_content_storm_is_actionable():
 
 def test_content_deadlock_references_issue_and_sources():
     title, message = notification_content(_deadlock("11:22", sources=["AA", "BB"]))
-    assert title == "BLE Triage: proxy slot deadlock"
+    assert title == "BlueSight: proxy slot deadlock"
     assert "11:22" in message
     assert "176516" in message
     assert "AA" in message and "BB" in message
@@ -113,7 +113,7 @@ def test_content_deadlock_references_issue_and_sources():
 
 def test_content_ghost_names_the_proxy():
     title, message = notification_content(_ghost("11:22", sources=["PROXY1"]))
-    assert title == "BLE Triage: ghost slot"
+    assert title == "BlueSight: ghost slot"
     assert "11:22" in message
     assert "PROXY1" in message
     assert "restart" in message.lower()
@@ -133,7 +133,7 @@ def test_notification_id_is_a_safe_slug():
     nid = notification_id_for_key(inc.key)
     assert ":" not in nid
     assert "," not in nid
-    assert nid.startswith("ble_triage_")
+    assert nid.startswith("bluesight_")
 
 
 def test_notification_id_matches_for_create_and_dismiss():
@@ -166,7 +166,7 @@ class _FakePersistentNotification:
 
 
 def _manager(monkeypatch):
-    from custom_components.ble_triage import notify as notify_module
+    from custom_components.bluesight import notify as notify_module
 
     fake = _FakePersistentNotification()
     monkeypatch.setattr(notify_module, "persistent_notification", fake)
@@ -179,7 +179,7 @@ def test_manager_creates_notification_for_new_incident(monkeypatch):
     manager.async_update([inc])
     nid = notification_id_for_key(inc.key)
     assert nid in fake.created
-    assert fake.created[nid][0] == "BLE Triage: proxy slot deadlock"
+    assert fake.created[nid][0] == "BlueSight: proxy slot deadlock"
 
 
 def test_manager_does_not_recreate_stable_incident(monkeypatch):
@@ -205,7 +205,7 @@ def test_manager_applies_precedence_before_notifying(monkeypatch):
     # Ghost + deadlock for the same address -> only the deadlock notifies.
     manager.async_update([_ghost("11:22"), _deadlock("11:22")])
     titles = {t for t, _ in fake.created.values()}
-    assert titles == {"BLE Triage: proxy slot deadlock"}
+    assert titles == {"BlueSight: proxy slot deadlock"}
 
 
 def test_manager_shutdown_dismisses_all_active(monkeypatch):

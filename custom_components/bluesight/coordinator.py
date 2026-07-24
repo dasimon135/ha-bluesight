@@ -1,4 +1,4 @@
-"""Thin DataUpdateCoordinator shell for BLE Triage.
+"""Thin DataUpdateCoordinator shell for BlueSight.
 
 All the interesting correlation logic lives in the pure, HA-free
 :mod:`.coordinator_data` module (and the detectors it drives), which is
@@ -20,7 +20,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from . import adapter
 from .adapter import SlotAdapter, current_proxy_slots
 from .const import DOMAIN
-from .coordinator_data import BleTriageData, build_triage_data
+from .coordinator_data import BlueSightData, build_triage_data
 from .model import normalize_address
 from .window import FailureWindow
 
@@ -34,7 +34,7 @@ _LOGGER = logging.getLogger(__name__)
 _AVAILABILITY_ERRORS = (RuntimeError, KeyError, AttributeError, TypeError)
 
 
-class BleTriageCoordinator(DataUpdateCoordinator[BleTriageData]):
+class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
     """Feed per-proxy slot snapshots through the pure assembly function.
 
     Updates arrive two ways: a push from habluetooth's allocation callback
@@ -95,11 +95,11 @@ class BleTriageCoordinator(DataUpdateCoordinator[BleTriageData]):
             lambda: self.async_set_updated_data(self._snapshot())
         )
 
-    async def _async_update_data(self) -> BleTriageData:
+    async def _async_update_data(self) -> BlueSightData:
         """Poll backstop; the push path is the primary trigger."""
         return self._snapshot()
 
-    def _snapshot(self) -> BleTriageData:
+    def _snapshot(self) -> BlueSightData:
         proxies = current_proxy_slots(self._manager, self._name_for)
         # Normalize each allocated address exactly once and key availability by
         # that normalized form, matching what build_triage_data's detectors
@@ -148,7 +148,7 @@ class BleTriageCoordinator(DataUpdateCoordinator[BleTriageData]):
         except _AVAILABILITY_ERRORS:
             if not self._availability_degraded:
                 _LOGGER.warning(
-                    "BLE Triage availability lookup failed; ghost-slot "
+                    "BlueSight availability lookup failed; ghost-slot "
                     "detection is degraded (assuming devices present). "
                     "First failure for %s",
                     address,

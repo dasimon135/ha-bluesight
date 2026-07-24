@@ -1,5 +1,5 @@
-from custom_components.ble_triage.model import ProxySlots, IncidentKind
-from custom_components.ble_triage.detector import detect_ghost_slots
+from custom_components.bluesight.model import ProxySlots, IncidentKind
+from custom_components.bluesight.detector import detect_ghost_slots
 
 
 def test_allocated_but_unavailable_is_ghost():

@@ -1,4 +1,4 @@
-"""Pure data model for BLE Triage.
+"""Pure data model for BlueSight.
 
 This module has no Home Assistant dependency and is fully unit-testable with
 plain pytest.

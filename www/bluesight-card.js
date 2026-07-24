@@ -1,13 +1,13 @@
 /**
- * BLE Triage Card
+ * BlueSight Card
  * -----------------------------------------------------------------------------
  * A vanilla-JS Lovelace custom card that visualises the state exposed by the
- * BLE Triage integration:
+ * BlueSight integration:
  *
  *   - Per ESPHome/Bluetooth proxy: a tile with slot "pips" (filled = used,
  *     empty = free) and a "used/total" count. Auto-discovered from any
  *     `sensor.*_slots_used` entity that carries a `total` attribute.
- *   - A global incident banner driven by `binary_sensor.ble_triage_incident`.
+ *   - A global incident banner driven by `binary_sensor.bluesight_incident`.
  *     Each incident is rendered as a coloured badge (red for deadlock/ghost
  *     slot, amber for storm) with its kind, address and detail.
  *
@@ -15,10 +15,10 @@
  * that HA can serve as a `module` dashboard resource.
  *
  * Config (all optional):
- *   type: custom:ble-triage-card
+ *   type: custom:bluesight-card
  *   proxies: [sensor.foo_slots_used, ...]   # override auto-discovery
- *   incident_entity: binary_sensor.ble_triage_incident
- *   title: BLE Triage                        # card header text
+ *   incident_entity: binary_sensor.bluesight_incident
+ *   title: BlueSight                        # card header text
  */
 
 const CARD_VERSION = "0.1.0";
@@ -30,12 +30,12 @@ console.info(
   "color: #03a9f4; background: white; font-weight: 700;"
 );
 
-const DEFAULT_INCIDENT_ENTITY = "binary_sensor.ble_triage_incident";
+const DEFAULT_INCIDENT_ENTITY = "binary_sensor.bluesight_incident";
 
 // Incident kinds that are considered critical (red). Anything else is amber.
 const CRITICAL_KINDS = new Set(["deadlock", "ghost_slot"]);
 
-class BleTriageCard extends HTMLElement {
+class BlueSightCard extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
@@ -69,7 +69,7 @@ class BleTriageCard extends HTMLElement {
       // Last-resort guard: show the error inside the card instead of blowing
       // up Lovelace.
       // eslint-disable-next-line no-console
-      console.error("ble-triage-card render error", err);
+      console.error("bluesight-card render error", err);
       this._renderFatal(err);
     }
   }
@@ -99,7 +99,7 @@ class BleTriageCard extends HTMLElement {
       }
       const stateObj = states[entityId];
       const attrs = (stateObj && stateObj.attributes) || {};
-      // The `total` attribute is what marks this as a BLE Triage slot sensor.
+      // The `total` attribute is what marks this as a BlueSight slot sensor.
       if (attrs.total === undefined || attrs.total === null) {
         continue;
       }
@@ -136,7 +136,7 @@ class BleTriageCard extends HTMLElement {
     const incidentEntity =
       this._config.incident_entity || DEFAULT_INCIDENT_ENTITY;
     const incidentState = hass.states ? hass.states[incidentEntity] : undefined;
-    const title = this._config.title || "BLE Triage";
+    const title = this._config.title || "BlueSight";
 
     // Build a compact signature of everything we draw so we can skip identical
     // re-renders (HA fires `set hass` very frequently).
@@ -221,7 +221,7 @@ class BleTriageCard extends HTMLElement {
       const empty = document.createElement("div");
       empty.className = "empty";
       empty.textContent =
-        "No BLE Triage proxies found. Once the integration is set up, " +
+        "No BlueSight proxies found. Once the integration is set up, " +
         "sensor.<proxy>_slots_used entities appear automatically. You can " +
         "also list them explicitly with the `proxies:` config option.";
       container.appendChild(empty);
@@ -375,7 +375,7 @@ class BleTriageCard extends HTMLElement {
     const msg = err && err.message ? err.message : String(err);
     this.shadowRoot.innerHTML =
       "<ha-card><div style='padding:16px;color:var(--error-color,#db4437)'>" +
-      "BLE Triage Card error: " +
+      "BlueSight Card error: " +
       msg.replace(/[<>&]/g, "") +
       "</div></ha-card>";
     this._built = false; // allow a clean rebuild once state recovers
@@ -514,15 +514,15 @@ class BleTriageCard extends HTMLElement {
   }
 }
 
-customElements.define("ble-triage-card", BleTriageCard);
+customElements.define("bluesight-card", BlueSightCard);
 
 // Advertise the card in the Lovelace card picker.
 window.customCards = window.customCards || [];
 window.customCards.push({
-  type: "ble-triage-card",
-  name: "BLE Triage Card",
+  type: "bluesight-card",
+  name: "BlueSight Card",
   description:
-    "Per-proxy GATT slot usage and BLE incident banner for the BLE Triage integration.",
+    "Per-proxy GATT slot usage and BLE incident banner for the BlueSight integration.",
   preview: false,
-  documentationURL: "https://github.com/dasimon135/ha-ble-triage",
+  documentationURL: "https://github.com/dasimon135/ha-bluesight",
 });

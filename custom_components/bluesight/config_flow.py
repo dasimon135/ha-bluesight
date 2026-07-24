@@ -1,4 +1,4 @@
-"""Config and options flow for BLE Triage.
+"""Config and options flow for BlueSight.
 
 Single-instance integration: there is exactly one BLE stack per Home
 Assistant, so only one config entry may exist. The user step needs no input
@@ -55,7 +55,7 @@ def build_options_schema(options: dict[str, Any]) -> vol.Schema:
     )
 
 
-class BleTriageConfigFlow(ConfigFlow, domain=DOMAIN):
+class BlueSightConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle the single-instance config flow."""
 
     VERSION = 1
@@ -70,16 +70,16 @@ class BleTriageConfigFlow(ConfigFlow, domain=DOMAIN):
         second entry with reason ``single_instance_allowed`` before this step
         runs, so no unique-id guard is needed here. Nothing to enter to start.
         """
-        return self.async_create_entry(title="BLE Triage", data={})
+        return self.async_create_entry(title="BlueSight", data={})
 
     @staticmethod
     @callback
-    def async_get_options_flow(config_entry) -> BleTriageOptionsFlow:
+    def async_get_options_flow(config_entry) -> BlueSightOptionsFlow:
         """Return the options flow handler."""
-        return BleTriageOptionsFlow()
+        return BlueSightOptionsFlow()
 
 
-class BleTriageOptionsFlow(OptionsFlow):
+class BlueSightOptionsFlow(OptionsFlow):
     """Expose the three storm/poll tunables.
 
     ``config_entry`` is provided by the flow manager in current HA

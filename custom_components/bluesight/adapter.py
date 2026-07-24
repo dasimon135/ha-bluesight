@@ -1,4 +1,4 @@
-"""Isolated habluetooth slot-allocation surface for BLE Triage.
+"""Isolated habluetooth slot-allocation surface for BlueSight.
 
 This is the ONLY module coupled to the habluetooth manager API. Everything
 else depends on the stable interface exposed here, so a future

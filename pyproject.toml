@@ -1,6 +1,6 @@
 [tool.pytest.ini_options]
 # Run pytest from the repo root; make the repo importable so that
-# `custom_components.ble_triage...` resolves without installing the package.
+# `custom_components.bluesight...` resolves without installing the package.
 pythonpath = ["."]
 testpaths = ["tests"]
 # The foundation tests (model + detectors) are pure Python and never import
