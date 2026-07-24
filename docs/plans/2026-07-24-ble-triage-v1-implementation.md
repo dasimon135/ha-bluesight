@@ -183,22 +183,29 @@ def test_address_on_one_proxy_is_not_deadlock():
 ```python
 from __future__ import annotations
 from collections import defaultdict
-from .model import ProxySlots, Incident, IncidentKind
+from .model import ProxySlots, Incident, IncidentKind, normalize_address
 
 def detect_deadlocks(proxies: list[ProxySlots]) -> list[Incident]:
     """A single BLE peripheral can be connected to one central at a time.
-    An address in the `allocated` list of >=2 proxies is a stale duplicate
-    allocation (core issue #176516)."""
-    by_addr: dict[str, list[str]] = defaultdict(list)
+    An address in the `allocated` list of >=2 DISTINCT proxies is a stale
+    duplicate allocation (core issue #176516)."""
+    by_addr: dict[str, set[str]] = defaultdict(set)   # DISTINCT sources, not occurrences
     for p in proxies:
         for addr in p.allocated:
-            by_addr[addr].append(p.source)
+            by_addr[normalize_address(addr)].add(p.source)   # normalize for case-insensitive correlation
     return [
-        Incident(IncidentKind.DEADLOCK, addr, sources,
+        Incident(IncidentKind.DEADLOCK, addr, sorted(sources),
                  detail=f"Held on {len(sources)} proxies simultaneously")
         for addr, sources in by_addr.items() if len(sources) >= 2
     ]
 ```
+
+> **Review fixes baked in (2026-07-24):** correlate over a `set` of DISTINCT
+> proxy sources (a duplicate address within one proxy must NOT self-flag), and
+> normalize MAC case before correlating. Add `normalize_address(addr) ->
+> addr.strip().upper()` to `model.py`. Regression tests:
+> `test_duplicate_address_within_one_proxy_is_not_deadlock`,
+> `test_three_proxies_sharing_address`, `test_deadlock_correlates_across_case`.
 
 **Step 4: Run — expect PASS.**
 
@@ -241,15 +248,21 @@ def detect_ghost_slots(
     proxies: list[ProxySlots], availability: dict[str, bool]
 ) -> list[Incident]:
     """A slot held for a device whose entity is unavailable is likely stale."""
+    avail = {normalize_address(k): v for k, v in availability.items()}  # normalize keys
     out: list[Incident] = []
     for p in proxies:
         for addr in p.allocated:
-            if availability.get(addr, True) is False:
+            norm = normalize_address(addr)
+            if avail.get(norm, True) is False:
                 out.append(Incident(
-                    IncidentKind.GHOST_SLOT, addr, [p.source],
+                    IncidentKind.GHOST_SLOT, norm, [p.source],
                     detail=f"Slot held on {p.name} while device unavailable"))
     return out
 ```
+
+> **Review fix (2026-07-24):** normalize BOTH the availability-dict keys and the
+> allocated address before lookup (a case mismatch must not miss a ghost).
+> Regression test: `test_ghost_slot_case_insensitive_availability`.
 
 **Step 4: Run — expect PASS.**
 
@@ -297,7 +310,7 @@ def test_failures_outside_window_expire():
 # window.py
 from __future__ import annotations
 from collections import defaultdict, deque
-from typing import Callable
+from collections.abc import Callable   # not typing.Callable (ruff UP035)
 
 class FailureWindow:
     def __init__(self, window_s: float, threshold: int, clock: Callable[[], float]):
@@ -311,15 +324,25 @@ class FailureWindow:
         self._evict(address)
 
     def count(self, address: str) -> int:
+        if address not in self._events:   # do NOT auto-create keys on read (leak fix)
+            return 0
         self._evict(address)
-        return len(self._events[address])
+        return len(self._events.get(address, ()))
 
     def _evict(self, address: str) -> None:
         cutoff = self._clock() - self.window_s
         q = self._events[address]
         while q and q[0] < cutoff:
             q.popleft()
+        if not q:                          # self-clean: drop empty deques (leak fix)
+            del self._events[address]
 ```
+
+> **Review fix (2026-07-24, I2):** `count()` must not create a dict key for an
+> unseen address, and `_evict()` drops an address once its deque empties, so a
+> 24/7 coordinator loop does not leak. Regression tests:
+> `test_count_unknown_address_does_not_create_key`,
+> `test_window_self_cleans_after_expiry`, `test_multi_address_isolation`.
 
 ```python
 # detector.py (add)
