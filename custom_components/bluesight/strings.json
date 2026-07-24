@@ -1,5 +1,11 @@
 {
   "config": {
+    "step": {
+      "user": {
+        "title": "Set up BlueSight",
+        "description": "BlueSight reads your existing Bluetooth proxies and needs no configuration to start. Storm and poll settings can be tuned later in the integration's options."
+      }
+    },
     "abort": {
       "single_instance_allowed": "Only a single instance of BlueSight is allowed. There is one Bluetooth stack per Home Assistant."
     }
