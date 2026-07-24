@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from .model import Incident, IncidentKind, ProxySlots
+from .window import FailureWindow
 
 
 def detect_deadlocks(proxies: list[ProxySlots]) -> list[Incident]:
@@ -36,3 +37,11 @@ def detect_ghost_slots(
                     IncidentKind.GHOST_SLOT, addr, [p.source],
                     detail=f"Slot held on {p.name} while device unavailable"))
     return out
+
+
+def detect_storm(address: str, window: FailureWindow) -> Incident | None:
+    count = window.count(address)
+    if count >= window.threshold:
+        return Incident(IncidentKind.STORM, address, [],
+                        detail=f"{count} failures in {int(window.window_s)}s")
+    return None
