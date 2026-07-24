@@ -3,3 +3,12 @@
 # `custom_components.ble_triage...` resolves without installing the package.
 pythonpath = ["."]
 testpaths = ["tests"]
+# The foundation tests (model + detectors) are pure Python and never import
+# Home Assistant. The `pytest-homeassistant-custom-component` plugin registers
+# an autoloaded pytest11 entrypoint named "homeassistant" that imports the HA
+# runner at collection time; on non-Linux dev machines that import fails
+# (e.g. the Unix-only `fcntl` module), which would otherwise block collection
+# of these HA-free tests. Disable that autoload here so the pure suite always
+# runs under plain pytest. HA-dependent tests, added in a later task, should
+# re-enable it (e.g. via their own invocation on Linux/CI).
+addopts = "-p no:homeassistant"

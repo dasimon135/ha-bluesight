@@ -1,0 +1,44 @@
+"""Pure data model for BLE Triage.
+
+This module has no Home Assistant dependency and is fully unit-testable with
+plain pytest.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import Enum
+
+
+class IncidentKind(str, Enum):
+    DEADLOCK = "deadlock"        # same address allocated on >=2 proxies (#176516)
+    GHOST_SLOT = "ghost_slot"    # slot held while entity unavailable
+    STORM = "storm"              # burst of connection failures
+
+
+@dataclass(frozen=True, slots=True)
+class ProxySlots:
+    source: str            # proxy/adapter MAC
+    name: str              # friendly name
+    slots: int
+    free: int
+    allocated: list[str] = field(default_factory=list)
+
+    @property
+    def used(self) -> int:
+        return self.slots - self.free
+
+    @property
+    def is_full(self) -> bool:
+        return self.free <= 0
+
+
+@dataclass(frozen=True, slots=True)
+class Incident:
+    kind: IncidentKind
+    address: str
+    sources: list[str] = field(default_factory=list)
+    detail: str = ""
+
+    @property
+    def key(self) -> str:
+        return f"{self.kind.value}:{self.address}:{','.join(sorted(self.sources))}"
