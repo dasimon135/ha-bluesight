@@ -6,7 +6,7 @@ Assistant or wall-clock dependency.
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from typing import Callable
+from collections.abc import Callable
 
 
 class FailureWindow:
