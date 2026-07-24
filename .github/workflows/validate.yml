@@ -59,12 +59,14 @@ jobs:
       # we WANT the HA plugin loaded so the HA-fixture tests (config_flow,
       # coordinator_shell) actually run. `--override-ini "addopts="` clears ONLY
       # the addopts key (dropping `-p no:homeassistant`); `pythonpath` and
-      # `testpaths` from pyproject are preserved. `-p pytest_homeassistant_custom_component.plugins`
-      # force-loads the plugin, so the `pytest.importorskip(...plugins)` guards
-      # in those tests do NOT trip — they collect and execute for real here.
+      # `testpaths` from pyproject are preserved. The plugin then AUTOLOADS
+      # normally (as `homeassistant`), so the `pytest.importorskip(...plugins)`
+      # guards in those tests do NOT trip and they run for real. Do NOT also
+      # pass `-p pytest_homeassistant_custom_component.plugins`: that
+      # re-registers the already-autoloaded plugin under a second name and pytest
+      # aborts with "Plugin already registered under a different name".
       - name: Run full test suite (with HA plugin)
         run: >-
           python -m pytest
           --override-ini "addopts="
-          -p pytest_homeassistant_custom_component.plugins
           -v
