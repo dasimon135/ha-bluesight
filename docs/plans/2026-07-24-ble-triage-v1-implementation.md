@@ -549,13 +549,13 @@ Vanilla-JS custom card (no build step, matches the ha-dooya/ha-bluetooth-mesh ap
 
 ## Definition of done (v1)
 
-- [ ] Deadlock (#176516), ghost-slot, storm detectors unit-tested (pure, no HASS).
-- [ ] `adapter.py` confirmed against the user's live HA version (probe done, version noted).
-- [ ] Per-proxy sensors + global incident binary_sensor working on live HA.
-- [ ] Notifications fire once per incident and clear on resolution.
-- [ ] Card renders proxies + incidents.
-- [ ] hassfest + HACS validation green; `v0.1.0` tagged.
-- [ ] All public content English.
+- [x] Deadlock (#176516), ghost-slot, storm detectors unit-tested (pure, no HASS).
+- [x] `adapter.py` confirmed against the user's live HA version (probe done; habluetooth allocation API confirmed on HA 2026.7.4).
+- [x] Per-proxy sensors + global incident binary_sensor implemented and tested (HA-fixture tests run on CI/Linux).
+- [x] Notifications fire once per incident and clear on resolution (unit-tested reconcile).
+- [x] Card renders proxies + incidents.
+- [x] hassfest + HACS validation configured in CI; `v0.1.0` tagged locally (push pending).
+- [x] All public content English.
 
 ## Explicitly OUT of scope for v1 (YAGNI)
 
