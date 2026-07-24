@@ -19,6 +19,7 @@ from .const import (
     DEFAULT_STORM_WINDOW_S,
 )
 from .coordinator import BleTriageCoordinator
+from .notify import NotificationManager
 
 type BleTriageConfigEntry = ConfigEntry[BleTriageCoordinator]
 
@@ -43,6 +44,20 @@ async def async_setup_entry(
     )
     await coordinator.async_setup()
     entry.runtime_data = coordinator
+
+    # Fire/clear persistent notifications as incidents appear and resolve. The
+    # manager rides on the coordinator instance so runtime_data stays the
+    # coordinator (the entity platforms read it directly) and remains
+    # retrievable at unload time.
+    manager = NotificationManager(hass)
+    coordinator.notification_manager = manager
+    manager.async_update(coordinator.data.incidents)
+    entry.async_on_unload(
+        coordinator.async_add_listener(
+            lambda: manager.async_update(coordinator.data.incidents)
+        )
+    )
+
     # Reload the entry when the user edits options so new tunables take effect.
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -62,5 +77,9 @@ async def async_unload_entry(
     """Unload the platforms first, then tear down the coordinator."""
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
-        await entry.runtime_data.async_shutdown()
+        coordinator = entry.runtime_data
+        manager = getattr(coordinator, "notification_manager", None)
+        if manager is not None:
+            manager.async_shutdown()
+        await coordinator.async_shutdown()
     return unloaded
