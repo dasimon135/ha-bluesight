@@ -41,3 +41,15 @@ def test_three_proxies_sharing_address():
     assert inc.address == "11:22"
     assert sorted(inc.sources) == ["AA", "BB", "CC"]
     assert "3 proxies" in inc.detail
+
+
+def test_deadlock_correlates_across_case():
+    # Same device reported in different case on two proxies must correlate.
+    proxies = [
+        ProxySlots("AA", "P1", 2, 1, ["AA:BB:CC:DD:EE:FF"]),
+        ProxySlots("BB", "P2", 2, 1, ["aa:bb:cc:dd:ee:ff"]),
+    ]
+    incidents = detect_deadlocks(proxies)
+    assert len(incidents) == 1
+    assert incidents[0].address == "AA:BB:CC:DD:EE:FF"
+    assert sorted(incidents[0].sources) == ["AA", "BB"]

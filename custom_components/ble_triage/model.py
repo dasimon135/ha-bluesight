@@ -9,6 +9,16 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 
+def normalize_address(addr: str) -> str:
+    """Canonicalize a BLE MAC address for correlation.
+
+    habluetooth yields upper-case MACs, so we uppercase (and strip
+    surrounding whitespace) to make comparisons case-insensitive and
+    consistent everywhere addresses are correlated or looked up.
+    """
+    return addr.strip().upper()
+
+
 class IncidentKind(str, Enum):
     DEADLOCK = "deadlock"        # same address allocated on >=2 proxies (#176516)
     GHOST_SLOT = "ghost_slot"    # slot held while entity unavailable

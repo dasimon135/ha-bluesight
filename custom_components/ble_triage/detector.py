@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from .model import Incident, IncidentKind, ProxySlots
+from .model import Incident, IncidentKind, ProxySlots, normalize_address
 from .window import FailureWindow
 
 
@@ -19,7 +19,7 @@ def detect_deadlocks(proxies: list[ProxySlots]) -> list[Incident]:
     by_addr: dict[str, set[str]] = defaultdict(set)
     for p in proxies:
         for addr in p.allocated:
-            by_addr[addr].add(p.source)
+            by_addr[normalize_address(addr)].add(p.source)
     return [
         Incident(IncidentKind.DEADLOCK, addr, sorted(sources),
                  detail=f"Held on {len(sources)} proxies simultaneously")
@@ -31,12 +31,14 @@ def detect_ghost_slots(
     proxies: list[ProxySlots], availability: dict[str, bool]
 ) -> list[Incident]:
     """A slot held for a device whose entity is unavailable is likely stale."""
+    avail = {normalize_address(k): v for k, v in availability.items()}
     out: list[Incident] = []
     for p in proxies:
         for addr in p.allocated:
-            if availability.get(addr, True) is False:
+            norm = normalize_address(addr)
+            if avail.get(norm, True) is False:
                 out.append(Incident(
-                    IncidentKind.GHOST_SLOT, addr, [p.source],
+                    IncidentKind.GHOST_SLOT, norm, [p.source],
                     detail=f"Slot held on {p.name} while device unavailable"))
     return out
 

@@ -1,4 +1,11 @@
-from custom_components.ble_triage.model import ProxySlots, Incident, IncidentKind
+from custom_components.ble_triage.model import (
+    ProxySlots, Incident, IncidentKind, normalize_address,
+)
+
+
+def test_normalize_address_uppercases_and_strips():
+    assert normalize_address(" aa:bb:cc ") == "AA:BB:CC"
+    assert normalize_address("AA:BB:CC") == "AA:BB:CC"
 
 
 def test_proxyslots_used_derived():
