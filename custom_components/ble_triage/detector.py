@@ -22,3 +22,17 @@ def detect_deadlocks(proxies: list[ProxySlots]) -> list[Incident]:
                  detail=f"Held on {len(sources)} proxies simultaneously")
         for addr, sources in by_addr.items() if len(sources) >= 2
     ]
+
+
+def detect_ghost_slots(
+    proxies: list[ProxySlots], availability: dict[str, bool]
+) -> list[Incident]:
+    """A slot held for a device whose entity is unavailable is likely stale."""
+    out: list[Incident] = []
+    for p in proxies:
+        for addr in p.allocated:
+            if availability.get(addr, True) is False:
+                out.append(Incident(
+                    IncidentKind.GHOST_SLOT, addr, [p.source],
+                    detail=f"Slot held on {p.name} while device unavailable"))
+    return out
