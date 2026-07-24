@@ -3,6 +3,13 @@
 # `custom_components.bluesight...` resolves without installing the package.
 pythonpath = ["."]
 testpaths = ["tests"]
+# pytest-homeassistant-custom-component ships autouse *async* fixtures (e.g.
+# `enable_event_loop_debug`). Under pytest-asyncio's default STRICT mode a sync
+# test depending on an async autouse fixture errors out, which breaks the whole
+# suite once the HA plugin is loaded (CI/Linux). `auto` mode is what phcc
+# expects and lets those fixtures apply cleanly; it is inert for the pure sync
+# tests on Windows where the plugin is disabled.
+asyncio_mode = "auto"
 # The foundation tests (model + detectors) are pure Python and never import
 # Home Assistant. The `pytest-homeassistant-custom-component` plugin registers
 # an autoloaded pytest11 entrypoint named "homeassistant" that imports the HA
