@@ -12,14 +12,16 @@ from .window import FailureWindow
 
 def detect_deadlocks(proxies: list[ProxySlots]) -> list[Incident]:
     """A single BLE peripheral can be connected to one central at a time.
-    An address in the `allocated` list of >=2 proxies is a stale duplicate
-    allocation (core issue #176516)."""
-    by_addr: dict[str, list[str]] = defaultdict(list)
+    An address held by >=2 DISTINCT proxies is a stale duplicate allocation
+    (core issue #176516). We correlate over distinct proxy sources so a
+    single proxy that lists the same address twice does not fabricate a
+    deadlock."""
+    by_addr: dict[str, set[str]] = defaultdict(set)
     for p in proxies:
         for addr in p.allocated:
-            by_addr[addr].append(p.source)
+            by_addr[addr].add(p.source)
     return [
-        Incident(IncidentKind.DEADLOCK, addr, sources,
+        Incident(IncidentKind.DEADLOCK, addr, sorted(sources),
                  detail=f"Held on {len(sources)} proxies simultaneously")
         for addr, sources in by_addr.items() if len(sources) >= 2
     ]
