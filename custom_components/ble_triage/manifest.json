@@ -1,0 +1,12 @@
+{
+  "domain": "ble_triage",
+  "name": "BLE Triage",
+  "codeowners": ["@dasimon135"],
+  "config_flow": true,
+  "dependencies": ["bluetooth"],
+  "documentation": "https://github.com/dasimon135/ha-ble-triage",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/dasimon135/ha-ble-triage/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}
