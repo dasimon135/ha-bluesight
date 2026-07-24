@@ -25,7 +25,12 @@ def build_triage_data(
     storm_window: FailureWindow,
 ) -> BleTriageData:
     """Pure assembly: run all three detectors over a snapshot + the rolling
-    failure window and return the combined incident list. No HA, no I/O."""
+    failure window and return the combined incident list. No HA, no I/O.
+
+    Incidents are emitted independently: one address may surface as several
+    kinds at once (deadlock + ghost + storm). Any dedup/precedence policy is
+    the notification layer's job (Task 10), not this assembly step's.
+    """
     incidents: list[Incident] = []
     incidents += detect_deadlocks(proxies)
     incidents += detect_ghost_slots(proxies, availability)
