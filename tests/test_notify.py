@@ -1,0 +1,229 @@
+"""Tests for the BLE Triage notification layer.
+
+The policy functions in ``incident_policy`` are HA-free and always run. The
+``NotificationManager`` is exercised on any platform by injecting a fake
+``hass`` and monkeypatching the module-level ``persistent_notification`` with a
+recorder, so the full create/dismiss/resolve cycle is verified without a
+running Home Assistant.
+"""
+from custom_components.ble_triage.incident_policy import (
+    dedupe_incidents,
+    notification_content,
+    notification_id_for_key,
+    reconcile,
+)
+from custom_components.ble_triage.model import Incident, IncidentKind
+
+
+def _deadlock(address: str, sources=("AA", "BB")) -> Incident:
+    return Incident(kind=IncidentKind.DEADLOCK, address=address,
+                    sources=list(sources))
+
+
+def _ghost(address: str, sources=("AA",)) -> Incident:
+    return Incident(kind=IncidentKind.GHOST_SLOT, address=address,
+                    sources=list(sources))
+
+
+def _storm(address: str, detail="7 fails/5m") -> Incident:
+    return Incident(kind=IncidentKind.STORM, address=address, detail=detail)
+
+
+# --- dedupe_incidents / precedence ---------------------------------------
+
+def test_dedupe_deadlock_supersedes_ghost_for_same_address():
+    incidents = [_ghost("11:22"), _deadlock("11:22")]
+    result = dedupe_incidents(incidents)
+    assert [i.kind for i in result] == [IncidentKind.DEADLOCK]
+
+
+def test_dedupe_keeps_lone_ghost_slot():
+    incidents = [_ghost("11:22")]
+    assert dedupe_incidents(incidents) == incidents
+
+
+def test_dedupe_keeps_storm_alongside_deadlock():
+    incidents = [_storm("11:22"), _deadlock("11:22")]
+    result = dedupe_incidents(incidents)
+    assert {i.kind for i in result} == {IncidentKind.STORM, IncidentKind.DEADLOCK}
+
+
+def test_dedupe_ghost_kept_when_deadlock_is_a_different_address():
+    incidents = [_deadlock("11:22"), _ghost("33:44")]
+    assert dedupe_incidents(incidents) == incidents
+
+
+def test_dedupe_precedence_uses_normalized_address():
+    # Different casing must still collapse to one physical fault.
+    incidents = [_ghost("aa:bb"), _deadlock("AA:BB")]
+    result = dedupe_incidents(incidents)
+    assert [i.kind for i in result] == [IncidentKind.DEADLOCK]
+
+
+def test_dedupe_preserves_input_order():
+    a = _storm("11:22")
+    b = _deadlock("33:44")
+    c = _ghost("55:66")
+    assert dedupe_incidents([a, b, c]) == [a, b, c]
+
+
+# --- reconcile ------------------------------------------------------------
+
+def test_reconcile_new_incident_is_created():
+    inc = _deadlock("11:22")
+    to_create, to_dismiss = reconcile(set(), [inc])
+    assert to_create == [inc]
+    assert to_dismiss == []
+
+
+def test_reconcile_unchanged_incident_not_recreated():
+    inc = _deadlock("11:22")
+    to_create, _ = reconcile({inc.key}, [inc])
+    assert to_create == []
+
+
+def test_reconcile_disappeared_incident_is_dismissed():
+    inc = _deadlock("11:22")
+    to_create, to_dismiss = reconcile({inc.key}, [])
+    assert to_create == []
+    assert to_dismiss == [inc.key]
+
+
+def test_reconcile_empty_is_empty():
+    assert reconcile(set(), []) == ([], [])
+
+
+# --- notification_content -------------------------------------------------
+
+def test_content_storm_is_actionable():
+    title, message = notification_content(_storm("11:22", detail="7 fails/5m"))
+    assert title == "BLE Triage: pairing storm"
+    assert "11:22" in message
+    assert "7 fails/5m" in message
+    assert "reconnect" in message.lower()
+
+
+def test_content_deadlock_references_issue_and_sources():
+    title, message = notification_content(_deadlock("11:22", sources=["AA", "BB"]))
+    assert title == "BLE Triage: proxy slot deadlock"
+    assert "11:22" in message
+    assert "176516" in message
+    assert "AA" in message and "BB" in message
+
+
+def test_content_ghost_names_the_proxy():
+    title, message = notification_content(_ghost("11:22", sources=["PROXY1"]))
+    assert title == "BLE Triage: ghost slot"
+    assert "11:22" in message
+    assert "PROXY1" in message
+    assert "restart" in message.lower()
+
+
+def test_content_ghost_without_sources_does_not_crash():
+    title, message = notification_content(
+        Incident(kind=IncidentKind.GHOST_SLOT, address="11:22", sources=[])
+    )
+    assert "11:22" in message
+
+
+# --- notification_id_for_key ---------------------------------------------
+
+def test_notification_id_is_a_safe_slug():
+    inc = _deadlock("11:22", sources=["AA", "BB"])
+    nid = notification_id_for_key(inc.key)
+    assert ":" not in nid
+    assert "," not in nid
+    assert nid.startswith("ble_triage_")
+
+
+def test_notification_id_matches_for_create_and_dismiss():
+    # The create-time id and the dismiss-time id for the same key MUST match,
+    # or the dismiss silently no-ops and the notification is orphaned.
+    inc = _deadlock("11:22", sources=["AA", "BB"])
+    assert notification_id_for_key(inc.key) == notification_id_for_key(inc.key)
+
+
+def test_notification_id_distinct_for_distinct_keys():
+    a = notification_id_for_key(_deadlock("11:22").key)
+    b = notification_id_for_key(_deadlock("33:44").key)
+    assert a != b
+
+
+# --- NotificationManager create/dismiss/resolve cycle --------------------
+
+class _FakePersistentNotification:
+    """Records create/dismiss calls in place of the HA component."""
+
+    def __init__(self) -> None:
+        self.created: dict[str, tuple[str, str]] = {}
+        self.dismissed: list[str] = []
+
+    def async_create(self, hass, message, title=None, notification_id=None):
+        self.created[notification_id] = (title, message)
+
+    def async_dismiss(self, hass, notification_id):
+        self.dismissed.append(notification_id)
+
+
+def _manager(monkeypatch):
+    from custom_components.ble_triage import notify as notify_module
+
+    fake = _FakePersistentNotification()
+    monkeypatch.setattr(notify_module, "persistent_notification", fake)
+    return notify_module.NotificationManager(hass=object()), fake
+
+
+def test_manager_creates_notification_for_new_incident(monkeypatch):
+    manager, fake = _manager(monkeypatch)
+    inc = _deadlock("11:22")
+    manager.async_update([inc])
+    nid = notification_id_for_key(inc.key)
+    assert nid in fake.created
+    assert fake.created[nid][0] == "BLE Triage: proxy slot deadlock"
+
+
+def test_manager_does_not_recreate_stable_incident(monkeypatch):
+    manager, fake = _manager(monkeypatch)
+    inc = _deadlock("11:22")
+    manager.async_update([inc])
+    fake.created.clear()
+    manager.async_update([inc])  # same incident, second update
+    assert fake.created == {}   # not re-created
+    assert fake.dismissed == []
+
+
+def test_manager_dismisses_resolved_incident(monkeypatch):
+    manager, fake = _manager(monkeypatch)
+    inc = _deadlock("11:22")
+    manager.async_update([inc])
+    manager.async_update([])   # incident resolved
+    assert fake.dismissed == [notification_id_for_key(inc.key)]
+
+
+def test_manager_applies_precedence_before_notifying(monkeypatch):
+    manager, fake = _manager(monkeypatch)
+    # Ghost + deadlock for the same address -> only the deadlock notifies.
+    manager.async_update([_ghost("11:22"), _deadlock("11:22")])
+    titles = {t for t, _ in fake.created.values()}
+    assert titles == {"BLE Triage: proxy slot deadlock"}
+
+
+def test_manager_shutdown_dismisses_all_active(monkeypatch):
+    manager, fake = _manager(monkeypatch)
+    inc_a = _deadlock("11:22")
+    inc_b = _storm("33:44")
+    manager.async_update([inc_a, inc_b])
+    manager.async_shutdown()
+    assert set(fake.dismissed) == {
+        notification_id_for_key(inc_a.key),
+        notification_id_for_key(inc_b.key),
+    }
+
+
+def test_manager_shutdown_is_idempotent(monkeypatch):
+    manager, fake = _manager(monkeypatch)
+    manager.async_update([_deadlock("11:22")])
+    manager.async_shutdown()
+    fake.dismissed.clear()
+    manager.async_shutdown()   # nothing active now
+    assert fake.dismissed == []
