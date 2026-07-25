@@ -26,8 +26,9 @@ The **connection** layer — the finite pool of GATT slots a proxy can actually
   There is no diagnostic tool for it — the only method offered in the thread is
   "enable debug logs" and read them by hand.
 - **Ghost slot** — a proxy still reports a device as holding a slot while that
-  device's entity is `unavailable`. The slot is spent on a connection that is no
-  longer doing anything.
+  device is dead: every one of its Home Assistant entities has gone
+  `unavailable`. The slot is spent on a connection that is no longer doing
+  anything.
 - **Pairing storm** — a device fails to bond over and over (SMP failures /
   connection rejects) in a tight burst, churning slots and destabilising the
   proxy.
@@ -44,7 +45,7 @@ Assistant already tracks internally:
 | Detector | Fires when |
 | --- | --- |
 | **Deadlock** (`#176516`) | the same device address is allocated on **N or more** proxies at once — a stale duplicate allocation across the pool. |
-| **Ghost slot** | an address is in a proxy's allocated list while its entity is `unavailable`. |
+| **Ghost slot** | an address is in a proxy's allocated list while its Home Assistant device is dead — the device is found in the registry (by MAC in `connections` or `identifiers`) and **all** its entities are `unavailable`. Availability is judged from entity state, not advertising: a connected device stops advertising, so advertisement presence would false-positive every healthy persistent connection. Unmanaged devices (no registry entry) are never flagged — see [Limitations](#limitations). |
 | **Pairing storm** | a device produces a burst of availability flaps beyond the configured threshold inside the storm window (best-effort heuristic — see [Limitations](#limitations)). |
 
 It surfaces the state as:
@@ -156,6 +157,13 @@ BlueSight v1 is honest about its edges:
   raw SMP-failure counters, so v1 infers storms from availability flaps within
   the window. It is a useful early warning, not a precise SMP tally; the v1.5
   ESPHome component is what upgrades it to real bond-failure telemetry.
+- **Ghost detection only judges HA-managed devices.** Availability comes from
+  the device's Home Assistant entities, so a slot held for a device that has no
+  registry entry (an unmanaged BLE peripheral HA does not track) is treated as
+  alive rather than flagged. This is deliberate — the alternative, advertisement
+  presence, false-positives every healthy persistent connection. Robust
+  stale-slot detection for unmanaged devices lands with the v1.5 ESPHome
+  component, which sees the connection directly.
 - **The custom card needs a browser to eyeball.** The entities and notifications
   work headless, but the pip/feed visualisation is a dashboard card you have to
   look at.
