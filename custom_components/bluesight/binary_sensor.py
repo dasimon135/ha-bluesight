@@ -1,8 +1,9 @@
 """Global incident binary sensor for BlueSight.
 
 A single ``binary_sensor.bluesight_incident`` that reports a PROBLEM whenever
-the coordinator has any open incidents (deadlock, ghost slot, or storm). The
-full incident list is exposed as state attributes for at-a-glance triage.
+the coordinator has any open incidents, whether slot-layer (deadlock, ghost
+slot, storm) or proxy-health (offline, stalled, reboot storm). The full
+incident list is exposed as state attributes for at-a-glance triage.
 """
 from __future__ import annotations
 

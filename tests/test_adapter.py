@@ -28,6 +28,15 @@ def test_maps_allocations_to_proxyslots():
     assert slots == [ProxySlots("AA", "proxy-AA", 3, 1, ["11:22", "33:44"])]
 
 
+def test_proxyslots_source_is_normalized():
+    # habluetooth could yield the proxy MAC in lower case for allocations;
+    # the stored source must be normalized (upper-cased) so it stays
+    # byte-identical to the health/coordinator sources -> one HA device.
+    mgr = _FakeManager([_FakeAlloc("aa:bb:cc:dd:ee:ff", 5, 5, [])])
+    slots = current_proxy_slots(mgr, name_for=lambda s: s)
+    assert slots[0].source == "AA:BB:CC:DD:EE:FF"
+
+
 def test_current_proxy_slots_handles_none():
     # async_current_allocations may return None when nothing is set up yet
     mgr = _FakeManager(None)

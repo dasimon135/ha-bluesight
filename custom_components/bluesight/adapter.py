@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from .model import ProxyHealth, ProxySlots
+from .model import ProxyHealth, ProxySlots, normalize_address
 
 
 def get_manager() -> Any:
@@ -31,7 +31,13 @@ def current_proxy_slots(
     """Snapshot current per-proxy slot allocations as ProxySlots."""
     allocs = manager.async_current_allocations() or []
     return [
-        ProxySlots(a.source, name_for(a.source), a.slots, a.free, list(a.allocated))
+        ProxySlots(
+            normalize_address(a.source),
+            name_for(a.source),
+            a.slots,
+            a.free,
+            list(a.allocated),
+        )
         for a in allocs
     ]
 
