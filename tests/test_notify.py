@@ -29,6 +29,21 @@ def _storm(address: str, detail="7 fails/5m") -> Incident:
     return Incident(kind=IncidentKind.STORM, address=address, detail=detail)
 
 
+def _proxy_offline(source: str) -> Incident:
+    return Incident(kind=IncidentKind.PROXY_OFFLINE, address=source,
+                    sources=[source])
+
+
+def _proxy_stalled(source: str, detail="no devices for 12m") -> Incident:
+    return Incident(kind=IncidentKind.PROXY_STALLED, address=source,
+                    sources=[source], detail=detail)
+
+
+def _proxy_reboot_storm(source: str, detail="4 reboots/10m") -> Incident:
+    return Incident(kind=IncidentKind.PROXY_REBOOT_STORM, address=source,
+                    sources=[source], detail=detail)
+
+
 # --- dedupe_incidents / precedence ---------------------------------------
 
 def test_dedupe_deadlock_supersedes_ghost_for_same_address():
@@ -65,6 +80,38 @@ def test_dedupe_preserves_input_order():
     b = _deadlock("33:44")
     c = _ghost("55:66")
     assert dedupe_incidents([a, b, c]) == [a, b, c]
+
+
+# --- dedupe_incidents / proxy precedence ---------------------------------
+
+def test_dedupe_proxy_offline_supersedes_stalled_for_same_source():
+    incidents = [_proxy_stalled("PX:01"), _proxy_offline("PX:01")]
+    result = dedupe_incidents(incidents)
+    assert [i.kind for i in result] == [IncidentKind.PROXY_OFFLINE]
+
+
+def test_dedupe_proxy_offline_and_stalled_kept_for_different_sources():
+    incidents = [_proxy_offline("PX:01"), _proxy_stalled("PX:02")]
+    assert dedupe_incidents(incidents) == incidents
+
+
+def test_dedupe_keeps_lone_proxy_stalled():
+    incidents = [_proxy_stalled("PX:01")]
+    assert dedupe_incidents(incidents) == incidents
+
+
+def test_dedupe_proxy_reboot_storm_coexists_with_offline():
+    incidents = [_proxy_offline("PX:01"), _proxy_reboot_storm("PX:01")]
+    result = dedupe_incidents(incidents)
+    assert {i.kind for i in result} == {
+        IncidentKind.PROXY_OFFLINE, IncidentKind.PROXY_REBOOT_STORM
+    }
+
+
+def test_dedupe_proxy_precedence_uses_normalized_source():
+    incidents = [_proxy_stalled("px:01"), _proxy_offline("PX:01")]
+    result = dedupe_incidents(incidents)
+    assert [i.kind for i in result] == [IncidentKind.PROXY_OFFLINE]
 
 
 # --- reconcile ------------------------------------------------------------
@@ -124,6 +171,33 @@ def test_content_ghost_without_sources_does_not_crash():
         Incident(kind=IncidentKind.GHOST_SLOT, address="11:22", sources=[])
     )
     assert "11:22" in message
+
+
+def test_content_proxy_offline_names_source_and_is_actionable():
+    title, message = notification_content(_proxy_offline("PX:01"))
+    assert title == "BlueSight: proxy offline"
+    assert "PX:01" in message
+    assert "offline" in message.lower()
+
+
+def test_content_proxy_stalled_names_source_detail_and_action():
+    title, message = notification_content(
+        _proxy_stalled("PX:01", detail="no devices for 12m")
+    )
+    assert title == "BlueSight: proxy stalled"
+    assert "PX:01" in message
+    assert "no devices for 12m" in message
+    assert "power-cycle" in message.lower()
+
+
+def test_content_proxy_reboot_storm_names_source_detail_and_action():
+    title, message = notification_content(
+        _proxy_reboot_storm("PX:01", detail="4 reboots/10m")
+    )
+    assert title == "BlueSight: proxy rebooting"
+    assert "PX:01" in message
+    assert "4 reboots/10m" in message
+    assert "power" in message.lower()
 
 
 # --- notification_id_for_key ---------------------------------------------

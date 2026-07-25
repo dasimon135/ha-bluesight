@@ -14,14 +14,19 @@ from .model import Incident, IncidentKind, normalize_address
 def dedupe_incidents(incidents: list[Incident]) -> list[Incident]:
     """Collapse redundant incidents so one physical fault == one alert.
 
-    Precedence, per normalized address:
+    Two orthogonal precedence rules apply, on separate namespaces (a device
+    address and a proxy source never collide in practice):
 
-    * ``DEADLOCK`` supersedes ``GHOST_SLOT`` — a held-but-dead slot is exactly
-      what a deadlock looks like, so if both are raised for the same address we
-      keep only the deadlock (the actionable root cause).
-    * ``STORM`` is an orthogonal signal (repeated failures over time) and may
-      legitimately co-exist with a structural incident for the same address, so
-      it is always kept.
+    * Address layer — ``DEADLOCK`` supersedes ``GHOST_SLOT``: a held-but-dead
+      slot is exactly what a deadlock looks like, so if both are raised for the
+      same address we keep only the deadlock (the actionable root cause).
+    * Proxy layer — ``PROXY_OFFLINE`` supersedes ``PROXY_STALLED``: an offline
+      proxy shouldn't also alert as stalled, so for the same proxy source we
+      keep only the offline incident.
+
+    ``STORM`` and ``PROXY_REBOOT_STORM`` are orthogonal signals (repeated
+    failures / reboots over time) and may legitimately co-exist with a
+    structural incident for the same address/source, so they are always kept.
 
     Input order is preserved for every incident that survives.
     """
@@ -30,11 +35,21 @@ def dedupe_incidents(incidents: list[Incident]) -> list[Incident]:
         for i in incidents
         if i.kind is IncidentKind.DEADLOCK
     }
+    offline_sources = {
+        normalize_address(i.address)
+        for i in incidents
+        if i.kind is IncidentKind.PROXY_OFFLINE
+    }
     kept: list[Incident] = []
     for incident in incidents:
         if (
             incident.kind is IncidentKind.GHOST_SLOT
             and normalize_address(incident.address) in deadlock_addrs
+        ):
+            continue
+        if (
+            incident.kind is IncidentKind.PROXY_STALLED
+            and normalize_address(incident.address) in offline_sources
         ):
             continue
         kept.append(incident)
@@ -87,6 +102,23 @@ def notification_content(incident: Incident) -> tuple[str, str]:
             f"A slot on {proxy} is held for {address} but the device is "
             "unavailable. If it stays stuck, restart that proxy to free the "
             "slot."
+        )
+    elif incident.kind is IncidentKind.PROXY_OFFLINE:
+        title = "BlueSight: proxy offline"
+        message = (
+            f"Bluetooth proxy {address} is offline — check its power and Wi-Fi."
+        )
+    elif incident.kind is IncidentKind.PROXY_STALLED:
+        title = "BlueSight: proxy stalled"
+        message = (
+            f"Bluetooth proxy {address} is online but hasn't seen any device "
+            f"for a while ({incident.detail}) — power-cycle it."
+        )
+    elif incident.kind is IncidentKind.PROXY_REBOOT_STORM:
+        title = "BlueSight: proxy rebooting"
+        message = (
+            f"Bluetooth proxy {address} keeps rebooting ({incident.detail}) — "
+            "check its power supply / for brownouts."
         )
     else:  # pragma: no cover - defensive; IncidentKind is a closed enum
         title = "BlueSight: incident"
