@@ -74,3 +74,12 @@ def detect_storm(address: str, window: FailureWindow) -> Incident | None:
         return Incident(IncidentKind.STORM, address, [],
                         detail=f"{count} failures in {int(window.window_s)}s")
     return None
+
+
+def detect_reboot_storm(source: str, window: FailureWindow) -> Incident | None:
+    count = window.count(source)
+    if count >= window.threshold:
+        return Incident(IncidentKind.PROXY_REBOOT_STORM, source, [source],
+                        detail=f"{count} proxy reboots in "
+                               f"{int(window.window_s)}s")
+    return None
