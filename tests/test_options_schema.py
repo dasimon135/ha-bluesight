@@ -15,6 +15,9 @@ pytest.importorskip("homeassistant.config_entries")
 from custom_components.bluesight.config_flow import build_options_schema
 from custom_components.bluesight.const import (
     DEFAULT_POLL_INTERVAL_S,
+    DEFAULT_REBOOT_THRESHOLD,
+    DEFAULT_REBOOT_WINDOW_S,
+    DEFAULT_STALLED_THRESHOLD_S,
     DEFAULT_STORM_THRESHOLD,
     DEFAULT_STORM_WINDOW_S,
 )
@@ -26,6 +29,9 @@ def test_defaults_come_from_const_when_options_empty():
         "storm_window_s": DEFAULT_STORM_WINDOW_S,
         "storm_threshold": DEFAULT_STORM_THRESHOLD,
         "poll_interval_s": DEFAULT_POLL_INTERVAL_S,
+        "stalled_threshold_s": DEFAULT_STALLED_THRESHOLD_S,
+        "reboot_window_s": DEFAULT_REBOOT_WINDOW_S,
+        "reboot_threshold": DEFAULT_REBOOT_THRESHOLD,
     }
 
 
@@ -51,9 +57,12 @@ def test_string_inputs_are_coerced_to_numbers():
 @pytest.mark.parametrize(
     "field,value",
     [
-        ("storm_window_s", 29),   # min 30
-        ("storm_threshold", 1),   # min 2
-        ("poll_interval_s", 4),   # min 5
+        ("storm_window_s", 29),        # min 30
+        ("storm_threshold", 1),        # min 2
+        ("poll_interval_s", 4),        # min 5
+        ("stalled_threshold_s", 10),   # min 30
+        ("reboot_window_s", 59),       # min 60
+        ("reboot_threshold", 1),       # min 2
     ],
 )
 def test_below_minimum_is_rejected(field, value):
@@ -61,6 +70,9 @@ def test_below_minimum_is_rejected(field, value):
         "storm_window_s": 300,
         "storm_threshold": 5,
         "poll_interval_s": 30,
+        "stalled_threshold_s": 180,
+        "reboot_window_s": 600,
+        "reboot_threshold": 3,
         field: value,
     }
     with pytest.raises(vol.Invalid):

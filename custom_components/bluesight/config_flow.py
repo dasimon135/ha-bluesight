@@ -20,6 +20,9 @@ from homeassistant.core import callback
 
 from .const import (
     DEFAULT_POLL_INTERVAL_S,
+    DEFAULT_REBOOT_THRESHOLD,
+    DEFAULT_REBOOT_WINDOW_S,
+    DEFAULT_STALLED_THRESHOLD_S,
     DEFAULT_STORM_THRESHOLD,
     DEFAULT_STORM_WINDOW_S,
     DOMAIN,
@@ -29,6 +32,9 @@ from .const import (
 CONF_STORM_WINDOW_S = "storm_window_s"
 CONF_STORM_THRESHOLD = "storm_threshold"
 CONF_POLL_INTERVAL_S = "poll_interval_s"
+CONF_STALLED_THRESHOLD_S = "stalled_threshold_s"
+CONF_REBOOT_WINDOW_S = "reboot_window_s"
+CONF_REBOOT_THRESHOLD = "reboot_threshold"
 
 
 def build_options_schema(options: dict[str, Any]) -> vol.Schema:
@@ -51,6 +57,20 @@ def build_options_schema(options: dict[str, Any]) -> vol.Schema:
                 CONF_POLL_INTERVAL_S,
                 default=options.get(CONF_POLL_INTERVAL_S, DEFAULT_POLL_INTERVAL_S),
             ): vol.All(vol.Coerce(int), vol.Range(min=5)),
+            vol.Required(
+                CONF_STALLED_THRESHOLD_S,
+                default=options.get(
+                    CONF_STALLED_THRESHOLD_S, DEFAULT_STALLED_THRESHOLD_S
+                ),
+            ): vol.All(vol.Coerce(float), vol.Range(min=30)),
+            vol.Required(
+                CONF_REBOOT_WINDOW_S,
+                default=options.get(CONF_REBOOT_WINDOW_S, DEFAULT_REBOOT_WINDOW_S),
+            ): vol.All(vol.Coerce(float), vol.Range(min=60)),
+            vol.Required(
+                CONF_REBOOT_THRESHOLD,
+                default=options.get(CONF_REBOOT_THRESHOLD, DEFAULT_REBOOT_THRESHOLD),
+            ): vol.All(vol.Coerce(int), vol.Range(min=2)),
         }
     )
 
