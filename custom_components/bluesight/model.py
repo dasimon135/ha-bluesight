@@ -23,6 +23,9 @@ class IncidentKind(str, Enum):
     DEADLOCK = "deadlock"        # same address allocated on >=2 proxies (#176516)
     GHOST_SLOT = "ghost_slot"    # slot held while entity unavailable
     STORM = "storm"              # burst of connection failures
+    PROXY_OFFLINE = "proxy_offline"
+    PROXY_STALLED = "proxy_stalled"
+    PROXY_REBOOT_STORM = "proxy_reboot_storm"
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +43,16 @@ class ProxySlots:
     @property
     def is_full(self) -> bool:
         return self.free <= 0
+
+
+@dataclass(frozen=True, slots=True)
+class ProxyHealth:
+    source: str
+    name: str
+    connectable: bool
+    online: bool
+    seconds_since_detection: float
+    device_count: int
 
 
 @dataclass(frozen=True, slots=True)
