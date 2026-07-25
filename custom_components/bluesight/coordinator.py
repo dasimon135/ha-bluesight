@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from dataclasses import replace
 from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
@@ -19,9 +20,19 @@ from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from . import adapter
-from .adapter import SlotAdapter, current_proxy_slots
+from .adapter import (
+    ScannerAdapter,
+    SlotAdapter,
+    current_proxy_health,
+    current_proxy_slots,
+)
 from .availability import is_device_alive
-from .const import DOMAIN
+from .const import (
+    DEFAULT_REBOOT_THRESHOLD,
+    DEFAULT_REBOOT_WINDOW_S,
+    DEFAULT_STALLED_THRESHOLD_S,
+    DOMAIN,
+)
 from .coordinator_data import BlueSightData, build_triage_data
 from .model import normalize_address
 from .window import FailureWindow
@@ -65,6 +76,9 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         storm_window_s: float,
         storm_threshold: int,
         poll_interval_s: int,
+        stalled_threshold_s: float = DEFAULT_STALLED_THRESHOLD_S,
+        reboot_window_s: float = DEFAULT_REBOOT_WINDOW_S,
+        reboot_threshold: int = DEFAULT_REBOOT_THRESHOLD,
     ) -> None:
         super().__init__(
             hass,
@@ -78,6 +92,21 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         )
         self._manager = adapter.get_manager()
         self._adapter = SlotAdapter(self._manager, on_change=self._handle_push)
+        # Proxy-health wiring (Task 7). Reboots are counted in their own rolling
+        # window (a proxy REMOVED event == one reboot signal), reusing the same
+        # monotonic clock as the slot window.
+        self._stalled_threshold_s = stalled_threshold_s
+        self._reboot_window = FailureWindow(
+            reboot_window_s, reboot_threshold, clock=time.monotonic
+        )
+        # Sources seen online at least once, so offline detection only fires for
+        # proxies we have actually observed (not for never-seen ones).
+        self._known_sources: set[str] = set()
+        self._scanner_adapter = ScannerAdapter(
+            self._manager,
+            on_change=self._handle_push,
+            on_removed=self._record_reboot,
+        )
         # Previous snapshot's availability for allocated addresses, used to
         # detect present->absent flaps that feed the storm window (v1 signal).
         self._prev_availability: dict[str, bool] = {}
@@ -95,6 +124,22 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         """
         await self.async_config_entry_first_refresh()
         self._adapter.start()
+        self._scanner_adapter.start()
+
+    def _record_reboot(self, source: str) -> None:
+        """Record a proxy REMOVED event as a reboot signal. Scheduled on the
+        loop because the habluetooth scanner callback may run in an executor
+        thread; mutating the reboot window off-loop would race the snapshot.
+
+        Ordering: ``ScannerAdapter._handle`` schedules this record BEFORE it
+        schedules the snapshot (via ``on_change``/``_handle_push``), both from
+        the same thread through ``call_soon_threadsafe``, so the loop runs
+        record-before-snapshot (FIFO) and the reboot is visible to the very
+        snapshot triggered by the same event.
+        """
+        self.hass.loop.call_soon_threadsafe(
+            self._reboot_window.record, normalize_address(source)
+        )
 
     @callback
     def _handle_push(self) -> None:
@@ -136,7 +181,20 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
                     norm, mac_index, ent_reg
                 )
         self._record_flaps(availability)
-        return build_triage_data(proxies, availability, self._window)
+        health = current_proxy_health(self._manager)
+        # Normalize sources so they match the reboot-window keys and
+        # known_sources (habluetooth yields upper-case, but be defensive).
+        health = [replace(h, source=normalize_address(h.source)) for h in health]
+        self._known_sources |= {h.source for h in health if h.online}
+        return build_triage_data(
+            proxies,
+            availability,
+            self._window,
+            proxies_health=health,
+            known_sources=self._known_sources,
+            reboot_window=self._reboot_window,
+            stalled_threshold_s=self._stalled_threshold_s,
+        )
 
     def _record_flaps(self, availability: dict[str, bool]) -> None:
         """Record alive->dead transitions of allocated devices as failures for
@@ -238,6 +296,7 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         self._availability_degraded = True
 
     async def async_shutdown(self) -> None:
-        """Stop the push subscription and tear down the coordinator."""
+        """Stop the push subscriptions and tear down the coordinator."""
+        self._scanner_adapter.stop()
         self._adapter.stop()
         await super().async_shutdown()

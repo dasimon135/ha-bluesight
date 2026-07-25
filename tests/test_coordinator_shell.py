@@ -28,6 +28,10 @@ def _bare_coordinator() -> BlueSightCoordinator:
     c._window = FailureWindow(window_s=300, threshold=5, clock=lambda: 0.0)
     c._prev_availability = {}
     c._availability_degraded = False
+    # Proxy-health wiring (Task 7).
+    c._stalled_threshold_s = 180.0
+    c._reboot_window = FailureWindow(window_s=600, threshold=3, clock=lambda: 0.0)
+    c._known_sources = set()
     return c
 
 
@@ -76,6 +80,9 @@ def test_snapshot_flags_ghost_slot(monkeypatch):
     class _FakeMgr:
         def async_current_allocations(self, source=None):
             return [_FakeAlloc()]
+
+        def async_current_scanners(self):
+            return []
 
     c._manager = _FakeMgr()
     c.hass = object()
@@ -268,6 +275,7 @@ def test_device_is_alive_fails_toward_alive_and_flags_degraded(monkeypatch, capl
 def test_async_setup_starts_subscription_after_successful_refresh():
     c = _bare_coordinator()
     c._adapter = _FakeAdapter()
+    c._scanner_adapter = _FakeAdapter()
     order = []
 
     async def _ok_refresh():
@@ -278,11 +286,13 @@ def test_async_setup_starts_subscription_after_successful_refresh():
 
     asyncio.run(c.async_setup())
     assert order == ["refresh", "start"]   # refresh strictly before start
+    assert c._scanner_adapter.started is True   # scanner subscription started too
 
 
 def test_async_setup_does_not_start_subscription_if_first_refresh_fails():
     c = _bare_coordinator()
     c._adapter = _FakeAdapter()
+    c._scanner_adapter = _FakeAdapter()
 
     async def _boom_refresh():
         raise RuntimeError("first refresh failed (ConfigEntryNotReady)")
@@ -294,3 +304,66 @@ def test_async_setup_does_not_start_subscription_if_first_refresh_fails():
     # Refresh-before-start ordering means no callback was ever registered,
     # so there is nothing to leak.
     assert c._adapter.started is False
+    assert c._scanner_adapter.started is False
+
+
+# --- Task 7: proxy-health wiring -----------------------------------------
+
+class _ImmediateLoopHass:
+    """hass fake whose loop runs call_soon_threadsafe synchronously, so the
+    marshalled reboot record is observable without a real event loop."""
+
+    class _Loop:
+        def call_soon_threadsafe(self, fn, *args):
+            fn(*args)
+
+    def __init__(self):
+        self.loop = self._Loop()
+
+
+def test_record_reboot_schedules_normalized_window_record():
+    # The scanner-registration callback may fire from an executor thread, so
+    # _record_reboot must marshal onto the loop rather than mutate the window
+    # directly. With a synchronous loop fake we can assert the record landed,
+    # and that the source was normalized (lowercase in -> uppercase key).
+    c = _bare_coordinator()
+    c.hass = _ImmediateLoopHass()
+    source = "aa:bb:cc:dd:ee:ff"
+    assert c._reboot_window.count("AA:BB:CC:DD:EE:FF") == 0
+    c._record_reboot(source)
+    assert c._reboot_window.count("AA:BB:CC:DD:EE:FF") == 1
+    # The lowercase form is NOT a separate key.
+    assert c._reboot_window.count(source) == 0
+
+
+def test_snapshot_flags_stalled_proxy_and_records_known_source(monkeypatch):
+    c = _bare_coordinator()
+
+    class _FakeScanner:
+        # Lowercase source to prove _snapshot normalizes it.
+        source = "aa:bb:cc:dd:ee:ff"
+        name = "Kitchen proxy"
+        connectable = True
+        discovered_devices = []
+
+        def time_since_last_detection(self):
+            return 500.0   # > 180s stalled threshold
+
+    class _FakeMgr:
+        def async_current_allocations(self, source=None):
+            return []
+
+        def async_current_scanners(self):
+            return [_FakeScanner()]
+
+    c._manager = _FakeMgr()
+    c.hass = object()
+    c._build_mac_index = lambda: {}
+    monkeypatch.setattr(coordinator_module.er, "async_get", lambda hass: None)
+
+    data = c._snapshot()
+    assert any(i.kind is IncidentKind.PROXY_STALLED for i in data.incidents)
+    # The stalled proxy surfaces in proxies_health and is remembered (normalized)
+    # as a known source for future offline detection.
+    assert "AA:BB:CC:DD:EE:FF" in c._known_sources
+    assert [h.source for h in data.proxies_health] == ["AA:BB:CC:DD:EE:FF"]
