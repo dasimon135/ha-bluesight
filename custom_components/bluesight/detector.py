@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from .model import Incident, IncidentKind, ProxySlots, normalize_address
+from .model import Incident, IncidentKind, ProxyHealth, ProxySlots, normalize_address
 from .window import FailureWindow
 
 
@@ -41,6 +41,18 @@ def detect_ghost_slots(
                     IncidentKind.GHOST_SLOT, norm, [p.source],
                     detail=f"Slot held on {p.name} while device unavailable"))
     return out
+
+
+def detect_offline_proxies(
+    proxies: list[ProxyHealth], known_sources: set[str]
+) -> list[Incident]:
+    """A source we have seen online before, now absent from the scanners."""
+    online = {p.source for p in proxies if p.online}
+    return [
+        Incident(IncidentKind.PROXY_OFFLINE, src, [src],
+                 detail="Proxy offline (no longer a registered scanner)")
+        for src in sorted(known_sources - online)
+    ]
 
 
 def detect_storm(address: str, window: FailureWindow) -> Incident | None:
