@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from .model import ProxySlots
+from .model import ProxyHealth, ProxySlots
 
 
 def get_manager() -> Any:
@@ -58,6 +58,60 @@ class SlotAdapter:
 
     def stop(self) -> None:
         """Unsubscribe the allocation callback; no-op if already stopped."""
+        if self._unsub is not None:
+            self._unsub()
+            self._unsub = None
+
+
+def current_proxy_health(manager: Any) -> list[ProxyHealth]:
+    """Snapshot current per-proxy scanner health as ProxyHealth."""
+    scanners = manager.async_current_scanners() or []
+    return [
+        ProxyHealth(
+            source=s.source,
+            name=(getattr(s, "name", None) or s.source),
+            connectable=bool(getattr(s, "connectable", False)),
+            online=True,
+            seconds_since_detection=float(s.time_since_last_detection()),
+            device_count=len(s.discovered_devices),
+        )
+        for s in scanners
+    ]
+
+
+class ScannerAdapter:
+    """Subscribe to habluetooth scanner-registration events. Fires on_change on
+    every event and on_removed(source) when a scanner is removed (the reboot
+    signal). Mirrors SlotAdapter: single coupling point, idempotent start/stop.
+    """
+
+    def __init__(
+        self,
+        manager: Any,
+        on_change: Callable[[], None],
+        on_removed: Callable[[str], None],
+    ) -> None:
+        self._manager = manager
+        self._on_change = on_change
+        self._on_removed = on_removed
+        self._unsub: Callable[[], None] | None = None
+
+    def start(self) -> None:
+        """Register the scanner-registration callback (no-op if already started)."""
+        if self._unsub is not None:
+            return
+        self._unsub = self._manager.async_register_scanner_registration_callback(
+            self._handle, None
+        )
+
+    def _handle(self, registration: Any) -> None:
+        event = getattr(registration.event, "value", registration.event)
+        if event == "removed":
+            self._on_removed(registration.scanner.source)
+        self._on_change()
+
+    def stop(self) -> None:
+        """Unregister the callback (idempotent)."""
         if self._unsub is not None:
             self._unsub()
             self._unsub = None
