@@ -168,10 +168,13 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
 
         A BLE device's MAC may live in ``connections`` as
         ``(CONNECTION_BLUETOOTH, mac)`` (some integrations) or in
-        ``identifiers`` as ``(domain, mac)`` (e.g. daikin_madoka). Connection
-        values are always addresses, so they are mapped as-is; identifier
-        values are only mapped when MAC-shaped, to avoid polluting the index
-        with the many non-MAC identifiers integrations register.
+        ``identifiers`` as ``(domain, mac)`` (e.g. daikin_madoka). Only
+        Bluetooth connections whose value is MAC-shaped are indexed: a device's
+        non-Bluetooth connection (e.g. its Wi-Fi ``CONNECTION_NETWORK_MAC``)
+        must never enter the index, or an allocated BLE address could collide
+        with some dead device's network MAC and be falsely flagged. Identifier
+        values are likewise only mapped when MAC-shaped, to avoid polluting the
+        index with the many non-MAC identifiers integrations register.
 
         Built once per snapshot and reused for every allocated address. On a
         registry-lookup failure we fail toward an empty index (every device
@@ -182,7 +185,8 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
             index: dict[str, str] = {}
             for device in dr.async_get(self.hass).devices.values():
                 for conn in device.connections:
-                    index[normalize_address(conn[1])] = device.id
+                    if conn[0] == dr.CONNECTION_BLUETOOTH and _looks_like_mac(conn[1]):
+                        index[normalize_address(conn[1])] = device.id
                 for ident in device.identifiers:
                     value = ident[1]
                     if _looks_like_mac(value):

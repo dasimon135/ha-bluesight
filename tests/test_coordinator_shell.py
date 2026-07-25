@@ -148,8 +148,11 @@ def test_build_mac_index_scans_identifiers_and_connections(monkeypatch):
     devices = [
         # madoka: MAC lives in identifiers, connections empty (real registry).
         _FakeDevice("dev_madoka", identifiers={("daikin_madoka", "1C:54:9E:8E:1D:2C")}),
-        # other integration: MAC lives in connections.
-        _FakeDevice("dev_other", connections={("bluetooth", "AA:BB:CC:DD:EE:FF")}),
+        # other integration: MAC lives in a Bluetooth connection.
+        _FakeDevice(
+            "dev_other",
+            connections={(coordinator_module.dr.CONNECTION_BLUETOOTH, "AA:BB:CC:DD:EE:FF")},
+        ),
         # non-MAC identifier must be ignored (no pollution).
         _FakeDevice("dev_cloud", identifiers={("some_cloud", "account-12345")}),
     ]
@@ -163,6 +166,34 @@ def test_build_mac_index_scans_identifiers_and_connections(monkeypatch):
     # The non-MAC identifier did not land in the index.
     assert "ACCOUNT-12345" not in index
     assert len(index) == 2
+
+
+def test_build_mac_index_ignores_non_bluetooth_connections(monkeypatch):
+    # A device with BOTH a Bluetooth MAC and a network (wifi) MAC connection:
+    # only the Bluetooth one may be indexed, or a BLE allocation could collide
+    # with some dead device's wifi MAC and be falsely flagged as a ghost.
+    from homeassistant.helpers.device_registry import (
+        CONNECTION_BLUETOOTH,
+        CONNECTION_NETWORK_MAC,
+    )
+
+    c = _bare_coordinator()
+    devices = [
+        _FakeDevice(
+            "dev_dual",
+            connections={
+                (CONNECTION_BLUETOOTH, "AA:BB:CC:DD:EE:FF"),
+                (CONNECTION_NETWORK_MAC, "11:22:33:44:55:66"),
+            },
+        ),
+    ]
+    c.hass = _wire_registries(
+        monkeypatch, devices=devices, entries_by_device={}, states={}
+    )
+    index = c._build_mac_index()
+    assert index["AA:BB:CC:DD:EE:FF"] == "dev_dual"   # Bluetooth: indexed
+    assert "11:22:33:44:55:66" not in index           # network MAC: ignored
+    assert len(index) == 1
 
 
 def test_device_is_alive_true_when_address_not_registered(monkeypatch):
