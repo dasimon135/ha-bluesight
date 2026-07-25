@@ -65,6 +65,34 @@ It surfaces the state as:
 Everything is **read-only**. BlueSight never frees a slot, forces an unbond, or
 reflashes anything. It observes and reports.
 
+## Proxy health (v1.2)
+
+The v1 detectors watch what flows *through* the proxies. v1.2 adds a layer that
+watches the **proxies themselves**. BlueSight reads the `habluetooth` scanner
+registry Home Assistant already maintains — so this needs **zero user config** —
+and raises three more incidents:
+
+| Incident | Fires when |
+| --- | --- |
+| **Proxy offline** | a proxy that was online is no longer a registered scanner — it dropped off the bus. Check its power and Wi-Fi. |
+| **Proxy stalled** | a proxy is still online but has not seen any Bluetooth advertisement for a while. It is up but deaf; power-cycle it. |
+| **Proxy reboot storm** | a proxy registers and unregisters over and over inside the reboot window. Check its power supply or brownouts. |
+
+It surfaces per-proxy health as two extra entities on each proxy device:
+
+- `binary_sensor.<proxy>_online` (device class `connectivity`) — `on` while the
+  proxy is a registered scanner.
+- `sensor.<proxy>_last_device_seen` — seconds since the last advertisement that
+  proxy heard, the signal behind the stalled detector.
+
+Three new options tune it: the **stalled threshold** (how long a proxy may go
+without an advertisement before it is flagged), the **reboot window**, and the
+**reboot threshold** (register/unregister cycles within that window that trip a
+reboot storm).
+
+RAM, Wi-Fi signal, and uptime telemetry are **not** part of v1.2 — those need
+per-proxy instrumentation and are deferred to the v1.5 ESPHome component.
+
 ## Requirements
 
 - **Home Assistant ≥ 2025.2** — this is when the `habluetooth` slot-allocation
@@ -94,6 +122,9 @@ Open the integration's **Configure** dialog to tune:
 | Storm window | 300 s | sliding window over which storm flaps are counted (min 30 s). |
 | Storm threshold | 5 | flaps within the window that trip a storm incident (min 2). |
 | Poll interval | 30 s | how often the coordinator refreshes its slot snapshot (min 5 s). |
+| Stalled threshold | 180 s | how long a proxy may go without seeing any advertisement before it is flagged as stalled. |
+| Reboot window | 600 s | sliding window over which proxy register/unregister cycles are counted. |
+| Reboot threshold | 3 | reboots within the window that trip a reboot-storm incident. |
 
 ## Entities
 
@@ -101,7 +132,9 @@ Open the integration's **Configure** dialog to tune:
 | --- | --- | --- | --- |
 | `sensor.<proxy>_slots_used` | sensor | slots allocated on that proxy | `total`, `free`, `allocated` (list of MACs), `source` |
 | `sensor.<proxy>_slots_free` | sensor | slots still free on that proxy | — |
-| `binary_sensor.bluesight_incident` | binary_sensor (`problem`) | `on` when any incident is open | `incident_count`, `incidents` (list of `{kind, address, sources, detail}`; `kind` ∈ `deadlock` / `ghost_slot` / `storm`) |
+| `binary_sensor.<proxy>_online` | binary_sensor (`connectivity`) | `on` while the proxy is a registered scanner | — |
+| `sensor.<proxy>_last_device_seen` | sensor (seconds) | seconds since that proxy last heard an advertisement | `device_count` |
+| `binary_sensor.bluesight_incident` | binary_sensor (`problem`) | `on` when any incident is open | `incident_count`, `incidents` (list of `{kind, address, sources, detail}`; `kind` ∈ `deadlock` / `ghost_slot` / `storm` / `proxy_offline` / `proxy_stalled` / `proxy_reboot_storm`) |
 
 Each proxy is registered as its own Home Assistant device carrying its two slot
 sensors; the incident binary sensor lives on a single **BlueSight** service

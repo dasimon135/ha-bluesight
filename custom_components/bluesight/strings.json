@@ -27,7 +27,7 @@
           "storm_window_s": "Sliding window over which repeated connection failures are counted.",
           "storm_threshold": "Number of failures within the window that raises a pairing-storm incident.",
           "poll_interval_s": "How often the slot snapshot is refreshed as a backstop to push updates.",
-          "stalled_threshold_s": "How long a proxy can go without any slot activity before it is flagged as stalled.",
+          "stalled_threshold_s": "How long a proxy can go without seeing any Bluetooth advertisement before it is flagged as stalled.",
           "reboot_window_s": "Sliding window over which proxy reboots are counted.",
           "reboot_threshold": "Number of reboots within the window that raises a flapping-proxy incident."
         }
