@@ -5,8 +5,10 @@ These exercise the coordinator's own (non-HA-runtime) helpers by bypassing
 They still import Home Assistant core; guard with ``importorskip`` so the
 default pure suite stays green even on a box where HA core cannot import.
 The genuinely HA-runtime bits (``_handle_push`` scheduling on the loop,
-``_async_update_data``, the real ``async_address_present`` call inside
-``_is_available``, and ``async_shutdown``) are only verifiable on CI/Linux.
+``_async_update_data`` and ``async_shutdown``) are only verifiable on
+CI/Linux. The registry-backed availability path (``_build_mac_index`` and
+``_device_is_alive``) is covered here with lightweight fakes for the device
+registry, entity registry and state machine, so it stays Windows-runnable.
 """
 import asyncio
 
@@ -65,7 +67,7 @@ def test_record_flaps_ignores_non_transitions():
     assert c._window.count("BB") == 0
 
 
-def test_snapshot_flags_ghost_slot():
+def test_snapshot_flags_ghost_slot(monkeypatch):
     c = _bare_coordinator()
 
     class _FakeAlloc:
@@ -76,37 +78,155 @@ def test_snapshot_flags_ghost_slot():
             return [_FakeAlloc()]
 
     c._manager = _FakeMgr()
-    c._is_available = lambda address: False   # device absent -> ghost slot
+    c.hass = object()
+    # Isolate the ghost-detection wiring: stub the registry access and force
+    # the device to read as dead so a ghost incident must be produced.
+    c._build_mac_index = lambda: {}
+    monkeypatch.setattr(coordinator_module.er, "async_get", lambda hass: None)
+    c._device_is_alive = lambda address, mac_index, ent_reg: False
 
     data = c._snapshot()
     assert [p.name for p in data.proxies] == ["AA"]   # _name_for fallback
     assert any(i.kind is IncidentKind.GHOST_SLOT for i in data.incidents)
 
 
-# --- I2: _is_available degrades loudly instead of silently ---------------
+# --- Registry-backed availability: fakes for dr/er/states ---------------
 
-def test_is_available_returns_underlying_result_when_ok(monkeypatch):
-    c = _bare_coordinator()
-    c.hass = object()
+class _FakeDevice:
+    def __init__(self, device_id, *, connections=(), identifiers=()):
+        self.id = device_id
+        self.connections = set(connections)
+        self.identifiers = set(identifiers)
+
+
+class _FakeDeviceRegistry:
+    def __init__(self, devices):
+        # Mirrors dr.async_get(hass).devices.values().
+        self.devices = {d.id: d for d in devices}
+
+
+class _FakeEntry:
+    def __init__(self, entity_id):
+        self.entity_id = entity_id
+
+
+class _FakeState:
+    def __init__(self, state):
+        self.state = state
+
+
+class _FakeStates:
+    def __init__(self, mapping):
+        self._mapping = mapping
+
+    def get(self, entity_id):
+        return self._mapping.get(entity_id)
+
+
+class _FakeHass:
+    def __init__(self, states):
+        self.states = _FakeStates(states)
+
+
+def _wire_registries(monkeypatch, *, devices, entries_by_device, states):
+    """Point coordinator_module's dr/er at fakes and return a hass fake."""
+    dev_reg = _FakeDeviceRegistry(devices)
+    monkeypatch.setattr(coordinator_module.dr, "async_get", lambda hass: dev_reg)
+    monkeypatch.setattr(coordinator_module.er, "async_get", lambda hass: object())
     monkeypatch.setattr(
-        coordinator_module, "async_address_present",
-        lambda hass, address, connectable=True: False,
+        coordinator_module.er,
+        "async_entries_for_device",
+        lambda reg, device_id, include_disabled_entities=False: entries_by_device.get(
+            device_id, []
+        ),
     )
-    assert c._is_available("AA") is False
+    return _FakeHass(states)
+
+
+def test_build_mac_index_scans_identifiers_and_connections(monkeypatch):
+    c = _bare_coordinator()
+    devices = [
+        # madoka: MAC lives in identifiers, connections empty (real registry).
+        _FakeDevice("dev_madoka", identifiers={("daikin_madoka", "1C:54:9E:8E:1D:2C")}),
+        # other integration: MAC lives in connections.
+        _FakeDevice("dev_other", connections={("bluetooth", "AA:BB:CC:DD:EE:FF")}),
+        # non-MAC identifier must be ignored (no pollution).
+        _FakeDevice("dev_cloud", identifiers={("some_cloud", "account-12345")}),
+    ]
+    c.hass = _wire_registries(
+        monkeypatch, devices=devices, entries_by_device={}, states={}
+    )
+    index = c._build_mac_index()
+    # Both MAC shapes resolve; lookup is case-insensitive via normalize.
+    assert index["1C:54:9E:8E:1D:2C"] == "dev_madoka"
+    assert index["AA:BB:CC:DD:EE:FF"] == "dev_other"
+    # The non-MAC identifier did not land in the index.
+    assert "ACCOUNT-12345" not in index
+    assert len(index) == 2
+
+
+def test_device_is_alive_true_when_address_not_registered(monkeypatch):
+    c = _bare_coordinator()
+    c.hass = _wire_registries(
+        monkeypatch, devices=[], entries_by_device={}, states={}
+    )
+    ent_reg = coordinator_module.er.async_get(c.hass)
+    # Address maps to no device -> conservative alive (never flag unmanaged).
+    assert c._device_is_alive("11:22:33:44:55:66", {}, ent_reg) is True
     assert c._availability_degraded is False
 
 
-def test_is_available_fails_toward_present_and_flags_degraded(monkeypatch, caplog):
+def test_device_is_alive_true_for_working_thermostat(monkeypatch):
+    # The exact false-positive case: a working madoka whose climate entity is
+    # 'off' (not advertising because it holds a slot) must read as ALIVE.
     c = _bare_coordinator()
-    c.hass = object()
+    mac = "1C:54:9E:8E:1D:2C"
+    devices = [_FakeDevice("dev_madoka", identifiers={("daikin_madoka", mac)})]
+    c.hass = _wire_registries(
+        monkeypatch,
+        devices=devices,
+        entries_by_device={"dev_madoka": [_FakeEntry("climate.madoka1")]},
+        states={"climate.madoka1": _FakeState("off")},
+    )
+    ent_reg = coordinator_module.er.async_get(c.hass)
+    index = c._build_mac_index()
+    assert c._device_is_alive(mac, index, ent_reg) is True
 
-    def _boom(hass, address, connectable=True):
-        raise RuntimeError("bluetooth integration not yet loaded")
 
-    monkeypatch.setattr(coordinator_module, "async_address_present", _boom)
+def test_device_is_alive_false_when_all_entities_unavailable(monkeypatch):
+    # A genuinely dead device: every entity is 'unavailable' -> ghost.
+    c = _bare_coordinator()
+    mac = "1C:54:9E:90:E3:0E"
+    devices = [_FakeDevice("dev_dead", identifiers={("daikin_madoka", mac)})]
+    c.hass = _wire_registries(
+        monkeypatch,
+        devices=devices,
+        entries_by_device={
+            "dev_dead": [_FakeEntry("climate.parents"), _FakeEntry("sensor.parents_rssi")]
+        },
+        states={
+            "climate.parents": _FakeState("unavailable"),
+            "sensor.parents_rssi": _FakeState("unavailable"),
+        },
+    )
+    ent_reg = coordinator_module.er.async_get(c.hass)
+    index = c._build_mac_index()
+    assert c._device_is_alive(mac, index, ent_reg) is False
+
+
+def test_device_is_alive_fails_toward_alive_and_flags_degraded(monkeypatch, caplog):
+    c = _bare_coordinator()
+
+    class _BoomReg:
+        pass
+
+    def _boom(reg, device_id, include_disabled_entities=False):
+        raise RuntimeError("entity registry not yet loaded")
+
+    monkeypatch.setattr(coordinator_module.er, "async_entries_for_device", _boom)
+    c.hass = _FakeHass({})
     with caplog.at_level("WARNING"):
-        result = c._is_available("AA")
-    # Fail toward present (avoid fabricating false ghosts) but record degradation.
+        result = c._device_is_alive("AA:BB:CC:DD:EE:FF", {"AA:BB:CC:DD:EE:FF": "dev"}, _BoomReg())
     assert result is True
     assert c._availability_degraded is True
     assert any(r.levelname == "WARNING" for r in caplog.records)

@@ -9,16 +9,18 @@ Assistant. Keep it deliberately minimal.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from datetime import timedelta
 
-from homeassistant.components.bluetooth import async_address_present
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from . import adapter
 from .adapter import SlotAdapter, current_proxy_slots
+from .availability import is_device_alive
 from .const import DOMAIN
 from .coordinator_data import BlueSightData, build_triage_data
 from .model import normalize_address
@@ -27,11 +29,25 @@ from .window import FailureWindow
 _LOGGER = logging.getLogger(__name__)
 
 # Availability-lookup failures we treat as "signal temporarily unavailable"
-# rather than crashing the coordinator: the bluetooth integration not yet
+# rather than crashing the coordinator: the device/entity registries not yet
 # loaded / torn down (RuntimeError, KeyError, AttributeError) or an API
 # signature drift (TypeError). Anything outside this set is a genuine bug and
 # is allowed to surface instead of being silently swallowed.
 _AVAILABILITY_ERRORS = (RuntimeError, KeyError, AttributeError, TypeError)
+
+# A canonicalized BLE MAC: six colon-separated hex octets. Used to keep the
+# MAC->device index clean of non-MAC identifiers (integrations put all sorts
+# of strings in the second identifier element).
+_MAC_RE = re.compile(r"^[0-9A-F]{2}(:[0-9A-F]{2}){5}$")
+
+
+def _looks_like_mac(value: str) -> bool:
+    """True if ``value`` is a plausible colon-separated MAC address."""
+    return (
+        isinstance(value, str)
+        and ":" in value
+        and _MAC_RE.match(normalize_address(value)) is not None
+    )
 
 
 class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
@@ -101,6 +117,14 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
 
     def _snapshot(self) -> BlueSightData:
         proxies = current_proxy_slots(self._manager, self._name_for)
+        # Resolve availability from the device's HA entities rather than its
+        # advertising presence: a connected device (holding a slot) stops
+        # advertising, so advertisement-presence falsely flagged working,
+        # persistently-connected devices as ghost slots. Build the MAC->device
+        # index and grab the entity registry once per snapshot and reuse them
+        # for every allocated address (avoid O(devices) per address).
+        ent_reg = er.async_get(self.hass)
+        mac_index = self._build_mac_index()
         # Normalize each allocated address exactly once and key availability by
         # that normalized form, matching what build_triage_data's detectors
         # normalize to internally.
@@ -108,17 +132,22 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         for p in proxies:
             for a in p.allocated:
                 norm = normalize_address(a)
-                availability[norm] = self._is_available(norm)
+                availability[norm] = self._device_is_alive(
+                    norm, mac_index, ent_reg
+                )
         self._record_flaps(availability)
         return build_triage_data(proxies, availability, self._window)
 
     def _record_flaps(self, availability: dict[str, bool]) -> None:
-        """Record present->absent transitions of allocated devices as
-        failures for the storm window.
+        """Record alive->dead transitions of allocated devices as failures for
+        the storm window.
 
-        v1 best-effort signal: a slot that was advertising last snapshot and
-        is now absent is treated as one connection failure. To be replaced by
-        the ESPHome component's raw SMP failure counts in v1.5.
+        v1 best-effort signal: a slot whose device was alive last snapshot and
+        whose entities all went ``unavailable`` this snapshot is treated as one
+        connection failure. This is a better storm signal than the old
+        advertisement flap (it tracks a real device disconnect, not an
+        advertising gap of a healthy connected device). To be replaced by the
+        ESPHome component's raw SMP failure counts in v1.5.
         """
         for addr, present in availability.items():
             if self._prev_availability.get(addr) is True and present is False:
@@ -133,29 +162,76 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         """
         return source
 
-    def _is_available(self, address: str) -> bool:
-        """v1 availability signal: is the address currently advertising?
+    def _build_mac_index(self) -> dict[str, str]:
+        """Build a ``normalized-MAC -> device_id`` index from the device
+        registry, scanning both ``connections`` and ``identifiers``.
 
-        A held slot whose address is not currently present is a ghost-slot
-        candidate. If the lookup breaks we fail toward ``True`` (present) on
-        purpose: returning ``False`` would fabricate a ghost incident for
-        every address, which is just as trust-destroying as hiding real ones.
-        Instead we flag the signal as degraded and warn (once) so the
-        breakage is loud and observable rather than silently masking incidents.
+        A BLE device's MAC may live in ``connections`` as
+        ``(CONNECTION_BLUETOOTH, mac)`` (some integrations) or in
+        ``identifiers`` as ``(domain, mac)`` (e.g. daikin_madoka). Connection
+        values are always addresses, so they are mapped as-is; identifier
+        values are only mapped when MAC-shaped, to avoid polluting the index
+        with the many non-MAC identifiers integrations register.
+
+        Built once per snapshot and reused for every allocated address. On a
+        registry-lookup failure we fail toward an empty index (every device
+        reads as alive) and flag the signal as degraded, matching the rest of
+        the availability path.
         """
         try:
-            return async_address_present(self.hass, address, connectable=False)
+            index: dict[str, str] = {}
+            for device in dr.async_get(self.hass).devices.values():
+                for conn in device.connections:
+                    index[normalize_address(conn[1])] = device.id
+                for ident in device.identifiers:
+                    value = ident[1]
+                    if _looks_like_mac(value):
+                        index[normalize_address(value)] = device.id
+            return index
         except _AVAILABILITY_ERRORS:
-            if not self._availability_degraded:
-                _LOGGER.warning(
-                    "BlueSight availability lookup failed; ghost-slot "
-                    "detection is degraded (assuming devices present). "
-                    "First failure for %s",
-                    address,
-                    exc_info=True,
+            self._flag_degraded("<device index build>")
+            return {}
+
+    def _device_is_alive(
+        self, address: str, mac_index: dict[str, str], ent_reg: er.EntityRegistry
+    ) -> bool:
+        """Availability signal: is the device holding this slot still alive?
+
+        Resolves the address to its HA device (via the prebuilt MAC index) and
+        judges liveness from that device's entity states (see
+        :func:`is_device_alive`). Biased toward "alive" on purpose: the point
+        is to stop false ghost positives for working, persistently-connected
+        devices; genuine slot leaks are still caught exactly by the deadlock
+        detector. If the lookup breaks we fail toward alive, flag the signal as
+        degraded, and warn (once) so the breakage is loud and observable.
+        """
+        try:
+            device_id = mac_index.get(normalize_address(address))
+            if device_id is None:
+                return is_device_alive(None)
+            states = [
+                st.state
+                for e in er.async_entries_for_device(
+                    ent_reg, device_id, include_disabled_entities=False
                 )
-            self._availability_degraded = True
+                if (st := self.hass.states.get(e.entity_id)) is not None
+            ]
+            return is_device_alive(states)
+        except _AVAILABILITY_ERRORS:
+            self._flag_degraded(address)
             return True
+
+    def _flag_degraded(self, address: str) -> None:
+        """Warn once and mark the availability signal as degraded."""
+        if not self._availability_degraded:
+            _LOGGER.warning(
+                "BlueSight availability lookup failed; ghost-slot "
+                "detection is degraded (assuming devices alive). "
+                "First failure for %s",
+                address,
+                exc_info=True,
+            )
+        self._availability_degraded = True
 
     async def async_shutdown(self) -> None:
         """Stop the push subscription and tear down the coordinator."""
