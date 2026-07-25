@@ -55,6 +55,19 @@ def detect_offline_proxies(
     ]
 
 
+def detect_stalled_proxies(
+    proxies: list[ProxyHealth], threshold_s: float
+) -> list[Incident]:
+    """Online scanner that has not seen any advertisement for too long."""
+    return [
+        Incident(IncidentKind.PROXY_STALLED, p.source, [p.source],
+                 detail=f"Online but no BLE advertisement seen for "
+                        f"{int(p.seconds_since_detection)}s")
+        for p in proxies
+        if p.online and p.seconds_since_detection > threshold_s
+    ]
+
+
 def detect_storm(address: str, window: FailureWindow) -> Incident | None:
     count = window.count(address)
     if count >= window.threshold:
