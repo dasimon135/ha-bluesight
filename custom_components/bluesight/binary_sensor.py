@@ -10,7 +10,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -18,6 +18,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from . import BlueSightConfigEntry
 from .const import DOMAIN
 from .coordinator import BlueSightCoordinator
+from .model import ProxyHealth
 
 
 async def async_setup_entry(
@@ -25,8 +26,33 @@ async def async_setup_entry(
     entry: BlueSightConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up the single global incident binary sensor."""
-    async_add_entities([IncidentBinarySensor(entry.runtime_data)])
+    """Set up the global incident sensor plus a per-proxy online sensor.
+
+    The online sensors follow the same dynamic-add pattern as the slot
+    sensors: a proxy can surface via its slot snapshot *or* its health
+    snapshot, so newly-seen sources are drawn from the union of both.
+    """
+    coordinator = entry.runtime_data
+    async_add_entities([IncidentBinarySensor(coordinator)])
+
+    known_sources: set[str] = set()
+
+    @callback
+    def _add_new_proxies() -> None:
+        new_entities: list[BinarySensorEntity] = []
+        sources = {p.source for p in coordinator.data.proxies} | {
+            h.source for h in coordinator.data.proxies_health
+        }
+        for source in sources:
+            if source in known_sources:
+                continue
+            known_sources.add(source)
+            new_entities.append(ProxyOnlineBinarySensor(coordinator, source))
+        if new_entities:
+            async_add_entities(new_entities)
+
+    _add_new_proxies()
+    entry.async_on_unload(coordinator.async_add_listener(_add_new_proxies))
 
 
 class IncidentBinarySensor(
@@ -66,3 +92,41 @@ class IncidentBinarySensor(
                 for incident in incidents
             ],
         }
+
+
+class ProxyOnlineBinarySensor(
+    CoordinatorEntity[BlueSightCoordinator], BinarySensorEntity
+):
+    """On while a proxy is a current BLE scanner (per its health snapshot)."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Online"
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+
+    def __init__(self, coordinator: BlueSightCoordinator, source: str) -> None:
+        super().__init__(coordinator)
+        self._source = source
+        self._attr_unique_id = f"{source}_online"
+        health = self._health
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, source)},
+            name=health.name if health is not None else source,
+        )
+
+    @property
+    def _health(self) -> ProxyHealth | None:
+        """Return this source's health snapshot, or None if it is gone."""
+        for health in self.coordinator.data.proxies_health:
+            if health.source == self._source:
+                return health
+        return None
+
+    @property
+    def available(self) -> bool:
+        """Unavailable once the proxy drops out of the health snapshot."""
+        return super().available and self._health is not None
+
+    @property
+    def is_on(self) -> bool | None:
+        health = self._health
+        return health.online if health is not None else None

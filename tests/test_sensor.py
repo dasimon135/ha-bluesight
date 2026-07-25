@@ -8,8 +8,12 @@ here (native_value / attributes / availability); wiring is CI-only.
 from __future__ import annotations
 
 from custom_components.bluesight.coordinator_data import BlueSightData
-from custom_components.bluesight.model import ProxySlots
-from custom_components.bluesight.sensor import SlotsFreeSensor, SlotsUsedSensor
+from custom_components.bluesight.model import ProxyHealth, ProxySlots
+from custom_components.bluesight.sensor import (
+    LastDeviceSeenSensor,
+    SlotsFreeSensor,
+    SlotsUsedSensor,
+)
 
 
 class _FakeCoordinator:
@@ -20,6 +24,12 @@ class _FakeCoordinator:
 
 def _coord(*proxies: ProxySlots) -> _FakeCoordinator:
     return _FakeCoordinator(BlueSightData(proxies=list(proxies), incidents=[]))
+
+
+def _coord_health(*health: ProxyHealth) -> _FakeCoordinator:
+    return _FakeCoordinator(
+        BlueSightData(proxies=[], incidents=[], proxies_health=list(health))
+    )
 
 
 def test_slots_used_native_value_and_attributes() -> None:
@@ -73,3 +83,41 @@ def test_device_info_groups_by_source() -> None:
     assert used.device_info == free.device_info
     assert used.device_info["identifiers"] == {("bluesight", "AA:BB")}
     assert used.device_info["name"] == "proxy-a"
+
+
+def test_last_device_seen_native_value_and_attributes() -> None:
+    health = ProxyHealth("AA:BB", "proxy-a", True, True, 12.6, 4)
+    sensor = LastDeviceSeenSensor(_coord_health(health), "AA:BB")
+
+    assert sensor.native_value == 13  # round(12.6)
+    assert sensor.unique_id == "AA:BB_last_device_seen"
+    assert sensor.available is True
+    assert sensor.extra_state_attributes == {
+        "device_count": 4,
+        "connectable": True,
+        "online": True,
+    }
+    # Grouped under the same per-proxy device as the slot sensors.
+    assert sensor.device_info["identifiers"] == {("bluesight", "AA:BB")}
+    assert sensor.device_info["name"] == "proxy-a"
+
+
+def test_last_device_seen_offline_proxy_still_reported() -> None:
+    # A proxy present in health but flagged offline still reports its value.
+    health = ProxyHealth("AA:BB", "proxy-a", False, False, 200.4, 0)
+    sensor = LastDeviceSeenSensor(_coord_health(health), "AA:BB")
+
+    assert sensor.native_value == 200
+    assert sensor.extra_state_attributes == {
+        "device_count": 0,
+        "connectable": False,
+        "online": False,
+    }
+
+
+def test_last_device_seen_unavailable_when_absent() -> None:
+    # Source dropped out of the health snapshot entirely.
+    sensor = LastDeviceSeenSensor(_coord_health(), "AA:BB")
+    assert sensor.available is False
+    assert sensor.native_value is None
+    assert sensor.extra_state_attributes is None
