@@ -15,3 +15,9 @@ def test_known_but_absent_is_offline():
 
 def test_unknown_absent_is_not_flagged():
     assert detect_offline_proxies([_h("AA", True)], known_sources={"AA"}) == []
+
+
+def test_known_source_present_but_offline_is_flagged():
+    current = [_h("AA", True), _h("BB", False)]   # BB present but offline
+    incs = detect_offline_proxies(current, known_sources={"AA", "BB"})
+    assert [i.address for i in incs] == ["BB"]

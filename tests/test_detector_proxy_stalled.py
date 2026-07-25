@@ -17,3 +17,7 @@ def test_online_and_fresh_is_fine():
 
 def test_offline_proxy_is_not_stalled():
     assert detect_stalled_proxies([_h("AA", False, 999.0)], threshold_s=180.0) == []
+
+
+def test_at_threshold_is_not_stalled():
+    assert detect_stalled_proxies([_h("AA", True, 180.0)], threshold_s=180.0) == []
