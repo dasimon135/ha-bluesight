@@ -106,8 +106,8 @@ class BlueSightConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class BlueSightOptionsFlow(OptionsFlow):
-    """Expose the six tunables (storm window/threshold, poll interval,
-    stalled threshold, reboot window/threshold).
+    """Expose the tunables: storm window/threshold, poll interval, stalled
+    threshold, reboot window/threshold, and the offline grace period.
 
     ``config_entry`` is provided by the flow manager in current HA
     (>=2024.11); it must NOT be assigned in ``__init__``.

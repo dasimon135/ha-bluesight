@@ -58,7 +58,7 @@ async def test_options_flow_round_trips_tunables(hass: HomeAssistant) -> None:
 
     Only the three storm/poll fields are supplied; the three proxy-health
     fields are ``Required`` with defaults, so voluptuous fills them in — the
-    stored options therefore carry all six keys.
+    stored options therefore carry every key, not just the submitted ones.
 
     The entry is added to hass but deliberately not set up: the round-trip
     into ``entry.options`` is a property of the options flow alone and should
@@ -87,4 +87,5 @@ async def test_options_flow_round_trips_tunables(hass: HomeAssistant) -> None:
         "stalled_threshold_s": 180.0,
         "reboot_window_s": 600.0,
         "reboot_threshold": 3,
+        "offline_grace_s": 90.0,
     }
