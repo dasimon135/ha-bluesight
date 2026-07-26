@@ -7,31 +7,50 @@ entities the integration creates:
 - `sensor.<proxy>_slots_used` — state = used count; attributes `total`, `free`,
   `allocated` (list of MACs), `source`.
 - `sensor.<proxy>_slots_free` — state = free count.
+- `binary_sensor.<proxy>_online` — `on` while the proxy is a registered scanner.
+- `sensor.<proxy>_last_device_seen` — seconds since that proxy last heard any
+  advertisement; attributes `device_count`, `connectable`, `online`.
 - `binary_sensor.bluesight_incident` — `on` when incidents exist; attributes
-  `incident_count` (int) and `incidents` (list of
-  `{kind, address, sources, detail}`, `kind` ∈ `deadlock` / `ghost_slot` /
-  `storm`).
+  `incident_count` (int), `availability_degraded` (bool), and `incidents` (list
+  of `{kind, address, sources, detail}`, `kind` ∈ `deadlock` / `ghost_slot` /
+  `storm` / `proxy_offline` / `proxy_stalled` / `proxy_reboot_storm`).
 
 ---
 
 ## Option A — the custom card (`custom:bluesight-card`)
 
 The custom card auto-discovers every proxy from `hass` (any
-`sensor.*_slots_used` that carries a `total` attribute), draws a slot-pip row
-per proxy, and renders a coloured incident banner. It is a single vanilla-JS
-file — no build step, no dependencies.
+`sensor.*_slots_used` that carries a `total` attribute) and renders, per proxy:
 
-### 1. Make the JS file available to Home Assistant
+- a **slot-pip row** (filled = used, empty = free) with a `used/total` count,
+- a **health line** — how long since that proxy last heard an advertisement and
+  how many devices it currently sees,
+- **`offline`** in place of the pips when the proxy's online sensor says it is
+  gone, and **`scan only — no connection slots`** for a passive scanner (which
+  habluetooth reports with zero slots).
 
-The file lives at `www/bluesight-card.js` in this repository. Home Assistant
-serves anything under its own `config/www/` directory at the URL `/local/`.
+Below that it draws a **coloured incident feed**: red for `deadlock` and
+`ghost_slot`, amber for everything else, each badge carrying the incident kind,
+the device address, the detail, and the proxies involved.
 
-**If you installed via HACS:** HACS copies the file for you and can register
-the resource automatically — you usually only need step 2 to confirm it. If
-HACS did not register it, add it manually as in step 2.
+It is a single vanilla-JS file — no build step, no dependencies.
 
-**Manual install:** copy `www/bluesight-card.js` into your Home Assistant
-`config/www/` folder, e.g. `config/www/bluesight-card.js`.
+### 1. Copy the JS file into `config/www/`
+
+> **BlueSight is a HACS *integration*, so HACS does NOT install this card.**
+> HACS only copies `www/` assets and registers dashboard resources for
+> repositories in the **Lovelace/plugin** category. Installing BlueSight gives
+> you `custom_components/bluesight/` and nothing else — the card is yours to
+> place. Both steps below are mandatory.
+
+The file lives at [`www/bluesight-card.js`](../www/bluesight-card.js) in this
+repository. Home Assistant serves anything under its own `config/www/`
+directory at the URL `/local/`, so copy it to
+`config/www/bluesight-card.js` (create the `www` folder if it does not exist).
+
+Check it is being served before going further — browse to
+`http://<your-ha>:8123/local/bluesight-card.js`. You should get the file, not a
+404.
 
 ### 2. Register the dashboard resource
 
@@ -39,7 +58,7 @@ Add it as a **module** resource so the browser loads it.
 
 **Via the UI** (Settings → Dashboards → ⋮ → *Resources* → *Add resource*):
 
-- **URL:** `/local/bluesight-card.js`
+- **URL:** `/local/bluesight-card.js?v=0.3.0`
 - **Resource type:** `JavaScript Module`
 
 > The *Resources* menu only appears when dashboards are in *Advanced Mode*
@@ -50,9 +69,14 @@ Add it as a **module** resource so the browser loads it.
 
 ```yaml
 resources:
-  - url: /local/bluesight-card.js
+  - url: /local/bluesight-card.js?v=0.3.0
     type: module
 ```
+
+The `?v=` suffix is a cache-buster, and it matters: browsers cache ES modules
+aggressively, so **after replacing the file with a newer version you must bump
+that number** — otherwise the old card keeps rendering and it looks like the
+update did nothing.
 
 After adding the resource, hard-refresh the browser (Ctrl/Cmd+Shift+R) so the
 new module is picked up.
@@ -88,8 +112,8 @@ If no proxies are found the card shows a helpful hint instead of failing.
 ## Option B — native-card fallback (no custom JavaScript)
 
 This uses only built-in Lovelace cards, so it works even if you never install
-the custom card. It gives you most of the value: a per-proxy slot glance and a
-conditional incident panel.
+the custom card. It gives you most of the value: per-proxy slot and health
+tiles, plus a conditional incident panel.
 
 Paste this as a **manual card** (or into raw-config YAML). Replace the example
 `sensor.*` entity ids with your own proxy entities (see them under
@@ -98,20 +122,23 @@ Developer Tools → States, filter `slots_`).
 ```yaml
 type: vertical-stack
 cards:
-  # --- Per-proxy slot usage -------------------------------------------------
-  - type: glance
-    title: BLE proxy slots
-    show_state: true
+  # --- Per-proxy slot usage + health ---------------------------------------
+  - type: grid
     columns: 2
-    entities:
-      - entity: sensor.living_room_proxy_slots_used
-        name: Living room · used
-      - entity: sensor.living_room_proxy_slots_free
-        name: Living room · free
-      - entity: sensor.garage_proxy_slots_used
-        name: Garage · used
-      - entity: sensor.garage_proxy_slots_free
-        name: Garage · free
+    square: false
+    cards:
+      - type: tile
+        entity: sensor.living_room_proxy_slots_used
+        name: Living room · slots
+      - type: tile
+        entity: sensor.living_room_proxy_last_device_seen
+        name: Living room · last advert
+      - type: tile
+        entity: sensor.garage_proxy_slots_used
+        name: Garage · slots
+      - type: tile
+        entity: sensor.garage_proxy_last_device_seen
+        name: Garage · last advert
 
   # --- Incident panel: only shown when an incident is active ----------------
   - type: conditional
@@ -143,17 +170,46 @@ cards:
 
 Notes:
 
-- The `entities`/`glance` list is static, so add one `_slots_used` /
-  `_slots_free` pair per proxy you have. (The custom card in Option A discovers
-  these automatically; the native fallback cannot, by design.)
+- The card list is static, so add one row per proxy you have. (The custom card
+  in Option A discovers them automatically; the native fallback cannot, by
+  design.) Find your entity ids under Developer Tools → States, filter `slots_`.
+- `sensor.<proxy>_slots_used` carries `total`, `free` and `allocated` as
+  attributes, so a tile on it already tells you the whole slot story; the
+  separate `_slots_free` sensor is there for templates and history.
 - The markdown card iterates the `incidents` attribute with a Jinja `for` loop
   and guards the empty case with `or []`, so it renders cleanly even mid-update.
 - `conditional` cards hide themselves entirely when their condition is false, so
   the incident panel only appears when something is actually wrong.
+- On a `sections` dashboard, drop the `vertical-stack` and put each group in its
+  own section behind a `heading` card — that is the current Home Assistant
+  layout idiom and it reflows better on phones.
+
+---
+
+## Troubleshooting
+
+**"Custom element doesn't exist: bluesight-card".** The module was not loaded.
+In order of likelihood: the resource is not registered (Option A step 2); the
+file is not actually at `config/www/bluesight-card.js` (check
+`/local/bluesight-card.js` in a browser); or the browser cached a failed load —
+hard-refresh with Ctrl/Cmd+Shift+R.
+
+**The card renders but an old version of it.** Bump the `?v=` suffix on the
+resource URL and hard-refresh. The browser will not re-fetch a module at an
+unchanged URL.
+
+**The card is empty / "No BlueSight proxies found".** The card looks for
+`sensor.*_slots_used` entities carrying a `total` attribute. If your proxies are
+named unusually, list them explicitly with the `proxies:` config key rather than
+relying on discovery.
+
+**A proxy shows `scan only — no connection slots`.** That is correct, not a
+bug: habluetooth registers non-connectable scanners with zero slots. They can
+see advertisements but never hold a connection.
 
 ---
 
 ## Roadmap
 
 Animated live-migration transitions (showing a slot moving between proxies) are
-intentionally out of scope for v1 and may arrive in a later release.
+intentionally out of scope and may arrive in a later release.
