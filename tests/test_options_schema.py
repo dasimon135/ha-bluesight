@@ -7,13 +7,13 @@ with ``importorskip`` so the pure suite still collects where HA core cannot
 import at all.
 """
 import pytest
-
 import voluptuous as vol
 
 pytest.importorskip("homeassistant.config_entries")
 
 from custom_components.bluesight.config_flow import build_options_schema
 from custom_components.bluesight.const import (
+    DEFAULT_OFFLINE_GRACE_S,
     DEFAULT_POLL_INTERVAL_S,
     DEFAULT_REBOOT_THRESHOLD,
     DEFAULT_REBOOT_WINDOW_S,
@@ -32,7 +32,13 @@ def test_defaults_come_from_const_when_options_empty():
         "stalled_threshold_s": DEFAULT_STALLED_THRESHOLD_S,
         "reboot_window_s": DEFAULT_REBOOT_WINDOW_S,
         "reboot_threshold": DEFAULT_REBOOT_THRESHOLD,
+        "offline_grace_s": DEFAULT_OFFLINE_GRACE_S,
     }
+
+
+def test_offline_grace_accepts_zero_to_disable_it():
+    """0 restores the pre-grace behaviour: report the first absent snapshot."""
+    assert build_options_schema({})({"offline_grace_s": 0})["offline_grace_s"] == 0.0
 
 
 def test_existing_options_override_defaults():

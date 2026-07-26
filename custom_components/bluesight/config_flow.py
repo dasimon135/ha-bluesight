@@ -19,6 +19,7 @@ from homeassistant.config_entries import (
 from homeassistant.core import callback
 
 from .const import (
+    DEFAULT_OFFLINE_GRACE_S,
     DEFAULT_POLL_INTERVAL_S,
     DEFAULT_REBOOT_THRESHOLD,
     DEFAULT_REBOOT_WINDOW_S,
@@ -35,6 +36,7 @@ CONF_POLL_INTERVAL_S = "poll_interval_s"
 CONF_STALLED_THRESHOLD_S = "stalled_threshold_s"
 CONF_REBOOT_WINDOW_S = "reboot_window_s"
 CONF_REBOOT_THRESHOLD = "reboot_threshold"
+CONF_OFFLINE_GRACE_S = "offline_grace_s"
 
 
 def build_options_schema(options: dict[str, Any]) -> vol.Schema:
@@ -71,6 +73,10 @@ def build_options_schema(options: dict[str, Any]) -> vol.Schema:
                 CONF_REBOOT_THRESHOLD,
                 default=options.get(CONF_REBOOT_THRESHOLD, DEFAULT_REBOOT_THRESHOLD),
             ): vol.All(vol.Coerce(int), vol.Range(min=2)),
+            vol.Required(
+                CONF_OFFLINE_GRACE_S,
+                default=options.get(CONF_OFFLINE_GRACE_S, DEFAULT_OFFLINE_GRACE_S),
+            ): vol.All(vol.Coerce(float), vol.Range(min=0)),
         }
     )
 
@@ -100,8 +106,8 @@ class BlueSightConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class BlueSightOptionsFlow(OptionsFlow):
-    """Expose the six tunables (storm window/threshold, poll interval,
-    stalled threshold, reboot window/threshold).
+    """Expose the tunables: storm window/threshold, poll interval, stalled
+    threshold, reboot window/threshold, and the offline grace period.
 
     ``config_entry`` is provided by the flow manager in current HA
     (>=2024.11); it must NOT be assigned in ``__init__``.

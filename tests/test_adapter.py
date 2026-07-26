@@ -1,4 +1,4 @@
-from custom_components.bluesight.adapter import current_proxy_slots, SlotAdapter
+from custom_components.bluesight.adapter import SlotAdapter, current_proxy_slots
 from custom_components.bluesight.model import ProxySlots
 
 

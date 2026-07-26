@@ -8,10 +8,13 @@ Confirmed against habluetooth as bundled in Home Assistant 2026.7.4.
 """
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import Any
 
 from .model import ProxyHealth, ProxySlots, normalize_address
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def get_manager() -> Any:
@@ -69,20 +72,45 @@ class SlotAdapter:
             self._unsub = None
 
 
+def _scanner_health(scanner: Any) -> ProxyHealth:
+    """Read one scanner's health, tolerating an absent optional attribute.
+
+    ``time_since_last_detection`` and ``discovered_devices`` are the two
+    habluetooth members most likely to move; a scanner subclass that lacks
+    either degrades to a neutral value rather than taking the whole snapshot
+    down (see :func:`current_proxy_health`).
+    """
+    since = getattr(scanner, "time_since_last_detection", None)
+    devices = getattr(scanner, "discovered_devices", None)
+    return ProxyHealth(
+        source=scanner.source,
+        name=(getattr(scanner, "name", None) or scanner.source),
+        connectable=bool(getattr(scanner, "connectable", False)),
+        online=True,
+        seconds_since_detection=float(since()) if callable(since) else 0.0,
+        device_count=len(devices) if devices is not None else 0,
+    )
+
+
 def current_proxy_health(manager: Any) -> list[ProxyHealth]:
-    """Snapshot current per-proxy scanner health as ProxyHealth."""
+    """Snapshot current per-proxy scanner health as ProxyHealth.
+
+    A scanner that cannot be read is skipped rather than aborting the whole
+    snapshot: this runs every poll interval, so one misbehaving scanner would
+    otherwise blank every entity the integration owns.
+    """
     scanners = manager.async_current_scanners() or []
-    return [
-        ProxyHealth(
-            source=s.source,
-            name=(getattr(s, "name", None) or s.source),
-            connectable=bool(getattr(s, "connectable", False)),
-            online=True,
-            seconds_since_detection=float(s.time_since_last_detection()),
-            device_count=len(s.discovered_devices),
-        )
-        for s in scanners
-    ]
+    health: list[ProxyHealth] = []
+    for scanner in scanners:
+        try:
+            health.append(_scanner_health(scanner))
+        except (AttributeError, TypeError, ValueError):
+            _LOGGER.debug(
+                "Skipping unreadable scanner %r in health snapshot",
+                scanner,
+                exc_info=True,
+            )
+    return health
 
 
 class ScannerAdapter:

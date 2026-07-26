@@ -21,11 +21,11 @@
  *   title: BlueSight                        # card header text
  */
 
-const CARD_VERSION = "0.1.0";
+const CARD_VERSION = "0.3.0";
 
 // eslint-disable-next-line no-console
 console.info(
-  `%c BLE-TRIAGE-CARD %c v${CARD_VERSION} `,
+  `%c BLUESIGHT-CARD %c v${CARD_VERSION} `,
   "color: white; background: #03a9f4; font-weight: 700;",
   "color: #03a9f4; background: white; font-weight: 700;"
 );
@@ -117,6 +117,34 @@ class BlueSightCard extends HTMLElement {
     return String(friendly).replace(/\s*Slots Used$/i, "").trim() || entityId;
   }
 
+  /**
+   * The proxy-health companions of a `sensor.<proxy>_slots_used` entity.
+   * BlueSight names them off the same device slug, so they are derivable
+   * without a second discovery pass. Either may legitimately be absent.
+   */
+  _healthEntities(entityId) {
+    const slug = entityId.replace(/^sensor\./, "").replace(/_slots_used$/, "");
+    return {
+      online: `binary_sensor.${slug}_online`,
+      lastSeen: `sensor.${slug}_last_device_seen`,
+    };
+  }
+
+  /** Compact "3 m" / "2 h" style age, from a seconds value. */
+  _formatAge(seconds) {
+    const n = this._toInt(seconds, -1);
+    if (n < 0) {
+      return null;
+    }
+    if (n < 90) {
+      return `${n} s`;
+    }
+    if (n < 5400) {
+      return `${Math.round(n / 60)} min`;
+    }
+    return `${Math.round(n / 3600)} h`;
+  }
+
   _toInt(value, fallback = 0) {
     const n = parseInt(value, 10);
     return Number.isFinite(n) ? n : fallback;
@@ -172,6 +200,15 @@ class BlueSightCard extends HTMLElement {
       }
       const a = s.attributes || {};
       parts.push(`${id}:${s.state}:${a.total}:${a.free}`);
+      // The health companions are drawn too, so they belong in the signature.
+      const health = this._healthEntities(id);
+      const online = hass.states ? hass.states[health.online] : undefined;
+      const lastSeen = hass.states ? hass.states[health.lastSeen] : undefined;
+      parts.push(`on:${online ? online.state : "-"}`);
+      parts.push(
+        `seen:${lastSeen ? this._formatAge(lastSeen.state) : "-"}:` +
+          `${lastSeen ? (lastSeen.attributes || {}).device_count : "-"}`
+      );
     }
     if (incidentState) {
       parts.push(`inc:${incidentState.state}`);
@@ -180,7 +217,10 @@ class BlueSightCard extends HTMLElement {
       // Length + a hash-ish join is enough to detect changes cheaply.
       parts.push(`incN:${incidents.length}`);
       for (const inc of incidents) {
-        parts.push(`${inc.kind}|${inc.address}|${inc.detail}`);
+        // `sources` is rendered for deadlocks, so a change of the proxy set
+        // must invalidate the signature too.
+        const sources = Array.isArray(inc.sources) ? inc.sources.join(",") : "";
+        parts.push(`${inc.kind}|${inc.address}|${inc.detail}|${sources}`);
       }
     } else {
       parts.push("inc:missing");
@@ -230,11 +270,11 @@ class BlueSightCard extends HTMLElement {
 
     for (const entityId of proxyEntities) {
       const stateObj = hass.states ? hass.states[entityId] : undefined;
-      container.appendChild(this._renderProxyTile(entityId, stateObj));
+      container.appendChild(this._renderProxyTile(entityId, stateObj, hass));
     }
   }
 
-  _renderProxyTile(entityId, stateObj) {
+  _renderProxyTile(entityId, stateObj, hass) {
     const tile = document.createElement("div");
     tile.className = "proxy";
 
@@ -253,6 +293,14 @@ class BlueSightCard extends HTMLElement {
       return tile;
     }
 
+    const states = (hass && hass.states) || {};
+    const health = this._healthEntities(entityId);
+    const onlineState = states[health.online];
+    // The dedicated online sensor is authoritative when present; fall back to
+    // the slot sensor's own availability for a pre-0.2 install.
+    const offline = onlineState
+      ? onlineState.state !== "on"
+      : stateObj.state === "unavailable" || stateObj.state === "unknown";
     const unavailable =
       stateObj.state === "unavailable" || stateObj.state === "unknown";
     const attrs = stateObj.attributes || {};
@@ -260,7 +308,7 @@ class BlueSightCard extends HTMLElement {
     const used = this._toInt(stateObj.state, 0);
 
     name.textContent = this._proxyName(stateObj, entityId);
-    if (unavailable) {
+    if (offline || unavailable) {
       tile.classList.add("offline");
       count.textContent = "offline";
     } else {
@@ -269,9 +317,30 @@ class BlueSightCard extends HTMLElement {
     name.appendChild(count);
     tile.appendChild(name);
 
+    // Proxy-health line: how long since this proxy last heard anything, and
+    // how many devices it currently sees.
+    const lastSeenState = states[health.lastSeen];
+    if (lastSeenState && !offline) {
+      const age = this._formatAge(lastSeenState.state);
+      if (age !== null) {
+        const meta = document.createElement("div");
+        meta.className = "proxy-meta";
+        const seen = this._toInt(
+          (lastSeenState.attributes || {}).device_count,
+          -1
+        );
+        meta.textContent =
+          seen >= 0
+            ? `last advert ${age} ago · ${seen} devices seen`
+            : `last advert ${age} ago`;
+        tile.appendChild(meta);
+      }
+    }
+
     const pips = document.createElement("div");
     pips.className = "pips";
-    if (total > 0 && !unavailable) {
+    const drawable = !offline && !unavailable;
+    if (total > 0 && drawable) {
       // Clamp used into [0, total] so a stale value can't over/under-draw.
       const filled = Math.max(0, Math.min(used, total));
       for (let i = 0; i < total; i += 1) {
@@ -279,11 +348,12 @@ class BlueSightCard extends HTMLElement {
         pip.className = i < filled ? "pip filled" : "pip";
         pips.appendChild(pip);
       }
-    } else if (!unavailable) {
-      // total is 0/unknown -- show a hint rather than an empty row.
+    } else if (drawable) {
+      // A passive (non-connectable) scanner reports slots=0: it can see
+      // devices but never hold a connection, so there is nothing to draw.
       const hint = document.createElement("span");
       hint.className = "pip-hint";
-      hint.textContent = "no slot data";
+      hint.textContent = "scan only — no connection slots";
       pips.appendChild(hint);
     }
     tile.appendChild(pips);
@@ -367,6 +437,15 @@ class BlueSightCard extends HTMLElement {
       badge.appendChild(det);
     }
 
+    // Which proxies are involved — the actionable part of a deadlock.
+    const sources = inc && Array.isArray(inc.sources) ? inc.sources : [];
+    if (sources.length) {
+      const src = document.createElement("span");
+      src.className = "incident-addr";
+      src.textContent = `on ${sources.join(", ")}`;
+      badge.appendChild(src);
+    }
+
     return badge;
   }
 
@@ -420,6 +499,11 @@ class BlueSightCard extends HTMLElement {
         color: var(--secondary-text-color, var(--primary-text-color));
         font-weight: 400;
         font-size: 0.95rem;
+      }
+      .proxy-meta {
+        margin-top: 4px;
+        font-size: 0.8rem;
+        color: var(--secondary-text-color, #888);
       }
       .pips {
         display: flex;

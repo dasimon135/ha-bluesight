@@ -1,3 +1,26 @@
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF"]
+# Home Assistant's own convention: multi-import `from x import a as a, b as b`
+# style in coordinator.py, and `Any` on the habluetooth adapter boundary.
+ignore = ["B008"]
+
+[tool.ruff.lint.isort]
+# Home Assistant's own convention: `homeassistant` is its own import section,
+# between third-party and this integration's relative imports.
+known-first-party = ["homeassistant"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests import the module under test after an `importorskip` guard, which has
+# to run before the import can succeed; and their throwaway fakes are allowed
+# long assertion lines and plain mutable class attributes.
+"tests/*" = ["E402", "E501", "RUF012", "RUF059"]
+# One-off asset generator, not shipped with the integration.
+"scripts/*" = ["RUF005", "B905"]
+
 [tool.pytest.ini_options]
 # Run pytest from the repo root; make the repo importable so that
 # `custom_components.bluesight...` resolves without installing the package.

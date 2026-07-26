@@ -6,7 +6,7 @@ plain pytest.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 
 def normalize_address(addr: str) -> str:
@@ -19,7 +19,7 @@ def normalize_address(addr: str) -> str:
     return addr.strip().upper()
 
 
-class IncidentKind(str, Enum):
+class IncidentKind(StrEnum):
     DEADLOCK = "deadlock"        # same address allocated on >=2 proxies (#176516)
     GHOST_SLOT = "ghost_slot"    # slot held while entity unavailable
     STORM = "storm"              # burst of connection failures
@@ -42,7 +42,18 @@ class ProxySlots:
 
     @property
     def is_full(self) -> bool:
-        return self.free <= 0
+        """True only for a proxy that HAS slots and has none left.
+
+        habluetooth registers non-connectable scanners with ``slots=0, free=0``
+        (they cannot hold connections at all), so a bare ``free <= 0`` would
+        report every passive scanner as saturated.
+        """
+        return self.slots > 0 and self.free <= 0
+
+    @property
+    def is_connectable(self) -> bool:
+        """True if this proxy exposes any connection slot at all."""
+        return self.slots > 0
 
 
 @dataclass(frozen=True, slots=True)

@@ -7,7 +7,12 @@ proxy sources without ever creating duplicates.
 """
 from __future__ import annotations
 
-from homeassistant.components.sensor import SensorEntity, SensorStateClass
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorStateClass,
+)
+from homeassistant.const import UnitOfTime
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -137,8 +142,9 @@ class LastDeviceSeenSensor(CoordinatorEntity[BlueSightCoordinator], SensorEntity
     _attr_has_entity_name = True
     _attr_name = "Last device seen"
     _attr_icon = "mdi:bluetooth-audio"
+    _attr_device_class = SensorDeviceClass.DURATION
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_native_unit_of_measurement = "s"
+    _attr_native_unit_of_measurement = UnitOfTime.SECONDS
 
     def __init__(self, coordinator: BlueSightCoordinator, source: str) -> None:
         super().__init__(coordinator)

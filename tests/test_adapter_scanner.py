@@ -1,4 +1,4 @@
-from custom_components.bluesight.adapter import current_proxy_health, ScannerAdapter
+from custom_components.bluesight.adapter import ScannerAdapter, current_proxy_health
 from custom_components.bluesight.model import ProxyHealth
 
 

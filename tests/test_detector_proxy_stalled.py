@@ -1,5 +1,5 @@
-from custom_components.bluesight.model import ProxyHealth, IncidentKind
 from custom_components.bluesight.detector import detect_stalled_proxies
+from custom_components.bluesight.model import IncidentKind, ProxyHealth
 
 
 def _h(src, online, age):

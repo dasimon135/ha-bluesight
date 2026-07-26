@@ -9,20 +9,29 @@ constructs the coordinator and stores it on the entry's ``runtime_data``.
 """
 from __future__ import annotations
 
+import voluptuous as vol
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall, callback
+from homeassistant.helpers import config_validation as cv
 
 from .const import (
+    ATTR_SOURCE,
+    DEFAULT_OFFLINE_GRACE_S,
     DEFAULT_POLL_INTERVAL_S,
     DEFAULT_REBOOT_THRESHOLD,
     DEFAULT_REBOOT_WINDOW_S,
     DEFAULT_STALLED_THRESHOLD_S,
     DEFAULT_STORM_THRESHOLD,
     DEFAULT_STORM_WINDOW_S,
+    DOMAIN,
+    SERVICE_FORGET_PROXY,
 )
 from .coordinator import BlueSightCoordinator
 from .notify import NotificationManager
+
+FORGET_PROXY_SCHEMA = vol.Schema({vol.Required(ATTR_SOURCE): cv.string})
 
 type BlueSightConfigEntry = ConfigEntry[BlueSightCoordinator]
 
@@ -49,6 +58,7 @@ async def async_setup_entry(
         ),
         reboot_window_s=opts.get("reboot_window_s", DEFAULT_REBOOT_WINDOW_S),
         reboot_threshold=opts.get("reboot_threshold", DEFAULT_REBOOT_THRESHOLD),
+        offline_grace_s=opts.get("offline_grace_s", DEFAULT_OFFLINE_GRACE_S),
     )
     await coordinator.async_setup()
     entry.runtime_data = coordinator
@@ -68,8 +78,35 @@ async def async_setup_entry(
 
     # Reload the entry when the user edits options so new tunables take effect.
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+    _async_register_services(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
+
+
+@callback
+def _async_register_services(hass: HomeAssistant) -> None:
+    """Register the integration-level actions (idempotent).
+
+    BlueSight is single-instance, so the action resolves the one loaded entry
+    itself rather than taking a target.
+    """
+    if hass.services.has_service(DOMAIN, SERVICE_FORGET_PROXY):
+        return
+
+    async def _forget_proxy(call: ServiceCall) -> None:
+        """Stop tracking a proxy, clearing its ``proxy_offline`` incident.
+
+        A retired or replaced proxy is remembered forever, so its offline
+        incident can never resolve on its own. This is the escape hatch.
+        """
+        for entry in hass.config_entries.async_loaded_entries(DOMAIN):
+            coordinator: BlueSightCoordinator = entry.runtime_data
+            if coordinator.forget_proxy(call.data[ATTR_SOURCE]):
+                await coordinator.async_request_refresh()
+
+    hass.services.async_register(
+        DOMAIN, SERVICE_FORGET_PROXY, _forget_proxy, schema=FORGET_PROXY_SCHEMA
+    )
 
 
 async def _async_update_listener(

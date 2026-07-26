@@ -15,12 +15,12 @@ import pytest
 # ``hass`` fixture), while CI/Linux collects and runs these.
 pytest.importorskip("pytest_homeassistant_custom_component.plugins")
 
-from homeassistant.config_entries import SOURCE_USER
-from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.bluesight.const import DOMAIN
+from homeassistant.config_entries import SOURCE_USER
+from homeassistant.core import HomeAssistant
+from homeassistant.data_entry_flow import FlowResultType
 
 
 @pytest.fixture(autouse=True)
@@ -58,7 +58,7 @@ async def test_options_flow_round_trips_tunables(hass: HomeAssistant) -> None:
 
     Only the three storm/poll fields are supplied; the three proxy-health
     fields are ``Required`` with defaults, so voluptuous fills them in — the
-    stored options therefore carry all six keys.
+    stored options therefore carry every key, not just the submitted ones.
 
     The entry is added to hass but deliberately not set up: the round-trip
     into ``entry.options`` is a property of the options flow alone and should
@@ -87,4 +87,5 @@ async def test_options_flow_round_trips_tunables(hass: HomeAssistant) -> None:
         "stalled_threshold_s": 180.0,
         "reboot_window_s": 600.0,
         "reboot_threshold": 3,
+        "offline_grace_s": 90.0,
     }

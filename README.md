@@ -44,9 +44,9 @@ Assistant already tracks internally:
 
 | Detector | Fires when |
 | --- | --- |
-| **Deadlock** (`#176516`) | the same device address is allocated on **N or more** proxies at once — a stale duplicate allocation across the pool. |
+| **Deadlock** (`#176516`) | the same device address is allocated on **two or more distinct** proxies at once — a BLE peripheral can only be connected to one central, so the extra allocations are stale duplicates spending slots across the pool. |
 | **Ghost slot** | an address is in a proxy's allocated list while its Home Assistant device is dead — the device is found in the registry (by MAC in `connections` or `identifiers`) and **all** its entities are `unavailable`. Availability is judged from entity state, not advertising: a connected device stops advertising, so advertisement presence would false-positive every healthy persistent connection. Unmanaged devices (no registry entry) are never flagged — see [Limitations](#limitations). |
-| **Pairing storm** | a device produces a burst of availability flaps beyond the configured threshold inside the storm window (best-effort heuristic — see [Limitations](#limitations)). |
+| **Pairing storm** | a device's slot is released, over and over, while its Home Assistant device is unavailable — beyond the configured threshold inside the storm window (best-effort heuristic — see [Limitations](#limitations)). |
 
 It surfaces the state as:
 
@@ -95,8 +95,10 @@ per-proxy instrumentation and are deferred to the v1.5 ESPHome component.
 
 ## Requirements
 
-- **Home Assistant ≥ 2025.2** — this is when the `habluetooth` slot-allocation
-  API BlueSight rides became available.
+- **Home Assistant ≥ 2025.7** — the slot-allocation API arrived in 2025.2, but
+  the proxy-health layer also needs `habluetooth`'s scanner-registration
+  callbacks, which landed later. On an older release the integration fails to
+  set up rather than degrading.
 - **One or more ESPHome Bluetooth proxies** (or local adapters) that expose
   connection slots. With a single adapter you still get slot visibility and
   ghost/storm detection; the deadlock detector is most meaningful across
@@ -125,6 +127,21 @@ Open the integration's **Configure** dialog to tune:
 | Stalled threshold | 180 s | how long a proxy may go without seeing any advertisement before it is flagged as stalled. |
 | Reboot window | 600 s | sliding window over which proxy register/unregister cycles are counted. |
 | Reboot threshold | 3 | reboots within the window that trip a reboot-storm incident. |
+| Offline grace | 90 s | how long a proxy may be missing before it is reported offline. A proxy drops off the bus for ~20-30 s on every OTA update; 0 reports the first missing snapshot. |
+
+### Actions
+
+| Action | What it does |
+| --- | --- |
+| `bluesight.forget_proxy` | Stops tracking a proxy (field: `source`, its MAC) and clears any open **proxy offline** incident. A proxy seen online once is remembered for good, so this is how you retire or replace one without leaving a permanent alert. |
+
+### Diagnostics
+
+The integration's **⋮ → Download diagnostics** dumps the exact slot
+allocations, per-proxy health, every open incident, and the current contents of
+the storm and reboot windows. Attach it to a bug report. BLE addresses are *not*
+redacted — they are the subject of the report, and a redacted dump cannot show
+that the same address is held on two proxies.
 
 ## Entities
 
@@ -134,7 +151,12 @@ Open the integration's **Configure** dialog to tune:
 | `sensor.<proxy>_slots_free` | sensor | slots still free on that proxy | — |
 | `binary_sensor.<proxy>_online` | binary_sensor (`connectivity`) | `on` while the proxy is a registered scanner | — |
 | `sensor.<proxy>_last_device_seen` | sensor (seconds) | seconds since that proxy last heard an advertisement | `device_count` |
-| `binary_sensor.bluesight_incident` | binary_sensor (`problem`) | `on` when any incident is open | `incident_count`, `incidents` (list of `{kind, address, sources, detail}`; `kind` ∈ `deadlock` / `ghost_slot` / `storm` / `proxy_offline` / `proxy_stalled` / `proxy_reboot_storm`) |
+| `binary_sensor.bluesight_incident` | binary_sensor (`problem`) | `on` when any incident is open | `incident_count`, `availability_degraded`, `incidents` (list of `{kind, address, sources, detail}`; `kind` ∈ `deadlock` / `ghost_slot` / `storm` / `proxy_offline` / `proxy_stalled` / `proxy_reboot_storm`) |
+
+`availability_degraded` turns `true` if the device/entity registry lookup behind
+ghost-slot detection ever fails. Ghost verdicts are biased toward "alive", so a
+degraded signal means *absence of ghost incidents proves nothing* — it is
+surfaced here rather than only in the log.
 
 Each proxy is registered as its own Home Assistant device carrying its two slot
 sensors; the incident binary sensor lives on a single **BlueSight** service
@@ -187,9 +209,13 @@ proxies.
 BlueSight v1 is honest about its edges:
 
 - **Storm detection is a best-effort heuristic.** With HA-only data there are no
-  raw SMP-failure counters, so v1 infers storms from availability flaps within
-  the window. It is a useful early warning, not a precise SMP tally; the v1.5
-  ESPHome component is what upgrades it to real bond-failure telemetry.
+  raw SMP-failure counters, so v1 infers a failed connection from the only thing
+  it can observe: a slot **released** while the device it belonged to is
+  unavailable. A healthy poll cycle also releases its slot, but leaves its
+  entities available, so it is not counted. It is a useful early warning, not a
+  precise SMP tally; the v1.5 ESPHome component is what upgrades it to real
+  bond-failure telemetry. It also inherits the ghost-slot limitation below:
+  a device Home Assistant does not manage can never be judged as failing.
 - **Ghost detection only judges HA-managed devices.** Availability comes from
   the device's Home Assistant entities, so a slot held for a device that has no
   registry entry (an unmanaged BLE peripheral HA does not track) is treated as

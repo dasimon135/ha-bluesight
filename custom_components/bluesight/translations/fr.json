@@ -1,0 +1,51 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configurer BlueSight",
+        "description": "BlueSight lit vos proxys Bluetooth existants et ne demande aucune configuration pour démarrer. Les réglages de tempête et d'interrogation se règlent ensuite dans les options de l'intégration."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Une seule instance de BlueSight est autorisée. Il n'y a qu'une pile Bluetooth par Home Assistant."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options BlueSight",
+        "description": "Réglez la fenêtre de tempête d'appairage, l'interrogation de secours et les seuils de santé des proxys.",
+        "data": {
+          "storm_window_s": "Fenêtre de tempête (secondes)",
+          "storm_threshold": "Seuil de tempête (échecs)",
+          "poll_interval_s": "Intervalle d'interrogation (secondes)",
+          "stalled_threshold_s": "Seuil de proxy muet (secondes)",
+          "reboot_window_s": "Fenêtre de redémarrages (secondes)",
+          "reboot_threshold": "Seuil de redémarrages",
+          "offline_grace_s": "Délai de grâce hors ligne (secondes)"
+        },
+        "data_description": {
+          "storm_window_s": "Fenêtre glissante sur laquelle les échecs de connexion répétés sont comptés.",
+          "storm_threshold": "Nombre d'échecs dans la fenêtre qui déclenche un incident de tempête d'appairage.",
+          "poll_interval_s": "Fréquence de rafraîchissement de l'instantané des slots, en secours des mises à jour poussées.",
+          "stalled_threshold_s": "Durée pendant laquelle un proxy peut ne recevoir aucune annonce Bluetooth avant d'être signalé comme muet.",
+          "reboot_window_s": "Fenêtre glissante sur laquelle les redémarrages de proxy sont comptés.",
+          "reboot_threshold": "Nombre de redémarrages dans la fenêtre qui déclenche un incident de proxy instable.",
+          "offline_grace_s": "Durée d'absence tolérée avant de signaler un proxy hors ligne. Un proxy disparaît du bus à chaque mise à jour OTA ; mettez 0 pour signaler dès le premier instantané manquant."
+        }
+      }
+    }
+  },
+  "services": {
+    "forget_proxy": {
+      "name": "Oublier un proxy",
+      "description": "Cesse de suivre un proxy et referme l'incident « proxy hors ligne » correspondant. À utiliser après avoir retiré ou remplacé un proxy : sinon il reste mémorisé et continue d'alerter.",
+      "fields": {
+        "source": {
+          "name": "Source",
+          "description": "Adresse MAC du proxy à oublier, telle qu'affichée sur son appareil BlueSight."
+        }
+      }
+    }
+  }
+}

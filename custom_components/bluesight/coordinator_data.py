@@ -25,6 +25,11 @@ class BlueSightData:
     proxies: list[ProxySlots] = field(default_factory=list)
     incidents: list[Incident] = field(default_factory=list)
     proxies_health: list[ProxyHealth] = field(default_factory=list)
+    # True once an availability lookup has failed: ghost-slot detection is then
+    # biased toward "alive" and its verdicts must be read with that in mind.
+    # Surfaced on the incident sensor and in diagnostics so a broken signal is
+    # observable instead of silently reading as "nothing wrong".
+    availability_degraded: bool = False
 
 
 def build_triage_data(
@@ -36,6 +41,9 @@ def build_triage_data(
     known_sources: set[str] | None = None,
     reboot_window: FailureWindow | None = None,
     stalled_threshold_s: float = 180.0,
+    offline_for: dict[str, float] | None = None,
+    offline_grace_s: float = 0.0,
+    availability_degraded: bool = False,
 ) -> BlueSightData:
     """Pure assembly: run all detectors over a snapshot + the rolling failure
     windows and return the combined incident list. No HA, no I/O.
@@ -55,7 +63,9 @@ def build_triage_data(
         if inc is not None:
             incidents.append(inc)
     # Proxy-health incidents
-    incidents += detect_offline_proxies(proxies_health, known_sources)
+    incidents += detect_offline_proxies(
+        proxies_health, known_sources, offline_for, offline_grace_s
+    )
     incidents += detect_stalled_proxies(proxies_health, stalled_threshold_s)
     if reboot_window is not None:
         for src in reboot_window.addresses():
@@ -63,5 +73,8 @@ def build_triage_data(
             if inc is not None:
                 incidents.append(inc)
     return BlueSightData(
-        proxies=proxies, incidents=incidents, proxies_health=proxies_health
+        proxies=proxies,
+        incidents=incidents,
+        proxies_health=proxies_health,
+        availability_degraded=availability_degraded,
     )
