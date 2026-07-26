@@ -19,6 +19,7 @@ pytest.importorskip("homeassistant.helpers.update_coordinator")
 from custom_components.bluesight import coordinator as coordinator_module
 from custom_components.bluesight.coordinator import BlueSightCoordinator
 from custom_components.bluesight.model import IncidentKind
+from custom_components.bluesight.storm_signal import ReleaseTracker
 from custom_components.bluesight.window import FailureWindow
 
 
@@ -26,12 +27,15 @@ def _bare_coordinator() -> BlueSightCoordinator:
     """A coordinator instance without HA wiring (no hass, no habluetooth)."""
     c = object.__new__(BlueSightCoordinator)
     c._window = FailureWindow(window_s=300, threshold=5, clock=lambda: 0.0)
-    c._prev_availability = {}
+    c._release_tracker = ReleaseTracker()
     c._availability_degraded = False
+    c._stopped = False
     # Proxy-health wiring (Task 7).
     c._stalled_threshold_s = 180.0
     c._reboot_window = FailureWindow(window_s=600, threshold=3, clock=lambda: 0.0)
-    c._known_sources = set()
+    c._last_online = {}
+    c._offline_grace_s = 0.0
+    c._names = {}
     return c
 
 
@@ -53,22 +57,22 @@ def test_name_for_falls_back_to_source():
     assert _bare_coordinator()._name_for("AA:BB:CC") == "AA:BB:CC"
 
 
-def test_record_flaps_records_present_to_absent():
+def test_name_for_uses_the_last_seen_scanner_name():
+    """Every entity on a proxy device must report the same device name, so the
+    slot sensors have to see the friendly name the health snapshot carries."""
     c = _bare_coordinator()
-    c._record_flaps({"AA": True})
-    assert c._window.count("AA") == 0
-    c._record_flaps({"AA": False})   # present -> absent flap
-    assert c._window.count("AA") == 1
+    c._names = {"AA:BB:CC": "proxy-salon"}
+    assert c._name_for("aa:bb:cc") == "proxy-salon"
 
 
-def test_record_flaps_ignores_non_transitions():
+def test_forget_proxy_drops_a_tracked_source():
     c = _bare_coordinator()
-    c._record_flaps({"AA": False})   # first seen absent: no prior True
-    c._record_flaps({"AA": False})
-    assert c._window.count("AA") == 0
-    c._record_flaps({"BB": True})
-    c._record_flaps({"BB": True})    # stays present
-    assert c._window.count("BB") == 0
+    c._last_online = {"AA:BB:CC": 0.0}
+    c._names = {"AA:BB:CC": "proxy-salon"}
+    assert c.forget_proxy("aa:bb:cc") is True
+    assert c.tracked_sources == set()
+    assert c._names == {}
+    assert c.forget_proxy("AA:BB:CC") is False
 
 
 def test_snapshot_flags_ghost_slot(monkeypatch):
@@ -317,8 +321,9 @@ class _ImmediateLoopHass:
         def call_soon_threadsafe(self, fn, *args):
             fn(*args)
 
-    def __init__(self):
+    def __init__(self, is_stopping=False):
         self.loop = self._Loop()
+        self.is_stopping = is_stopping
 
 
 def test_record_reboot_schedules_normalized_window_record():
@@ -365,5 +370,98 @@ def test_snapshot_flags_stalled_proxy_and_records_known_source(monkeypatch):
     assert any(i.kind is IncidentKind.PROXY_STALLED for i in data.incidents)
     # The stalled proxy surfaces in proxies_health and is remembered (normalized)
     # as a known source for future offline detection.
-    assert "AA:BB:CC:DD:EE:FF" in c._known_sources
+    assert "AA:BB:CC:DD:EE:FF" in c.tracked_sources
     assert [h.source for h in data.proxies_health] == ["AA:BB:CC:DD:EE:FF"]
+    # Its friendly name is captured for the slot sensors' DeviceInfo.
+    assert c._name_for("AA:BB:CC:DD:EE:FF") == "Kitchen proxy"
+
+
+def test_record_reboot_is_skipped_while_home_assistant_stops():
+    """HA shutdown unregisters every scanner; those are not reboots."""
+    c = _bare_coordinator()
+    c.hass = _ImmediateLoopHass(is_stopping=True)
+    c._record_reboot("AA:BB:CC:DD:EE:FF")
+    assert c._reboot_window.count("AA:BB:CC:DD:EE:FF") == 0
+
+
+def test_push_snapshot_no_ops_once_stopped():
+    """A push already queued on the loop must not snapshot a torn-down
+    coordinator."""
+    c = _bare_coordinator()
+    c._stopped = True
+    c._snapshot = lambda: pytest.fail("snapshot taken after shutdown")
+    c.async_set_updated_data = lambda data: pytest.fail("published after shutdown")
+    c._push_snapshot()
+
+
+def _offline_coordinator(monkeypatch, *, grace_s, elapsed):
+    """A coordinator whose only known proxy went away `elapsed` seconds ago."""
+    c = _bare_coordinator()
+    c._offline_grace_s = grace_s
+
+    class _FakeMgr:
+        def async_current_allocations(self, source=None):
+            return []
+
+        def async_current_scanners(self):
+            return []
+
+    c._manager = _FakeMgr()
+    c.hass = object()
+    c._build_mac_index = lambda: {}
+    monkeypatch.setattr(coordinator_module.er, "async_get", lambda hass: None)
+    monkeypatch.setattr(coordinator_module.time, "monotonic", lambda: elapsed)
+    c._last_online = {"AA:BB:CC:DD:EE:FF": 0.0}
+    return c
+
+
+def test_offline_incident_waits_out_the_grace_period(monkeypatch):
+    """An ESPHome proxy drops off the bus for ~20-30s on every OTA update."""
+    data = _offline_coordinator(monkeypatch, grace_s=90.0, elapsed=30.0)._snapshot()
+    assert not any(i.kind is IncidentKind.PROXY_OFFLINE for i in data.incidents)
+
+
+def test_offline_incident_fires_after_the_grace_period(monkeypatch):
+    data = _offline_coordinator(monkeypatch, grace_s=90.0, elapsed=120.0)._snapshot()
+    assert [i.address for i in data.incidents if i.kind is IncidentKind.PROXY_OFFLINE] \
+        == ["AA:BB:CC:DD:EE:FF"]
+
+
+def test_forgetting_a_proxy_clears_its_offline_incident(monkeypatch):
+    c = _offline_coordinator(monkeypatch, grace_s=90.0, elapsed=120.0)
+    assert c._snapshot().incidents != []
+    assert c.forget_proxy("AA:BB:CC:DD:EE:FF") is True
+    assert c._snapshot().incidents == []
+
+
+def test_snapshot_records_a_release_of_a_dead_device_as_a_failure(monkeypatch):
+    """The storm signal: a failed connection releases its slot, so the failure
+    is only observable at the release, not as an availability flap."""
+    c = _bare_coordinator()
+    allocated = ["11:22:33:44:55:66"]
+
+    class _FakeAlloc:
+        source, slots, free = "AA:BB:CC:DD:EE:FF", 3, 2
+
+        @property
+        def allocated(self):
+            return allocated
+
+    class _FakeMgr:
+        def async_current_allocations(self, source=None):
+            return [_FakeAlloc()]
+
+        def async_current_scanners(self):
+            return []
+
+    c._manager = _FakeMgr()
+    c.hass = object()
+    c._build_mac_index = lambda: {}
+    monkeypatch.setattr(coordinator_module.er, "async_get", lambda hass: None)
+    c._device_is_alive = lambda address, mac_index, ent_reg: False
+
+    c._snapshot()
+    assert c.storm_window.count("11:22:33:44:55:66") == 0
+    allocated.clear()               # connection failed, slot released
+    c._snapshot()
+    assert c.storm_window.count("11:22:33:44:55:66") == 1

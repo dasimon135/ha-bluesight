@@ -33,7 +33,19 @@ def test_off_when_no_incidents() -> None:
     sensor = IncidentBinarySensor(_coord())
     assert sensor.is_on is False
     assert sensor.unique_id == "bluesight_incident"
-    assert sensor.extra_state_attributes == {"incident_count": 0, "incidents": []}
+    assert sensor.extra_state_attributes == {
+        "incident_count": 0,
+        "availability_degraded": False,
+        "incidents": [],
+    }
+
+
+def test_degraded_availability_is_surfaced() -> None:
+    """A broken ghost-slot signal must never read as a clean bill of health."""
+    coordinator = _FakeCoordinator(BlueSightData(availability_degraded=True))
+    sensor = IncidentBinarySensor(coordinator)
+    assert sensor.is_on is False
+    assert sensor.extra_state_attributes["availability_degraded"] is True
 
 
 def test_on_when_incidents_present() -> None:

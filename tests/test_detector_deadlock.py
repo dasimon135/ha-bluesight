@@ -1,5 +1,5 @@
-from custom_components.bluesight.model import ProxySlots, IncidentKind
 from custom_components.bluesight.detector import detect_deadlocks
+from custom_components.bluesight.model import IncidentKind, ProxySlots
 
 
 def test_address_on_two_proxies_is_deadlock():

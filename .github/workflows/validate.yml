@@ -29,6 +29,26 @@ jobs:
         with:
           category: integration
 
+  lint:
+    name: Ruff
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      # Config (rule selection, isort sections, per-file ignores) lives in
+      # pyproject.toml so a local `ruff check .` matches CI exactly.
+      - name: Run ruff
+        run: ruff check .
+
   tests:
     name: pytest (pure + HA integration)
     runs-on: ubuntu-latest

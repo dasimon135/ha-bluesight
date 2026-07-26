@@ -1,13 +1,17 @@
 {
   "domain": "bluesight",
   "name": "BlueSight",
-  "codeowners": ["@dasimon135"],
+  "codeowners": [
+    "@dasimon135"
+  ],
   "config_flow": true,
-  "dependencies": ["bluetooth"],
+  "dependencies": [
+    "bluetooth"
+  ],
   "documentation": "https://github.com/dasimon135/ha-bluesight",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/dasimon135/ha-bluesight/issues",
   "requirements": [],
   "single_config_entry": true,
-  "version": "0.2.0"
+  "version": "0.3.0"
 }

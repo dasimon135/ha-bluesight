@@ -1,0 +1,7 @@
+forget_proxy:
+  fields:
+    source:
+      required: true
+      example: "AA:BB:CC:DD:EE:FF"
+      selector:
+        text:

@@ -1,5 +1,9 @@
 from custom_components.bluesight.model import (
-    ProxySlots, Incident, IncidentKind, normalize_address, ProxyHealth,
+    Incident,
+    IncidentKind,
+    ProxyHealth,
+    ProxySlots,
+    normalize_address,
 )
 
 
@@ -13,6 +17,22 @@ def test_proxyslots_used_derived():
                    allocated=["11:22", "33:44"])
     assert p.used == 2
     assert p.is_full is False
+    assert p.is_connectable is True
+
+
+def test_saturated_proxy_is_full():
+    p = ProxySlots(source="AA:BB", name="Salon Proxy", slots=3, free=0,
+                   allocated=["11:22", "33:44", "55:66"])
+    assert p.is_full is True
+
+
+def test_non_connectable_scanner_is_not_full():
+    """habluetooth registers passive scanners with slots=0, free=0 — they hold
+    no connections at all, which is not the same as being saturated."""
+    p = ProxySlots(source="AA:BB", name="Passive", slots=0, free=0)
+    assert p.is_full is False
+    assert p.is_connectable is False
+    assert p.used == 0
 
 
 def test_incident_identity_is_stable():

@@ -1,1 +1,5 @@
-{ "name": "BlueSight", "render_readme": true, "homeassistant": "2025.2.0" }
+{
+  "name": "BlueSight",
+  "render_readme": true,
+  "homeassistant": "2025.7.0"
+}

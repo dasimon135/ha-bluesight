@@ -1,6 +1,6 @@
-from custom_components.bluesight.window import FailureWindow
 from custom_components.bluesight.detector import detect_reboot_storm
 from custom_components.bluesight.model import IncidentKind
+from custom_components.bluesight.window import FailureWindow
 
 
 def test_repeated_reboots_is_storm():

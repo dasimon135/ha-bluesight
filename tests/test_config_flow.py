@@ -15,12 +15,12 @@ import pytest
 # ``hass`` fixture), while CI/Linux collects and runs these.
 pytest.importorskip("pytest_homeassistant_custom_component.plugins")
 
-from homeassistant.config_entries import SOURCE_USER
-from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.bluesight.const import DOMAIN
+from homeassistant.config_entries import SOURCE_USER
+from homeassistant.core import HomeAssistant
+from homeassistant.data_entry_flow import FlowResultType
 
 
 @pytest.fixture(autouse=True)

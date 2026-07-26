@@ -1,5 +1,5 @@
-from custom_components.bluesight.model import ProxyHealth, IncidentKind
 from custom_components.bluesight.detector import detect_offline_proxies
+from custom_components.bluesight.model import IncidentKind, ProxyHealth
 
 
 def _h(src, online):
@@ -21,3 +21,32 @@ def test_known_source_present_but_offline_is_flagged():
     current = [_h("AA", True), _h("BB", False)]   # BB present but offline
     incs = detect_offline_proxies(current, known_sources={"AA", "BB"})
     assert [i.address for i in incs] == ["BB"]
+
+
+def test_absence_within_the_grace_period_is_not_flagged():
+    """An ESPHome proxy drops off the bus on every OTA; don't alert on that."""
+    incs = detect_offline_proxies(
+        [_h("AA", True)], {"AA", "BB"}, {"AA": 0.0, "BB": 30.0}, grace_s=90.0
+    )
+    assert incs == []
+
+
+def test_absence_beyond_the_grace_period_is_flagged():
+    incs = detect_offline_proxies(
+        [_h("AA", True)], {"AA", "BB"}, {"AA": 0.0, "BB": 120.0}, grace_s=90.0
+    )
+    assert [i.address for i in incs] == ["BB"]
+
+
+def test_unmeasured_source_is_treated_as_freshly_missing():
+    incs = detect_offline_proxies([_h("AA", True)], {"AA", "BB"}, {}, grace_s=90.0)
+    assert incs == []
+
+
+def test_detail_carries_no_elapsed_time():
+    """The detail lands in entity attributes; a ticking counter would churn
+    the state machine on every single snapshot."""
+    first = detect_offline_proxies([], {"BB"}, {"BB": 100.0}, grace_s=90.0)
+    later = detect_offline_proxies([], {"BB"}, {"BB": 9999.0}, grace_s=90.0)
+    assert first[0].detail == later[0].detail
+    assert first[0].key == later[0].key

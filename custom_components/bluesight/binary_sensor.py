@@ -83,6 +83,10 @@ class IncidentBinarySensor(
         incidents = self.coordinator.data.incidents
         return {
             "incident_count": len(incidents),
+            # Ghost-slot verdicts are biased toward "alive" when the availability
+            # lookup has failed; surface that so a degraded signal is never read
+            # as a clean bill of health.
+            "availability_degraded": self.coordinator.data.availability_degraded,
             "incidents": [
                 {
                     "kind": incident.kind.value,
