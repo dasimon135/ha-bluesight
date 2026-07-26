@@ -121,8 +121,8 @@ Open the integration's **Configure** dialog to tune:
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| Storm window | 300 s | sliding window over which storm flaps are counted (min 30 s). |
-| Storm threshold | 5 | flaps within the window that trip a storm incident (min 2). |
+| Storm window | 300 s | sliding window over which failed connections are counted (min 30 s). |
+| Storm threshold | 5 | failed connections within the window that trip a storm incident (min 2). |
 | Poll interval | 30 s | how often the coordinator refreshes its slot snapshot (min 5 s). |
 | Stalled threshold | 180 s | how long a proxy may go without seeing any advertisement before it is flagged as stalled. |
 | Reboot window | 600 s | sliding window over which proxy register/unregister cycles are counted. |
@@ -150,7 +150,7 @@ that the same address is held on two proxies.
 | `sensor.<proxy>_slots_used` | sensor | slots allocated on that proxy | `total`, `free`, `allocated` (list of MACs), `source` |
 | `sensor.<proxy>_slots_free` | sensor | slots still free on that proxy | — |
 | `binary_sensor.<proxy>_online` | binary_sensor (`connectivity`) | `on` while the proxy is a registered scanner | — |
-| `sensor.<proxy>_last_device_seen` | sensor (seconds) | seconds since that proxy last heard an advertisement | `device_count` |
+| `sensor.<proxy>_last_device_seen` | sensor (`duration`, seconds) | seconds since that proxy last heard an advertisement | `device_count`, `connectable`, `online` |
 | `binary_sensor.bluesight_incident` | binary_sensor (`problem`) | `on` when any incident is open | `incident_count`, `availability_degraded`, `incidents` (list of `{kind, address, sources, detail}`; `kind` ∈ `deadlock` / `ghost_slot` / `storm` / `proxy_offline` / `proxy_stalled` / `proxy_reboot_storm`) |
 
 `availability_degraded` turns `true` if the device/entity registry lookup behind
@@ -169,21 +169,28 @@ you can paste with no custom JavaScript. Both read the entities above. Full
 setup — resource registration, the `custom:bluesight-card` config, and the
 native fallback YAML — is in **[docs/card.md](docs/card.md)**.
 
+> Installing BlueSight through HACS does **not** install the card. HACS only
+> handles `www/` assets for repositories in the Lovelace/plugin category, and
+> BlueSight is an integration — so you get `custom_components/bluesight/` and
+> nothing else. Copying the card and registering its resource are two manual
+> steps, both covered in [docs/card.md](docs/card.md).
+
 ## How it works
 
 BlueSight is deliberately split into pure logic and a thin Home Assistant
 shell:
 
-- **Pure detectors** (`model.py`, `detector.py`, `window.py`,
-  `incident_policy.py`) take plain snapshots of proxy slot state plus a rolling
-  event window and return incidents. They import no Home Assistant code and are
-  unit-tested on their own.
+- **Pure logic** (`model.py`, `detector.py`, `window.py`, `storm_signal.py`,
+  `availability.py`, `incident_policy.py`) takes plain snapshots of proxy slot
+  state plus the rolling event windows and returns incidents. It imports no Home
+  Assistant code and is unit-tested on its own.
 - **`adapter.py`** is the *only* module that touches the `habluetooth` manager
-  (`get_manager().async_current_allocations()` /
-  `async_register_allocation_callback()`). All version-sensitive, semi-internal
-  access is isolated here behind a stable interface, so the rest of the code
-  never sees HA internals. This is the isolation the design calls out as
-  `_internals`/adapter containment.
+  (`async_current_allocations()` / `async_register_allocation_callback()` for
+  slots, `async_current_scanners()` /
+  `async_register_scanner_registration_callback()` for proxy health). All
+  version-sensitive, semi-internal access is isolated here behind a stable
+  interface, so the rest of the code never sees HA internals. This is the
+  isolation the design calls out as `_internals`/adapter containment.
 - **The coordinator** (`coordinator.py`) subscribes to the `habluetooth`
   allocation callback, maintains the sliding window, runs the detectors, and
   drives the entities and notifications.
@@ -195,18 +202,23 @@ proxies.
 
 ## Roadmap
 
-- **v1 — detect + advise (this release).** Read-only. Slots, deadlock, ghost,
-  and storm detection; entities, notifications, and the card.
+- **v1 — detect + advise (shipped).** Read-only. Slots, deadlock, ghost, and
+  storm detection; entities, notifications, and the card.
+- **v1.2 — proxy health (shipped, 0.2.0).** Offline, stalled, and reboot-storm
+  detection from the scanner registry; per-proxy online / last-seen entities.
+- **0.3.0 — audit pass (shipped).** A rebuilt storm signal, an offline grace
+  period and a `forget_proxy` action, diagnostics, and stable proxy naming.
 - **v1.5 — optional ESPHome component.** An auto-detected custom component on the
   proxy exposing raw telemetry the HA API cannot: NimBLE SMP-fail counts,
   connection rejects, BLE RAM, and bond state. This upgrades storm detection from
-  the v1 heuristic to real SMP evidence. Additive — v1 keeps working without it.
+  the current heuristic to real SMP evidence. Additive — the integration keeps
+  working without it.
 - **v2 — self-healing.** Guided, then automatic remediation: "free this slot" and
   guided re-pair, built on the proven v1 base.
 
 ## Limitations
 
-BlueSight v1 is honest about its edges:
+BlueSight is honest about its edges:
 
 - **Storm detection is a best-effort heuristic.** With HA-only data there are no
   raw SMP-failure counters, so v1 infers a failed connection from the only thing
