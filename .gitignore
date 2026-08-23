@@ -4,4 +4,5 @@ __pycache__/
 .venv/
 .coverage
 htmlcov/
-.claude/
+# Personal Claude Code permissions, never shared
+.claude/settings.local.json
