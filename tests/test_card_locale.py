@@ -6,7 +6,8 @@ makes about the catalogue, both of which rot silently:
 
 * every key it asks for exists,
 * its embedded last-resort English is still a copy of the shipped English, and
-* the catalogue it fetches carries a cache-busting query.
+* the catalogue it fetches carries a cache-busting query, whose value is the
+  real release version.
 
 All three failures look like working code in review. A renamed key renders as a
 literal ``card.proxy.offline`` in the badge; a stale embedded copy is invisible
@@ -24,10 +25,11 @@ import pytest
 
 from custom_components.bluesight.model import IncidentKind
 
-WWW_DIR = (
-    Path(__file__).resolve().parent.parent
-    / "custom_components" / "bluesight" / "frontend" / "www"
+COMPONENT_DIR = (
+    Path(__file__).resolve().parent.parent / "custom_components" / "bluesight"
 )
+WWW_DIR = COMPONENT_DIR / "frontend" / "www"
+MANIFEST = COMPONENT_DIR / "manifest.json"
 CARD = WWW_DIR / "bluesight-card.js"
 LOCALE_DIR = WWW_DIR / "locale"
 
@@ -143,3 +145,21 @@ def test_the_catalogue_fetch_is_cache_busted(card_source):
     url = match.group(1)
     assert "${language}" in url
     assert "?v=${CARD_VERSION}" in url
+
+
+def test_the_card_version_matches_the_manifest(card_source):
+    """The card's version constant is the integration's, or it is a lie.
+
+    The card is plain JS served as-is, so there is no build step to stamp the
+    real version into it; the constant is hand-maintained, and it had already
+    been wrong for two releases when nothing was reading it. It is no longer
+    only a console banner -- it is the catalogue's cache-buster -- so a stale
+    value means the fetch URL does not change on upgrade and the month-long
+    cache is never busted at all.
+    """
+    version = json.loads(MANIFEST.read_text(encoding="utf-8"))["version"]
+    match = re.search(r'const CARD_VERSION = "([^"]+)"', card_source)
+    assert match, "CARD_VERSION is gone or no longer a literal"
+    assert match.group(1) == version, (
+        f"card says {match.group(1)}, manifest says {version}"
+    )

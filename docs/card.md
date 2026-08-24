@@ -27,13 +27,28 @@ The custom card auto-discovers every proxy from `hass` (any
   how many devices it currently sees,
 - **`offline`** in place of the pips when the proxy's online sensor says it is
   gone, and **`scan only — no connection slots`** for a passive scanner (which
-  habluetooth reports with zero slots).
+  habluetooth reports with zero slots) — English wording shown here; the card
+  is translated, see [Languages](#languages).
 
 Below that it draws a **coloured incident feed**: red for `deadlock` and
 `ghost_slot`, amber for everything else, each badge carrying the incident kind,
 the device address, the detail, and the proxies involved.
 
 It is a single vanilla-JS file — no build step, no dependencies.
+
+### Languages
+
+The card is translated: English and French ship, anything else falls back to
+English. It renders in the **viewer's** language — the one set on their Home
+Assistant user profile — not the installation's, so two people looking at the
+same dashboard each read it in their own. Nothing to configure; the card reads
+`hass.language` and fetches the matching catalogue.
+
+The one part that does *not* follow the viewer is the incident **detail** line.
+That text is a published attribute of `binary_sensor.bluesight_incident`,
+rendered once in the installation's language because user automations build
+push notifications from it; the card prints it as it arrives. Adding a language
+is described in [translations.md](translations.md).
 
 ### 1. Nothing to install
 
@@ -168,6 +183,10 @@ Notes:
   and guards the empty case with `or []`, so it renders cleanly even mid-update.
 - `conditional` cards hide themselves entirely when their condition is false, so
   the incident panel only appears when something is actually wrong.
+- The fallback prints the raw `kind` (`ghost slot`) rather than a translated
+  label, because a Jinja template has no access to BlueSight's catalogue. The
+  `detail` line beside it *is* translated — it arrives already rendered in the
+  installation's language.
 - On a `sections` dashboard, drop the `vertical-stack` and put each group in its
   own section behind a `heading` card — that is the current Home Assistant
   layout idiom and it reflows better on phones.
@@ -201,8 +220,9 @@ resource — the integration serves its own.
 named unusually, list them explicitly with the `proxies:` config key rather than
 relying on discovery.
 
-**A proxy shows `scan only — no connection slots`.** That is correct, not a
-bug: habluetooth registers non-connectable scanners with zero slots. They can
+**A proxy shows `scan only — no connection slots`** (or its translation).
+That is correct, not a bug: habluetooth registers non-connectable scanners with
+zero slots. They can
 see advertisements but never hold a connection.
 
 ---

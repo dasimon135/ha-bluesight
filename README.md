@@ -176,15 +176,45 @@ native fallback YAML — is in **[docs/card.md](docs/card.md)**.
 > integration write to a YAML-managed resource list; that one line is in
 > [docs/card.md](docs/card.md).
 
+## Languages
+
+Incident details, persistent notifications and the custom Lovelace card are
+translated. **English and French** ship today; anything else falls back to
+English, key by key, so a partial translation is never worse than no
+translation. Adding a language is one JSON file and no code — see
+**[docs/translations.md](docs/translations.md)**.
+
+Which language a surface speaks depends on *whose* it is:
+
+| Surface | Language it uses |
+| --- | --- |
+| The `detail` field on each incident, and persistent notifications | the **installation's** — `hass.config.language` |
+| The custom Lovelace card | the **viewer's** — their Home Assistant profile language |
+
+So two people can read one dashboard in two languages at the same time. The
+card is the only surface that varies per person, and deliberately so: `detail`
+is a published attribute that user automations format their own push
+notifications from, so it is rendered once, in the installation's language, and
+the card prints it as it arrives rather than re-translating it.
+
+Incident `kind` values (`deadlock`, `ghost_slot`, …) are machine identifiers and
+are never translated — only the labels the card puts on them.
+
 ## How it works
 
 BlueSight is deliberately split into pure logic and a thin Home Assistant
 shell:
 
 - **Pure logic** (`model.py`, `detector.py`, `window.py`, `storm_signal.py`,
-  `availability.py`, `incident_policy.py`) takes plain snapshots of proxy slot
-  state plus the rolling event windows and returns incidents. It imports no Home
-  Assistant code and is unit-tested on its own.
+  `availability.py`, `incident_policy.py`, `rendering.py`) takes plain snapshots
+  of proxy slot state plus the rolling event windows and returns incidents,
+  and turns the keys and parameters those incidents carry into prose. It imports
+  no Home Assistant code and is unit-tested on its own.
+- **`locale.py`** is the only other Home Assistant-free module, and the only one
+  that touches the filesystem: it reads the string catalogues that
+  `rendering.py` renders from. They live under the card's `www` tree, so the
+  backend reads the very same files the card fetches over HTTP — one source of
+  truth for both halves.
 - **`adapter.py`** is the *only* module that touches the `habluetooth` manager
   (`async_current_allocations()` / `async_register_allocation_callback()` for
   slots, `async_current_scanners()` /
