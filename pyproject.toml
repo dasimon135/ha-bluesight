@@ -33,12 +33,19 @@ testpaths = ["tests"]
 # expects and lets those fixtures apply cleanly; it is inert for the pure sync
 # tests on Windows where the plugin is disabled.
 asyncio_mode = "auto"
-# The foundation tests (model + detectors) are pure Python and never import
-# Home Assistant. The `pytest-homeassistant-custom-component` plugin registers
-# an autoloaded pytest11 entrypoint named "homeassistant" that imports the HA
+# The foundation tests (model, detectors, windows, policy, entity logic) are
+# pure Python, but they cannot be *imported* without Home Assistant: they reach
+# `custom_components.bluesight.<module>`, which runs the package's
+# `__init__.py`, which imports `homeassistant.*` at module scope. On a machine
+# without HA installed, `tests/conftest.py` stubs exactly those imports and says
+# so in the pytest header; where HA is installed (CI/Linux) the stub does not
+# engage at all. See the module docstring there.
+#
+# Separately, the `pytest-homeassistant-custom-component` plugin registers an
+# autoloaded pytest11 entrypoint named "homeassistant" that imports the HA
 # runner at collection time; on non-Linux dev machines that import fails
 # (e.g. the Unix-only `fcntl` module), which would otherwise block collection
-# of these HA-free tests. Disable that autoload here so the pure suite always
-# runs under plain pytest. HA-dependent tests, added in a later task, should
-# re-enable it (e.g. via their own invocation on Linux/CI).
+# of these tests. Disable that autoload here so the suite always runs under
+# plain pytest. HA-dependent tests re-enable it via their own invocation on
+# Linux/CI.
 addopts = "-p no:homeassistant"
