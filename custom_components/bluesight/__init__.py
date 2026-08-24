@@ -69,6 +69,7 @@ async def async_setup_entry(
         reboot_window_s=opts.get("reboot_window_s", DEFAULT_REBOOT_WINDOW_S),
         reboot_threshold=opts.get("reboot_threshold", DEFAULT_REBOOT_THRESHOLD),
         offline_grace_s=opts.get("offline_grace_s", DEFAULT_OFFLINE_GRACE_S),
+        catalogue=catalogue,
     )
     await coordinator.async_setup()
     entry.runtime_data = coordinator

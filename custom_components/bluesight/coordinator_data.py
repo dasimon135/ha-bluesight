@@ -6,7 +6,7 @@ subclass stays a thin shell that only feeds this function a snapshot.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from .detector import (
     detect_deadlocks,
@@ -17,6 +17,7 @@ from .detector import (
     detect_storm,
 )
 from .model import Incident, ProxyHealth, ProxySlots
+from .rendering import Catalogue, render
 from .window import FailureWindow
 
 
@@ -44,6 +45,7 @@ def build_triage_data(
     offline_for: dict[str, float] | None = None,
     offline_grace_s: float = 0.0,
     availability_degraded: bool = False,
+    catalogue: Catalogue | None = None,
 ) -> BlueSightData:
     """Pure assembly: run all detectors over a snapshot + the rolling failure
     windows and return the combined incident list. No HA, no I/O.
@@ -51,6 +53,12 @@ def build_triage_data(
     Incidents are emitted independently: one address may surface as several
     kinds at once (deadlock + ghost + storm). Any dedup/precedence policy is
     the notification layer's job (Task 10), not this assembly step's.
+
+    Detectors emit a translation key and parameters, never prose. With a
+    ``catalogue`` the incidents come back with ``detail`` rendered in that
+    language; without one they are returned exactly as the detectors built
+    them, which is the honest default for a pure function and keeps every
+    detector test independent of any catalogue.
     """
     proxies_health = proxies_health or []
     known_sources = known_sources or set()
@@ -72,6 +80,17 @@ def build_triage_data(
             inc = detect_reboot_storm(src, reboot_window)
             if inc is not None:
                 incidents.append(inc)
+    # `detail` is a published contract: it lands in the `incidents` attribute
+    # of `binary_sensor.bluesight_incident`, and user automations format push
+    # notifications from it. Rendering it here -- once, where the incident
+    # list is assembled -- is what keeps that automation producing prose.
+    if catalogue is not None:
+        incidents = [
+            replace(i, detail=render(i.detail_key, i.detail_params, catalogue))
+            if i.detail_key
+            else i
+            for i in incidents
+        ]
     return BlueSightData(
         proxies=proxies,
         incidents=incidents,

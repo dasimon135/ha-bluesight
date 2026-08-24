@@ -37,6 +37,7 @@ from .const import (
 )
 from .coordinator_data import BlueSightData, build_triage_data
 from .model import normalize_address
+from .rendering import Catalogue
 from .storm_signal import ReleaseTracker
 from .window import FailureWindow
 
@@ -71,6 +72,12 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
     (the fast path) and a slow poll backstop via ``update_interval``.
     """
 
+    #: Strings for Home Assistant's configured language, resolved once at
+    #: setup. Declared at class level so an instance built without
+    #: ``__init__`` (the shell tests do this deliberately) still snapshots,
+    #: with incident details left unrendered rather than crashing.
+    catalogue: Catalogue | None = None
+
     def __init__(
         self,
         hass: HomeAssistant,
@@ -83,6 +90,7 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         reboot_window_s: float = DEFAULT_REBOOT_WINDOW_S,
         reboot_threshold: int = DEFAULT_REBOOT_THRESHOLD,
         offline_grace_s: float = DEFAULT_OFFLINE_GRACE_S,
+        catalogue: Catalogue | None = None,
     ) -> None:
         super().__init__(
             hass,
@@ -91,6 +99,7 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
             name=DOMAIN,
             update_interval=timedelta(seconds=poll_interval_s),
         )
+        self.catalogue = catalogue
         self._window = FailureWindow(
             storm_window_s, storm_threshold, clock=time.monotonic
         )
@@ -260,6 +269,7 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
             offline_for=offline_for,
             offline_grace_s=self._offline_grace_s,
             availability_degraded=self._availability_degraded,
+            catalogue=self.catalogue,
         )
 
     def forget_proxy(self, source: str) -> bool:
