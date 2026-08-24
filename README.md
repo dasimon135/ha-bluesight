@@ -280,6 +280,11 @@ BlueSight is honest about its edges:
   semi-public `habluetooth` allocation API. That coupling is isolated to
   `adapter.py`, so an upstream change touches one module — but a sufficiently
   large `habluetooth` change could still require an adapter update.
+- **Plurals only distinguish one from many.** The string catalogue has a
+  singular and a plural form per counted message, which is all English and
+  French need. Languages with richer plural rules — Polish, Russian, Arabic and
+  others — cannot be translated correctly until the renderer learns their
+  categories. Adding such a language is a code change, not just a catalogue.
 
 ## License
 
