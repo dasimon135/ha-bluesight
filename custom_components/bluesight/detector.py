@@ -21,8 +21,11 @@ def detect_deadlocks(proxies: list[ProxySlots]) -> list[Incident]:
         for addr in p.allocated:
             by_addr[normalize_address(addr)].add(p.source)
     return [
-        Incident(IncidentKind.DEADLOCK, addr, sorted(sources),
-                 detail=f"Held on {len(sources)} proxies simultaneously")
+        Incident(
+            IncidentKind.DEADLOCK, addr, sorted(sources),
+            detail_key="incident.deadlock.detail",
+            detail_params={"count": str(len(sources))},
+        )
         for addr, sources in by_addr.items() if len(sources) >= 2
     ]
 
@@ -39,7 +42,9 @@ def detect_ghost_slots(
             if avail.get(norm, True) is False:
                 out.append(Incident(
                     IncidentKind.GHOST_SLOT, norm, [p.source],
-                    detail=f"Slot held on {p.name} while device unavailable"))
+                    detail_key="incident.ghost_slot.detail",
+                    detail_params={"proxy": p.name},
+                ))
     return out
 
 
@@ -58,14 +63,17 @@ def detect_offline_proxies(
     raises (and immediately clears) an alert on entirely routine events. A
     source with no entry in ``offline_for`` is treated as freshly missing.
 
-    The detail string deliberately carries no elapsed time: it lands in entity
-    attributes that would otherwise churn on every single snapshot.
+    The parameters deliberately carry no elapsed time: they are rendered into
+    a detail that lands in entity attributes, which would otherwise churn on
+    every single snapshot.
     """
     online = {p.source for p in proxies if p.online}
     offline_for = offline_for or {}
     return [
-        Incident(IncidentKind.PROXY_OFFLINE, src, [src],
-                 detail="Proxy offline (no longer a registered scanner)")
+        Incident(
+            IncidentKind.PROXY_OFFLINE, src, [src],
+            detail_key="incident.proxy_offline.detail",
+        )
         for src in sorted(known_sources - online)
         if offline_for.get(src, 0.0) >= grace_s
     ]
@@ -76,9 +84,12 @@ def detect_stalled_proxies(
 ) -> list[Incident]:
     """Online scanner that has not seen any advertisement for too long."""
     return [
-        Incident(IncidentKind.PROXY_STALLED, p.source, [p.source],
-                 detail=f"Online but no BLE advertisement seen for "
-                        f"{int(p.seconds_since_detection)}s")
+        Incident(
+            IncidentKind.PROXY_STALLED, p.source, [p.source],
+            detail_key="incident.proxy_stalled.detail",
+            # int() truncates, exactly as the prose it replaces did.
+            detail_params={"seconds": str(int(p.seconds_since_detection))},
+        )
         for p in proxies
         if p.online and p.seconds_since_detection > threshold_s
     ]
@@ -87,15 +98,26 @@ def detect_stalled_proxies(
 def detect_storm(address: str, window: FailureWindow) -> Incident | None:
     count = window.count(address)
     if count >= window.threshold:
-        return Incident(IncidentKind.STORM, address, [],
-                        detail=f"{count} failures in {int(window.window_s)}s")
+        return Incident(
+            IncidentKind.STORM, address, [],
+            detail_key="incident.storm.detail",
+            detail_params={
+                "count": str(count),
+                "seconds": str(int(window.window_s)),
+            },
+        )
     return None
 
 
 def detect_reboot_storm(source: str, window: FailureWindow) -> Incident | None:
     count = window.count(source)
     if count >= window.threshold:
-        return Incident(IncidentKind.PROXY_REBOOT_STORM, source, [source],
-                        detail=f"{count} proxy reboots in "
-                               f"{int(window.window_s)}s")
+        return Incident(
+            IncidentKind.PROXY_REBOOT_STORM, source, [source],
+            detail_key="incident.proxy_reboot_storm.detail",
+            detail_params={
+                "count": str(count),
+                "seconds": str(int(window.window_s)),
+            },
+        )
     return None

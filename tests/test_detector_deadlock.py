@@ -14,6 +14,8 @@ def test_address_on_two_proxies_is_deadlock():
     assert inc.kind is IncidentKind.DEADLOCK
     assert inc.address == "11:22"
     assert sorted(inc.sources) == ["AA", "BB"]
+    assert inc.detail_key == "incident.deadlock.detail"
+    assert inc.detail_params == {"count": "2"}
 
 
 def test_address_on_one_proxy_is_not_deadlock():
@@ -40,7 +42,8 @@ def test_three_proxies_sharing_address():
     assert inc.kind is IncidentKind.DEADLOCK
     assert inc.address == "11:22"
     assert sorted(inc.sources) == ["AA", "BB", "CC"]
-    assert "3 proxies" in inc.detail
+    assert inc.detail_key == "incident.deadlock.detail"
+    assert inc.detail_params == {"count": "3"}
 
 
 def test_deadlock_correlates_across_case():

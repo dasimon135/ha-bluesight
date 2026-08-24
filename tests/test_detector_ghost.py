@@ -9,6 +9,10 @@ def test_allocated_but_unavailable_is_ghost():
     assert len(incidents) == 1
     assert incidents[0].kind is IncidentKind.GHOST_SLOT
     assert incidents[0].address == "11:22"
+    assert incidents[0].detail_key == "incident.ghost_slot.detail"
+    # The proxy's friendly name is user-controlled text; it travels as a
+    # parameter and is substituted by the renderer, never re-scanned.
+    assert incidents[0].detail_params == {"proxy": "P1"}
 
 
 def test_allocated_and_available_is_fine():
