@@ -72,7 +72,19 @@ class Incident:
     address: str
     sources: list[str] = field(default_factory=list)
     detail: str = ""
+    #: Translation key and parameters for `detail`. `detail` itself stays a
+    #: rendered human string: it is published in the incident attribute and
+    #: real automations format notifications from it, so it is a contract.
+    detail_key: str = ""
+    detail_params: dict[str, str] = field(default_factory=dict)
 
     @property
     def key(self) -> str:
+        """Identity of this incident across snapshots.
+
+        Deliberately excludes `detail_key` and `detail_params`: an incident
+        whose parameters shift (a rising count, a renamed proxy) is the same
+        incident, and folding them in would make it look new every snapshot
+        and re-alert forever.
+        """
         return f"{self.kind.value}:{self.address}:{','.join(sorted(self.sources))}"

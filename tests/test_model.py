@@ -51,3 +51,31 @@ def test_new_incident_kinds_exist():
     assert IncidentKind.PROXY_OFFLINE.value == "proxy_offline"
     assert IncidentKind.PROXY_STALLED.value == "proxy_stalled"
     assert IncidentKind.PROXY_REBOOT_STORM.value == "proxy_reboot_storm"
+
+
+def test_incident_translation_fields_default_empty():
+    """A hand-built incident carries no key and no parameters.
+
+    Task 6 renders `detail` from these; until every producer sets them, the
+    empty defaults must keep positional construction working unchanged.
+    """
+    inc = Incident(IncidentKind.DEADLOCK, "11:22", ["AA", "BB"], "held twice")
+    assert inc.detail == "held twice"
+    assert inc.detail_key == ""
+    assert inc.detail_params == {}
+
+
+def test_incident_identity_ignores_translation_fields():
+    """`key` is the incident's identity across snapshots.
+
+    If the key or its parameters entered it, an incident whose parameters
+    shift -- a rising failure count -- would look like a brand new incident
+    every snapshot and re-alert forever.
+    """
+    a = Incident(IncidentKind.STORM, "11:22", ["AA"],
+                 detail_key="incident.storm.detail",
+                 detail_params={"count": "5", "seconds": "300"})
+    b = Incident(IncidentKind.STORM, "11:22", ["AA"],
+                 detail_key="incident.something.else",
+                 detail_params={"count": "9", "seconds": "300"})
+    assert a.key == b.key
