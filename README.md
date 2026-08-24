@@ -169,11 +169,12 @@ you can paste with no custom JavaScript. Both read the entities above. Full
 setup — resource registration, the `custom:bluesight-card` config, and the
 native fallback YAML — is in **[docs/card.md](docs/card.md)**.
 
-> Installing BlueSight through HACS does **not** install the card. HACS only
-> handles `www/` assets for repositories in the Lovelace/plugin category, and
-> BlueSight is an integration — so you get `custom_components/bluesight/` and
-> nothing else. Copying the card and registering its resource are two manual
-> steps, both covered in [docs/card.md](docs/card.md).
+> Since 0.4.0 the card ships **inside the integration**, so HACS delivers it
+> along with everything else and the integration serves and registers it
+> itself — no copying, no resource to declare. YAML-mode dashboards still
+> declare the resource by hand, since Home Assistant does not let an
+> integration write to a YAML-managed resource list; that one line is in
+> [docs/card.md](docs/card.md).
 
 ## How it works
 

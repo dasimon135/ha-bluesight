@@ -12,9 +12,10 @@ from __future__ import annotations
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant, ServiceCall, callback
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, Platform
+from homeassistant.core import CoreState, Event, HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import config_validation as cv
+from homeassistant.loader import async_get_integration
 
 from .const import (
     ATTR_SOURCE,
@@ -29,6 +30,7 @@ from .const import (
     SERVICE_FORGET_PROXY,
 )
 from .coordinator import BlueSightCoordinator
+from .frontend import JSModuleRegistration
 from .notify import NotificationManager
 
 FORGET_PROXY_SCHEMA = vol.Schema({vol.Required(ATTR_SOURCE): cv.string})
@@ -79,8 +81,39 @@ async def async_setup_entry(
     # Reload the entry when the user edits options so new tunables take effect.
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     _async_register_services(hass)
+    await _async_setup_card(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
+
+
+async def _async_setup_card(
+    hass: HomeAssistant, entry: BlueSightConfigEntry
+) -> None:
+    """Serve the Lovelace card, then register it as a resource.
+
+    The two halves are deliberately not done together. Serving the file needs
+    nothing but the HTTP component, so it happens now. Registering the resource
+    needs Lovelace, which is not up until Home Assistant has finished starting
+    — a minute or more after the UI is reachable on a large install. Waiting
+    for that to serve the file too would leave the dashboard rendering
+    "Custom element doesn't exist" in the meantime.
+    """
+    # The version comes from the loaded integration rather than a constant, so
+    # the cache-busting URL cannot drift from manifest.json.
+    integration = await async_get_integration(hass, DOMAIN)
+    registration = JSModuleRegistration(hass, str(integration.version))
+    await registration.async_register_path()
+
+    if hass.state is CoreState.running:
+        await registration.async_register_resource()
+        return
+
+    async def _on_started(_event: Event) -> None:
+        await registration.async_register_resource()
+
+    entry.async_on_unload(
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _on_started)
+    )
 
 
 @callback

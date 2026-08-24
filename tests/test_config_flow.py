@@ -29,6 +29,27 @@ def _auto_enable_custom_integrations(enable_custom_integrations):
     yield
 
 
+@pytest.fixture(autouse=True)
+def expected_lingering_timers() -> bool:
+    """Tolerate Home Assistant's own Bluetooth scanner watchdog timer.
+
+    Overrides the fixture of the same name from
+    ``pytest_homeassistant_custom_component``. Since 0.4.0 the manifest
+    depends on ``frontend`` and ``http`` so the integration can serve its
+    card, which brings far more of Home Assistant up inside these tests --
+    far enough that ``bluetooth`` arms
+    ``BaseHaScanner._async_expire_devices_schedule_next()``
+    (``homeassistant/components/bluetooth/__init__.py:404``).
+
+    That timer belongs to Home Assistant core, not to BlueSight: nothing here
+    creates it and nothing here can cancel it. The card registration itself
+    leaks nothing -- its only long-lived registration is the
+    ``EVENT_HOMEASSISTANT_STARTED`` listener, which is removed through
+    ``entry.async_on_unload``.
+    """
+    return True
+
+
 async def test_user_step_creates_entry(hass: HomeAssistant) -> None:
     """The user step needs no input and creates the sole entry."""
     result = await hass.config_entries.flow.async_init(
