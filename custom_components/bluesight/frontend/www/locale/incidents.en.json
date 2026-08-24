@@ -1,0 +1,48 @@
+{
+  "incident.deadlock.detail": "Held on {count} proxies simultaneously",
+  "incident.ghost_slot.detail": "Slot held on {proxy} while device unavailable",
+  "incident.storm.detail": "{count} failures in {seconds}s",
+  "incident.proxy_offline.detail": "Proxy offline (no longer a registered scanner)",
+  "incident.proxy_stalled.detail": "Online but no BLE advertisement seen for {seconds}s",
+  "incident.proxy_reboot_storm.detail": "{count} proxy reboots in {seconds}s",
+
+  "notify.storm.title": "BlueSight: pairing storm",
+  "notify.storm.message": "Repeated connection failures on {address} ({detail}). If this is a Daikin/BRC1H-type device, toggle its Bluetooth off and on, then trigger a reconnect.",
+  "notify.deadlock.title": "BlueSight: proxy slot deadlock",
+  "notify.deadlock.message": "{address} is holding a connection slot on {count} proxies at once ({sources}) with no working link — this stalls the connection pool (HA core issue #176516). Power-cycle the device or restart the affected proxies to release the slots.",
+  "notify.ghost_slot.title": "BlueSight: ghost slot",
+  "notify.ghost_slot.message": "A slot on {proxy} is held for {address} but the device is unavailable. If it stays stuck, restart that proxy to free the slot.",
+  "notify.proxy_offline.title": "BlueSight: proxy offline",
+  "notify.proxy_offline.message": "Bluetooth proxy {address} is offline — check its power and Wi-Fi.",
+  "notify.proxy_stalled.title": "BlueSight: proxy stalled",
+  "notify.proxy_stalled.message": "Bluetooth proxy {address} is online but hasn't seen any device for a while ({detail}) — power-cycle it.",
+  "notify.proxy_reboot_storm.title": "BlueSight: proxy rebooting",
+  "notify.proxy_reboot_storm.message": "Bluetooth proxy {address} keeps rebooting ({detail}) — check its power supply / for brownouts.",
+  "notify.unknown.title": "BlueSight: incident",
+  "notify.unknown.message": "An incident was detected on {address}.",
+
+  "card.proxies.empty": "No BlueSight proxies found. Once the integration is set up, sensor.<proxy>_slots_used entities appear automatically. You can also list them explicitly with the `proxies:` config option.",
+  "card.proxy.missing": "missing",
+  "card.proxy.offline": "offline",
+  "card.proxy.scan_only": "scan only — no connection slots",
+  "card.proxy.last_advert": "last advert {age} ago",
+  "card.proxy.last_advert_with_devices": "last advert {age} ago · {count} devices seen",
+
+  "card.incidents.none": "No incidents",
+  "card.incidents.one": "{count} incident",
+  "card.incidents.other": "{count} incidents",
+  "card.incidents.no_detail": "Incident active (no detail available)",
+  "card.incidents.sensor_missing": "Incident sensor {entity} not found.",
+  "card.incident.sources": "on {sources}",
+
+  "card.kind.deadlock": "deadlock",
+  "card.kind.ghost_slot": "ghost slot",
+  "card.kind.storm": "storm",
+  "card.kind.proxy_offline": "proxy offline",
+  "card.kind.proxy_stalled": "proxy stalled",
+  "card.kind.proxy_reboot_storm": "proxy reboot storm",
+
+  "card.age.seconds": "{value} s",
+  "card.age.minutes": "{value} min",
+  "card.age.hours": "{value} h"
+}
