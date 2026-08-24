@@ -35,51 +35,39 @@ the device address, the detail, and the proxies involved.
 
 It is a single vanilla-JS file — no build step, no dependencies.
 
-### 1. Copy the JS file into `config/www/`
+### 1. Nothing to install
 
-> **BlueSight is a HACS *integration*, so HACS does NOT install this card.**
-> HACS only copies `www/` assets and registers dashboard resources for
-> repositories in the **Lovelace/plugin** category. Installing BlueSight gives
-> you `custom_components/bluesight/` and nothing else — the card is yours to
-> place. Both steps below are mandatory.
+The card ships **inside the integration**. HACS copies
+`custom_components/bluesight/`, the card lives at
+`custom_components/bluesight/frontend/www/bluesight-card.js`, so installing or
+updating BlueSight delivers the card too.
 
-The file lives at [`www/bluesight-card.js`](../www/bluesight-card.js) in this
-repository. Home Assistant serves anything under its own `config/www/`
-directory at the URL `/local/`, so copy it to
-`config/www/bluesight-card.js` (create the `www` folder if it does not exist).
+On setup the integration serves it at `/bluesight/bluesight-card.js` and — on a
+storage-mode dashboard, which is the default — registers the dashboard resource
+for you. There is nothing to copy and nothing to declare.
 
-Check it is being served before going further — browse to
-`http://<your-ha>:8123/local/bluesight-card.js`. You should get the file, not a
-404.
+Hard-refresh the browser (Ctrl/Cmd+Shift+R) once after installing, then skip to
+step 3.
 
-### 2. Register the dashboard resource
+> **Upgrading from 0.3.x?** You no longer need your hand-placed
+> `config/www/bluesight-card.js`. BlueSight rewrites an existing
+> `/local/bluesight-card.js` resource to the served path rather than adding a
+> second one, so the card keeps working across the upgrade; the leftover file in
+> `config/www/` is then dead weight you can delete.
 
-Add it as a **module** resource so the browser loads it.
+### 2. YAML-mode dashboards only
 
-**Via the UI** (Settings → Dashboards → ⋮ → *Resources* → *Add resource*):
-
-- **URL:** `/local/bluesight-card.js?v=0.3.0`
-- **Resource type:** `JavaScript Module`
-
-> The *Resources* menu only appears when dashboards are in *Advanced Mode*
-> (enable *Advanced Mode* in your user profile). On HA 2026.x the entry lives
-> under **Settings → Dashboards → ⋮ (top-right) → Resources**.
-
-**Via YAML mode** (if your Lovelace is YAML-managed) add:
+Home Assistant does not let an integration write to a YAML-managed resource
+list, so if your Lovelace is in YAML mode, declare the resource yourself:
 
 ```yaml
 resources:
-  - url: /local/bluesight-card.js?v=0.3.0
+  - url: /bluesight/bluesight-card.js
     type: module
 ```
 
-The `?v=` suffix is a cache-buster, and it matters: browsers cache ES modules
-aggressively, so **after replacing the file with a newer version you must bump
-that number** — otherwise the old card keeps rendering and it looks like the
-update did nothing.
-
-After adding the resource, hard-refresh the browser (Ctrl/Cmd+Shift+R) so the
-new module is picked up.
+The file is served either way — only the registration differs. On storage mode
+(the default) this step does not apply.
 
 ### 3. Add the card
 
@@ -189,14 +177,24 @@ Notes:
 ## Troubleshooting
 
 **"Custom element doesn't exist: bluesight-card".** The module was not loaded.
-In order of likelihood: the resource is not registered (Option A step 2); the
-file is not actually at `config/www/bluesight-card.js` (check
-`/local/bluesight-card.js` in a browser); or the browser cached a failed load —
-hard-refresh with Ctrl/Cmd+Shift+R.
+First check the file is being served: browse to
+`http://<your-ha>:8123/bluesight/bluesight-card.js`. You should get the file,
+not a 404 — if it 404s, the integration did not finish setting up.
 
-**The card renders but an old version of it.** Bump the `?v=` suffix on the
-resource URL and hard-refresh. The browser will not re-fetch a module at an
-unchanged URL.
+If it is served, the resource is missing. On a YAML-mode dashboard that is
+expected: declare it yourself (step 2). On storage mode, check the Home
+Assistant log for a `bluesight` warning naming the URL to add by hand, and
+verify under Settings → Dashboards → ⋮ → *Resources* (the menu only appears
+with *Advanced Mode* enabled in your user profile).
+
+Otherwise the browser cached a failed load — hard-refresh with
+Ctrl/Cmd+Shift+R.
+
+**The card renders but an old version of it.** The served URL carries the
+integration version as a cache-buster, so an update normally busts it by
+itself; hard-refresh if it does not. If you still have a hand-registered
+`/local/bluesight-card.js` from 0.3.x pointing at a stale copy, delete that
+resource — the integration serves its own.
 
 **The card is empty / "No BlueSight proxies found".** The card looks for
 `sensor.*_slots_used` entities carrying a `total` attribute. If your proxies are

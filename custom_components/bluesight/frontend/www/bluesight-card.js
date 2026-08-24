@@ -598,15 +598,22 @@ class BlueSightCard extends HTMLElement {
   }
 }
 
-customElements.define("bluesight-card", BlueSightCard);
+// Define once. Before 0.4.0 the card was copied into `config/www/` by hand, so
+// an upgraded install can still carry a stale `/local/bluesight-card.js`
+// resource alongside the one the integration now serves. `define()` throws on
+// a repeated name, and that exception would break the whole Lovelace view --
+// not just this card.
+if (!customElements.get("bluesight-card")) {
+  customElements.define("bluesight-card", BlueSightCard);
 
-// Advertise the card in the Lovelace card picker.
-window.customCards = window.customCards || [];
-window.customCards.push({
-  type: "bluesight-card",
-  name: "BlueSight Card",
-  description:
-    "Per-proxy GATT slot usage and BLE incident banner for the BlueSight integration.",
-  preview: false,
-  documentationURL: "https://github.com/dasimon135/ha-bluesight",
-});
+  // Advertise the card in the Lovelace card picker.
+  window.customCards = window.customCards || [];
+  window.customCards.push({
+    type: "bluesight-card",
+    name: "BlueSight Card",
+    description:
+      "Per-proxy GATT slot usage and BLE incident banner for the BlueSight integration.",
+    preview: false,
+    documentationURL: "https://github.com/dasimon135/ha-bluesight",
+  });
+}
