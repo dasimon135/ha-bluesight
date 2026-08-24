@@ -98,21 +98,42 @@ def _ghost_proxy(incident: Incident, catalogue: Catalogue) -> str:
     )
 
 
+def _measured(incident: Incident, *names: str) -> dict[str, str]:
+    """Take the named measurements straight off the incident's parameters.
+
+    Notification wording is built from these, never from ``incident.detail``.
+    ``detail`` is rendered by ``build_triage_data``, so interpolating it here
+    made a notification's text correct only if that had run first -- an
+    ordering nothing enforces, and a caller notifying on a freshly detected
+    incident got an empty parenthetical.
+
+    A name the incident does not carry is left out rather than guessed, so it
+    renders as a visible placeholder instead of a plausible wrong number.
+    """
+    return {
+        name: incident.detail_params[name]
+        for name in names
+        if name in incident.detail_params
+    }
+
+
 #: Per-kind parameters for the ``notify.<kind>.message`` templates, on top of
 #: the ``{address}`` every kind gets. The catalogue holds the wording; this
 #: table holds only what has to be computed from the incident.
 _NOTIFY_PARAMS: dict[
     IncidentKind, Callable[[Incident, Catalogue], dict[str, str]]
 ] = {
-    IncidentKind.STORM: lambda i, c: {"detail": i.detail},
+    IncidentKind.STORM: lambda i, c: _measured(i, "count", "seconds"),
     IncidentKind.DEADLOCK: lambda i, c: {
         "count": str(len(i.sources)),
         "sources": ", ".join(i.sources),
     },
     IncidentKind.GHOST_SLOT: lambda i, c: {"proxy": _ghost_proxy(i, c)},
     IncidentKind.PROXY_OFFLINE: lambda i, c: {},
-    IncidentKind.PROXY_STALLED: lambda i, c: {"detail": i.detail},
-    IncidentKind.PROXY_REBOOT_STORM: lambda i, c: {"detail": i.detail},
+    IncidentKind.PROXY_STALLED: lambda i, c: _measured(i, "seconds"),
+    IncidentKind.PROXY_REBOOT_STORM: lambda i, c: _measured(
+        i, "count", "seconds"
+    ),
 }
 
 
@@ -126,8 +147,15 @@ def notification_content(
     Assistant's configured language; this function only computes the
     parameters those templates interpolate.
 
-    Wording follows the "madoka playbook" style: state the observed fault,
-    then tell the user the physical action that clears it.
+    Wording follows the "madoka playbook" style: state the observed fault
+    with its measured numbers, then tell the user the physical action that
+    clears it.
+
+    ``incident.detail`` is deliberately never read: it is rendered elsewhere
+    (``build_triage_data``), so using it here would make this function's
+    output depend on an ordering nothing enforces. Every number a message
+    needs comes from ``incident.detail_params``, which the detector fills in
+    at detection time.
 
     A kind with no entry in :data:`_NOTIFY_PARAMS` — a detector added without
     its catalogue strings — degrades to the generic ``notify.unknown.*``

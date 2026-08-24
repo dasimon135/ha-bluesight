@@ -10,6 +10,10 @@ Wording is asserted against the *shipped* catalogues, read from disk exactly
 as ``async_setup_entry`` reads them. A test written against an inline fake
 catalogue would still pass if the real files were empty or malformed.
 """
+from dataclasses import replace
+
+import pytest
+
 from custom_components.bluesight.incident_policy import (
     dedupe_incidents,
     notification_content,
@@ -35,8 +39,12 @@ def _ghost(address: str, sources=("AA",)) -> Incident:
                     sources=list(sources))
 
 
-def _storm(address: str, detail="7 fails/5m") -> Incident:
-    return Incident(kind=IncidentKind.STORM, address=address, detail=detail)
+def _storm(address: str, count="7", seconds="300", detail="") -> Incident:
+    return Incident(
+        kind=IncidentKind.STORM, address=address, detail=detail,
+        detail_key="incident.storm.detail",
+        detail_params={"count": count, "seconds": seconds},
+    )
 
 
 def _proxy_offline(source: str) -> Incident:
@@ -44,14 +52,22 @@ def _proxy_offline(source: str) -> Incident:
                     sources=[source])
 
 
-def _proxy_stalled(source: str, detail="no devices for 12m") -> Incident:
-    return Incident(kind=IncidentKind.PROXY_STALLED, address=source,
-                    sources=[source], detail=detail)
+def _proxy_stalled(source: str, seconds="742", detail="") -> Incident:
+    return Incident(
+        kind=IncidentKind.PROXY_STALLED, address=source, sources=[source],
+        detail=detail, detail_key="incident.proxy_stalled.detail",
+        detail_params={"seconds": seconds},
+    )
 
 
-def _proxy_reboot_storm(source: str, detail="4 reboots/10m") -> Incident:
-    return Incident(kind=IncidentKind.PROXY_REBOOT_STORM, address=source,
-                    sources=[source], detail=detail)
+def _proxy_reboot_storm(
+    source: str, count="4", seconds="600", detail=""
+) -> Incident:
+    return Incident(
+        kind=IncidentKind.PROXY_REBOOT_STORM, address=source, sources=[source],
+        detail=detail, detail_key="incident.proxy_reboot_storm.detail",
+        detail_params={"count": count, "seconds": seconds},
+    )
 
 
 # --- dedupe_incidents / precedence ---------------------------------------
@@ -153,10 +169,12 @@ def test_reconcile_empty_is_empty():
 # --- notification_content -------------------------------------------------
 
 def test_content_storm_is_actionable():
-    title, message = notification_content(_storm("11:22", detail="7 fails/5m"), EN)
+    title, message = notification_content(
+        _storm("11:22", count="7", seconds="300"), EN
+    )
     assert title == "BlueSight: pairing storm"
     assert "11:22" in message
-    assert "7 fails/5m" in message
+    assert "7" in message and "300" in message
     assert "reconnect" in message.lower()
 
 
@@ -228,23 +246,21 @@ def test_content_proxy_offline_names_source_and_is_actionable():
     assert "offline" in message.lower()
 
 
-def test_content_proxy_stalled_names_source_detail_and_action():
-    title, message = notification_content(
-        _proxy_stalled("PX:01", detail="no devices for 12m"), EN
-    )
+def test_content_proxy_stalled_names_source_measurement_and_action():
+    title, message = notification_content(_proxy_stalled("PX:01", seconds="742"), EN)
     assert title == "BlueSight: proxy stalled"
     assert "PX:01" in message
-    assert "no devices for 12m" in message
+    assert "742" in message
     assert "power-cycle" in message.lower()
 
 
-def test_content_proxy_reboot_storm_names_source_detail_and_action():
+def test_content_proxy_reboot_storm_names_source_measurement_and_action():
     title, message = notification_content(
-        _proxy_reboot_storm("PX:01", detail="4 reboots/10m"), EN
+        _proxy_reboot_storm("PX:01", count="4", seconds="600"), EN
     )
     assert title == "BlueSight: proxy rebooting"
     assert "PX:01" in message
-    assert "4 reboots/10m" in message
+    assert "4" in message and "600" in message
     assert "power" in message.lower()
 
 
@@ -260,12 +276,13 @@ def test_content_is_rendered_in_home_assistants_language():
     assert "AA, BB" in message
 
 
-def test_content_french_storm_carries_the_rendered_detail():
+def test_content_french_storm_carries_the_measured_numbers():
     title, message = notification_content(
-        _storm("11:22", detail="7 échecs en 300s"), FR
+        _storm("11:22", count="7", seconds="300"), FR
     )
     assert title == "BlueSight : tempête d'appairage"
-    assert "7 échecs en 300s" in message
+    assert "7 échecs de connexion" in message
+    assert "300s" in message
 
 
 def test_content_unknown_kind_degrades_to_the_generic_wording():
@@ -289,6 +306,71 @@ def test_content_with_an_empty_catalogue_shows_the_key_not_a_blank():
     title, message = notification_content(_deadlock("11:22"), Catalogue())
     assert title == "notify.deadlock.title"
     assert message == "notify.deadlock.message"
+
+
+#: One incident per kind, each with `detail` deliberately blank and its
+#: structured parameters populated -- exactly the shape a caller gets from a
+#: freshly detected incident, before `build_triage_data` has rendered
+#: anything.
+_UNRENDERED = [
+    _storm("11:22", count="7", seconds="300"),
+    _deadlock("11:22", sources=["AA", "BB"]),
+    Incident(
+        kind=IncidentKind.GHOST_SLOT, address="11:22", sources=["AA"],
+        detail_key="incident.ghost_slot.detail",
+        detail_params={"proxy": "Proxy Cuisine"},
+    ),
+    _proxy_offline("PX:01"),
+    _proxy_stalled("PX:01", seconds="742"),
+    _proxy_reboot_storm("PX:01", count="4", seconds="600"),
+]
+
+
+@pytest.mark.parametrize("catalogue", [EN, FR], ids=["en", "fr"])
+@pytest.mark.parametrize(
+    "incident", _UNRENDERED, ids=[i.kind.value for i in _UNRENDERED]
+)
+def test_content_needs_no_rendered_detail(incident, catalogue):
+    """Notification text must not depend on `build_triage_data` running first.
+
+    Nothing enforces that ordering, so a notification built straight off a
+    freshly detected incident used to get an empty parenthetical.
+    """
+    assert incident.detail == ""
+    title, message = notification_content(incident, catalogue)
+    assert title and message
+    assert "{" not in message, f"unresolved placeholder: {message}"
+    assert "()" not in message, f"empty parenthetical: {message}"
+
+
+@pytest.mark.parametrize("catalogue", [EN, FR], ids=["en", "fr"])
+def test_content_carries_the_numbers_without_a_rendered_detail(catalogue):
+    for incident, expected in (
+        (_storm("11:22", count="7", seconds="300"), ("7", "300")),
+        (_proxy_stalled("PX:01", seconds="742"), ("742",)),
+        (_proxy_reboot_storm("PX:01", count="4", seconds="600"), ("4", "600")),
+    ):
+        _, message = notification_content(incident, catalogue)
+        for number in expected:
+            assert number in message, (incident.kind, number, message)
+
+
+@pytest.mark.parametrize("catalogue", [EN, FR], ids=["en", "fr"])
+@pytest.mark.parametrize(
+    "incident", _UNRENDERED, ids=[i.kind.value for i in _UNRENDERED]
+)
+def test_content_never_interpolates_the_rendered_detail(incident, catalogue):
+    """Mechanical proof that `notification_content` ignores `incident.detail`.
+
+    A sentinel in the one field the function must not read: if any template
+    ever reinstates `{detail}`, it lands in the output verbatim.
+    """
+    sentinel = "SENTINEL-DETAIL-MUST-NOT-BE-RENDERED"
+    title, message = notification_content(
+        replace(incident, detail=sentinel), catalogue
+    )
+    assert sentinel not in title
+    assert sentinel not in message
 
 
 # --- notification_id_for_key ---------------------------------------------

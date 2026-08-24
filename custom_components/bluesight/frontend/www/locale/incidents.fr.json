@@ -7,7 +7,7 @@
   "incident.proxy_reboot_storm.detail": "{count} redémarrages du proxy en {seconds}s",
 
   "notify.storm.title": "BlueSight : tempête d'appairage",
-  "notify.storm.message": "Échecs de connexion répétés sur {address} ({detail}). S'il s'agit d'un appareil de type Daikin/BRC1H, désactivez puis réactivez son Bluetooth, puis déclenchez une reconnexion.",
+  "notify.storm.message": "{count} échecs de connexion sur {address} en {seconds}s. S'il s'agit d'un appareil de type Daikin/BRC1H, désactivez puis réactivez son Bluetooth, puis déclenchez une reconnexion.",
   "notify.deadlock.title": "BlueSight : blocage de slot proxy",
   "notify.deadlock.message": "{address} occupe un slot de connexion sur {count} proxys à la fois ({sources}) sans lien fonctionnel — cela bloque le pool de connexions (issue HA core #176516). Coupez puis rétablissez l'alimentation de l'appareil, ou redémarrez les proxys concernés, pour libérer les slots.",
   "notify.ghost_slot.title": "BlueSight : slot fantôme",
@@ -16,9 +16,9 @@
   "notify.proxy_offline.title": "BlueSight : proxy hors ligne",
   "notify.proxy_offline.message": "Le proxy Bluetooth {address} est hors ligne — vérifiez son alimentation et son Wi-Fi.",
   "notify.proxy_stalled.title": "BlueSight : proxy figé",
-  "notify.proxy_stalled.message": "Le proxy Bluetooth {address} est en ligne mais n'a vu aucun appareil depuis un moment ({detail}) — coupez puis rétablissez son alimentation.",
+  "notify.proxy_stalled.message": "Le proxy Bluetooth {address} est en ligne mais n'a reçu aucune annonce BLE depuis {seconds}s — coupez puis rétablissez son alimentation.",
   "notify.proxy_reboot_storm.title": "BlueSight : proxy en redémarrage",
-  "notify.proxy_reboot_storm.message": "Le proxy Bluetooth {address} redémarre en boucle ({detail}) — vérifiez son alimentation / les baisses de tension.",
+  "notify.proxy_reboot_storm.message": "Le proxy Bluetooth {address} a redémarré {count} fois en {seconds}s — vérifiez son alimentation / les baisses de tension.",
   "notify.unknown.title": "BlueSight : incident",
   "notify.unknown.message": "Un incident a été détecté sur {address}.",
 
