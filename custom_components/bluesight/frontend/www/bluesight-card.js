@@ -35,6 +35,132 @@ const DEFAULT_INCIDENT_ENTITY = "binary_sensor.bluesight_incident";
 // Incident kinds that are considered critical (red). Anything else is amber.
 const CRITICAL_KINDS = new Set(["deadlock", "ghost_slot"]);
 
+// ---------------------------------------------------------------------------
+// Locale
+// ---------------------------------------------------------------------------
+//
+// The card renders in the VIEWER's profile language (`hass.language`), not the
+// installation's (`hass.config.language`). This is the only BlueSight surface
+// where two people can legitimately be looking at the same dashboard in two
+// languages at once. `incident.detail` is the exception: it arrives already
+// rendered in the installation language, because it is a published attribute
+// that user automations format push notifications from, so it is never
+// re-translated here.
+//
+// The catalogue is the very file the backend reads, served out of the
+// directory this card is served from -- one source of truth for both sides,
+// and no HTTP registration beyond the static path that already exists.
+
+const localeUrl = (language) => `/bluesight/locale/incidents.${language}.json`;
+
+// Resolved catalogues, by base language. A language we do not ship resolves to
+// an empty object rather than staying absent, so a 404 is remembered and not
+// re-requested (and not re-logged) on every render.
+const CATALOGUES = new Map();
+
+// In-flight requests, by base language: every card on the dashboard shares one
+// fetch per language.
+const CATALOGUE_REQUESTS = new Map();
+
+// Last-resort English, embedded so a card whose fetch fails -- a stale cached
+// module, a reverse proxy that does not pass /bluesight/, an offline PWA --
+// still renders words rather than raw keys. The card must never render worse
+// than it did before it was translated.
+//
+// Kept byte-identical to the `card.*` half of the shipped English catalogue by
+// tests/test_card_locale.py: change one and the test tells you to change the
+// other.
+const EMBEDDED_EN = {
+  "card.proxies.empty": "No BlueSight proxies found. Once the integration is set up, sensor.<proxy>_slots_used entities appear automatically. You can also list them explicitly with the `proxies:` config option.",
+  "card.proxy.missing": "missing",
+  "card.proxy.offline": "offline",
+  "card.proxy.scan_only": "scan only — no connection slots",
+  "card.proxy.last_advert": "last advert {age} ago",
+  "card.proxy.last_advert_with_devices.one": "last advert {age} ago · {count} device seen",
+  "card.proxy.last_advert_with_devices.other": "last advert {age} ago · {count} devices seen",
+  "card.incidents.none": "No incidents",
+  "card.incidents.one": "{count} incident",
+  "card.incidents.other": "{count} incidents",
+  "card.incidents.no_detail": "Incident active (no detail available)",
+  "card.incidents.sensor_missing": "Incident sensor {entity} not found.",
+  "card.incident.sources": "on {sources}",
+  "card.kind.deadlock": "Deadlock",
+  "card.kind.ghost_slot": "Ghost slot",
+  "card.kind.storm": "Storm",
+  "card.kind.proxy_offline": "Proxy offline",
+  "card.kind.proxy_stalled": "Proxy stalled",
+  "card.kind.proxy_reboot_storm": "Proxy reboot storm",
+  "card.kind.unknown": "Unknown",
+  "card.age.seconds": "{value} s",
+  "card.age.minutes": "{value} min",
+  "card.age.hours": "{value} h",
+};
+
+// One `{placeholder}`. Mirrors `rendering._PLACEHOLDER` on the backend: the
+// names are authored by us, so the class is deliberately narrow and anything
+// else stays literal.
+const PLACEHOLDER = /\{(\w+)\}/g;
+
+/**
+ * Base language of a Home Assistant tag: `fr-CA` and `fr_CA` are both `fr`.
+ * Mirrors `Catalogue.for_language` on the backend.
+ */
+function baseLanguage(tag) {
+  if (!tag) {
+    return "en";
+  }
+  const base = String(tag).replace(/_/g, "-").split("-")[0].toLowerCase();
+  return base || "en";
+}
+
+/**
+ * Fetch one language, once, ever; call `onReady` when it lands.
+ *
+ * Returns immediately (without calling back) for a language already resolved,
+ * so a caller may invoke this on every render without piling up listeners.
+ * Nothing here rejects: a missing catalogue is a degraded card, not an error,
+ * and an unhandled rejection per render would fill the console.
+ */
+function loadCatalogue(language, onReady) {
+  if (CATALOGUES.has(language)) {
+    return;
+  }
+  let request = CATALOGUE_REQUESTS.get(language);
+  if (!request) {
+    request = fetch(localeUrl(language))
+      .then((response) => (response.ok ? response.json() : {}))
+      .catch(() => ({}))
+      .then((data) => {
+        CATALOGUES.set(
+          language,
+          data && typeof data === "object" ? data : {}
+        );
+        CATALOGUE_REQUESTS.delete(language);
+      });
+    CATALOGUE_REQUESTS.set(language, request);
+  }
+  request.then(onReady).catch(() => {});
+}
+
+/**
+ * Substitute `{name}` placeholders in one pass over the template.
+ *
+ * `String.replace` with a function never rescans what it substituted, which is
+ * the property that matters: parameters carry user-controlled proxy and device
+ * names, so a proxy literally named `{count}` must survive verbatim instead of
+ * being substituted in turn. An unknown name keeps its placeholder -- visible,
+ * but legible. `hasOwnProperty` rather than `in`, so a parameter named
+ * `constructor` cannot reach up the prototype chain.
+ */
+function interpolate(template, params) {
+  const values = params || {};
+  return template.replace(PLACEHOLDER, (match, name) =>
+    Object.prototype.hasOwnProperty.call(values, name)
+      ? String(values[name])
+      : match
+  );
+}
+
 class BlueSightCard extends HTMLElement {
   constructor() {
     super();
@@ -44,6 +170,9 @@ class BlueSightCard extends HTMLElement {
     // Signature of the last render so we can skip redundant DOM rebuilds.
     this._lastSignature = null;
     this._built = false;
+    // Base language we have already asked `loadCatalogue` for, so a render
+    // storm subscribes once rather than once per `set hass`.
+    this._requestedLanguage = null;
   }
 
   /**
@@ -76,6 +205,106 @@ class BlueSightCard extends HTMLElement {
 
   get hass() {
     return this._hass;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Translation
+  // ---------------------------------------------------------------------------
+
+  /** The viewer's base language; `en` until `hass` has arrived. */
+  _language() {
+    return baseLanguage(this._hass && this._hass.language);
+  }
+
+  /**
+   * Make sure the viewer's catalogue is on its way, without ever waiting for
+   * it. The first paint draws from whatever is already loaded -- the embedded
+   * English, on a cold load -- and `_onCatalogueLoaded` repaints when the
+   * fetch resolves. Awaiting here would trade a translated card for a blank
+   * one on every dashboard open.
+   *
+   * English is fetched alongside a non-English language so a half-translated
+   * catalogue falls back to the SHIPPED English rather than to the embedded
+   * copy, which is a snapshot and may be older than the install.
+   */
+  _ensureCatalogue() {
+    const language = this._language();
+    if (this._requestedLanguage === language) {
+      return;
+    }
+    this._requestedLanguage = language;
+    const ready = () => this._onCatalogueLoaded();
+    loadCatalogue(language, ready);
+    if (language !== "en") {
+      loadCatalogue("en", ready);
+    }
+  }
+
+  /** Repaint once a catalogue lands. Nothing awaits this, so it must not throw. */
+  _onCatalogueLoaded() {
+    this._lastSignature = null;
+    try {
+      this._render();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("bluesight-card render error", err);
+      this._renderFatal(err);
+    }
+  }
+
+  /**
+   * The first usable string for `key`, or `null`.
+   *
+   * Three levels, in order: the viewer's language, the shipped English, the
+   * embedded English. A blank value counts as missing at every level -- an
+   * entry a translator left empty is an untranslated one, not a translation to
+   * nothing. Mirrors `Catalogue.lookup` on the backend, plus the embedded map
+   * as a floor the backend does not need.
+   */
+  _lookup(key) {
+    const language = this._language();
+    const sources = [];
+    if (language !== "en" && CATALOGUES.has(language)) {
+      sources.push(CATALOGUES.get(language));
+    }
+    if (CATALOGUES.has("en")) {
+      sources.push(CATALOGUES.get("en"));
+    }
+    sources.push(EMBEDDED_EN);
+    for (const source of sources) {
+      const value = source[key];
+      if (typeof value === "string" && value.trim() !== "") {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Render `key` with `params`, in the viewer's language.
+   *
+   * `count` selects a plural form: `<key>.one` / `<key>.other` is tried first.
+   * English and French agree on the 1-vs-rest boundary; a language that does
+   * not can add its own forms without touching a caller. A key nothing
+   * resolves comes back as itself -- self-diagnosing, and better than a blank.
+   *
+   * Mirrors `rendering.render` on the backend, deliberately: the same key with
+   * the same parameters must read the same whether the backend rendered it or
+   * the card did.
+   */
+  _t(key, params, count) {
+    let template = null;
+    if (typeof count === "number" && Number.isFinite(count)) {
+      const suffix = Math.abs(count) === 1 ? "one" : "other";
+      template = this._lookup(`${key}.${suffix}`);
+    }
+    if (template === null) {
+      template = this._lookup(key);
+    }
+    if (template === null) {
+      return key;
+    }
+    return interpolate(template, params);
   }
 
   // ---------------------------------------------------------------------------
@@ -130,19 +359,19 @@ class BlueSightCard extends HTMLElement {
     };
   }
 
-  /** Compact "3 m" / "2 h" style age, from a seconds value. */
+  /** Compact "3 min" / "2 h" style age, from a seconds value. */
   _formatAge(seconds) {
     const n = this._toInt(seconds, -1);
     if (n < 0) {
       return null;
     }
     if (n < 90) {
-      return `${n} s`;
+      return this._t("card.age.seconds", { value: String(n) });
     }
     if (n < 5400) {
-      return `${Math.round(n / 60)} min`;
+      return this._t("card.age.minutes", { value: String(Math.round(n / 60)) });
     }
-    return `${Math.round(n / 3600)} h`;
+    return this._t("card.age.hours", { value: String(Math.round(n / 3600)) });
   }
 
   _toInt(value, fallback = 0) {
@@ -159,6 +388,7 @@ class BlueSightCard extends HTMLElement {
     if (!hass) {
       return;
     }
+    this._ensureCatalogue();
 
     const proxyEntities = this._discoverProxyEntities(hass);
     const incidentEntity =
@@ -191,7 +421,9 @@ class BlueSightCard extends HTMLElement {
   }
 
   _computeSignature(proxyEntities, hass, incidentEntity, incidentState, title) {
-    const parts = [title, incidentEntity];
+    // The language belongs in the signature: every drawn string depends on it,
+    // and a viewer who changes their profile language moves nothing else.
+    const parts = [title, incidentEntity, this._language()];
     for (const id of proxyEntities) {
       const s = hass.states ? hass.states[id] : undefined;
       if (!s) {
@@ -260,10 +492,7 @@ class BlueSightCard extends HTMLElement {
     if (!proxyEntities.length) {
       const empty = document.createElement("div");
       empty.className = "empty";
-      empty.textContent =
-        "No BlueSight proxies found. Once the integration is set up, " +
-        "sensor.<proxy>_slots_used entities appear automatically. You can " +
-        "also list them explicitly with the `proxies:` config option.";
+      empty.textContent = this._t("card.proxies.empty");
       container.appendChild(empty);
       return;
     }
@@ -287,7 +516,7 @@ class BlueSightCard extends HTMLElement {
     if (!stateObj) {
       tile.classList.add("offline");
       name.textContent = entityId;
-      count.textContent = "missing";
+      count.textContent = this._t("card.proxy.missing");
       name.appendChild(count);
       tile.appendChild(name);
       return tile;
@@ -310,7 +539,7 @@ class BlueSightCard extends HTMLElement {
     name.textContent = this._proxyName(stateObj, entityId);
     if (offline || unavailable) {
       tile.classList.add("offline");
-      count.textContent = "offline";
+      count.textContent = this._t("card.proxy.offline");
     } else {
       count.textContent = `${used}/${total}`;
     }
@@ -331,8 +560,12 @@ class BlueSightCard extends HTMLElement {
         );
         meta.textContent =
           seen >= 0
-            ? `last advert ${age} ago · ${seen} devices seen`
-            : `last advert ${age} ago`;
+            ? this._t(
+                "card.proxy.last_advert_with_devices",
+                { age, count: String(seen) },
+                seen
+              )
+            : this._t("card.proxy.last_advert", { age });
         tile.appendChild(meta);
       }
     }
@@ -353,7 +586,7 @@ class BlueSightCard extends HTMLElement {
       // devices but never hold a connection, so there is nothing to draw.
       const hint = document.createElement("span");
       hint.className = "pip-hint";
-      hint.textContent = "scan only — no connection slots";
+      hint.textContent = this._t("card.proxy.scan_only");
       pips.appendChild(hint);
     }
     tile.appendChild(pips);
@@ -369,7 +602,9 @@ class BlueSightCard extends HTMLElement {
     if (!incidentState) {
       const note = document.createElement("div");
       note.className = "incident-ok muted";
-      note.textContent = `Incident sensor ${incidentEntity} not found.`;
+      note.textContent = this._t("card.incidents.sensor_missing", {
+        entity: incidentEntity,
+      });
       container.appendChild(note);
       return;
     }
@@ -378,7 +613,7 @@ class BlueSightCard extends HTMLElement {
     if (!isOn) {
       const ok = document.createElement("div");
       ok.className = "incident-ok";
-      ok.textContent = "No incidents";
+      ok.textContent = this._t("card.incidents.none");
       container.appendChild(ok);
       return;
     }
@@ -392,14 +627,18 @@ class BlueSightCard extends HTMLElement {
       attrs.incident_count !== undefined
         ? this._toInt(attrs.incident_count, incidents.length)
         : incidents.length;
-    heading.textContent = `${count} incident${count === 1 ? "" : "s"}`;
+    heading.textContent = this._t(
+      "card.incidents",
+      { count: String(count) },
+      count
+    );
     container.appendChild(heading);
 
     if (!incidents.length) {
       // On, but no detail available -- still surface the alert.
       const badge = document.createElement("div");
       badge.className = "incident critical";
-      badge.textContent = "Incident active (no detail available)";
+      badge.textContent = this._t("card.incidents.no_detail");
       container.appendChild(badge);
       return;
     }
@@ -420,7 +659,14 @@ class BlueSightCard extends HTMLElement {
 
     const label = document.createElement("span");
     label.className = "incident-kind";
-    label.textContent = kind.replace(/_/g, " ");
+    // A kind this build does not know about -- a newer backend seen by an
+    // older cached card -- falls back to the catalogue's "unknown" label
+    // rather than to a raw key.
+    const kindKey = `card.kind.${kind}`;
+    label.textContent =
+      this._lookup(kindKey) !== null
+        ? this._t(kindKey)
+        : this._t("card.kind.unknown");
     badge.appendChild(label);
 
     if (address) {
@@ -430,6 +676,11 @@ class BlueSightCard extends HTMLElement {
       badge.appendChild(addr);
     }
 
+    // `detail` is deliberately NOT translated here: the backend renders it
+    // from the same catalogue, in the installation's language, and publishes
+    // it as an entity attribute that user automations format notifications
+    // from. Re-rendering it in the viewer's language would need the key and
+    // parameters, which the attribute does not carry.
     if (detail) {
       const det = document.createElement("span");
       det.className = "incident-detail";
@@ -442,14 +693,23 @@ class BlueSightCard extends HTMLElement {
     if (sources.length) {
       const src = document.createElement("span");
       src.className = "incident-addr";
-      src.textContent = `on ${sources.join(", ")}`;
+      src.textContent = this._t("card.incident.sources", {
+        sources: sources.join(", "),
+      });
       badge.appendChild(src);
     }
 
     return badge;
   }
 
-  /** Minimal, self-contained failure card so Lovelace never breaks. */
+  /**
+   * Minimal, self-contained failure card so Lovelace never breaks.
+   *
+   * The message is deliberately left in English. It renders exactly when the
+   * card is broken -- possibly BECAUSE the catalogue fetch or `_t` is what
+   * failed -- so translating it would be circular: the one string that must
+   * always appear would depend on the machinery that just did not work.
+   */
   _renderFatal(err) {
     const msg = err && err.message ? err.message : String(err);
     this.shadowRoot.innerHTML =
@@ -565,7 +825,6 @@ class BlueSightCard extends HTMLElement {
       }
       .incident-kind {
         font-weight: 700;
-        text-transform: capitalize;
       }
       .incident-addr {
         font-family: var(--code-font-family, monospace);
@@ -607,6 +866,10 @@ if (!customElements.get("bluesight-card")) {
   customElements.define("bluesight-card", BlueSightCard);
 
   // Advertise the card in the Lovelace card picker.
+  //
+  // Name and description are deliberately left in English: this runs at module
+  // load, before any `hass` exists, so there is no viewer language to render
+  // them in and no repaint once one arrives.
   window.customCards = window.customCards || [];
   window.customCards.push({
     type: "bluesight-card",
