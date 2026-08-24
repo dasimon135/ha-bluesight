@@ -13,7 +13,7 @@ from collections.abc import Callable
 
 from .const import DOMAIN
 from .model import Incident, IncidentKind, normalize_address
-from .rendering import Catalogue, render
+from .rendering import Catalogue, plural_count, render
 
 
 def dedupe_incidents(incidents: list[Incident]) -> list[Incident]:
@@ -169,8 +169,13 @@ def notification_content(
     else:
         name = IncidentKind(incident.kind).value
         params.update(build(incident, catalogue))
-    title = render(f"notify.{name}.title", params, catalogue)
-    message = render(f"notify.{name}.message", params, catalogue)
+    # The plural pivot is the same "{count}" the message interpolates, so
+    # the noun always agrees with the number the user reads.
+    count = plural_count(params)
+    title = render(f"notify.{name}.title", params, catalogue, count=count)
+    message = render(
+        f"notify.{name}.message", params, catalogue, count=count
+    )
     return title, message
 
 

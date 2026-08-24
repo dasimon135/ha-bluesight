@@ -17,7 +17,7 @@ from .detector import (
     detect_storm,
 )
 from .model import Incident, ProxyHealth, ProxySlots
-from .rendering import Catalogue, render
+from .rendering import Catalogue, plural_count, render
 from .window import FailureWindow
 
 
@@ -86,7 +86,15 @@ def build_triage_data(
     # list is assembled -- is what keeps that automation producing prose.
     if catalogue is not None:
         incidents = [
-            replace(i, detail=render(i.detail_key, i.detail_params, catalogue))
+            replace(
+                i,
+                detail=render(
+                    i.detail_key,
+                    i.detail_params,
+                    catalogue,
+                    count=plural_count(i.detail_params),
+                ),
+            )
             if i.detail_key
             else i
             for i in incidents

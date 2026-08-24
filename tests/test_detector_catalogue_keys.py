@@ -45,6 +45,23 @@ def _catalogue(language: str) -> dict[str, str]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _forms(catalogue: dict[str, str], key: str) -> list[str]:
+    """Every template a detector's key can resolve to.
+
+    A counted string is stored split as ``<key>.one`` / ``<key>.other`` rather
+    than under the bare key, so a detector's key legitimately has no direct
+    entry. Both forms are returned and each is checked, because a placeholder
+    dropped from only one of them is invisible until the count reaches it.
+    """
+    if key in catalogue:
+        return [catalogue[key]]
+    return [
+        catalogue[f"{key}.{suffix}"]
+        for suffix in ("one", "other")
+        if f"{key}.{suffix}" in catalogue
+    ]
+
+
 def _window(window_s: float, threshold: int, address: str, hits: int) -> FailureWindow:
     window = FailureWindow(window_s=window_s, threshold=threshold, clock=lambda: 0.0)
     for _ in range(hits):
@@ -93,7 +110,9 @@ def test_every_incident_kind_is_covered():
 @pytest.mark.parametrize("incident", INCIDENTS, ids=_ids())
 def test_detector_emits_a_key_that_exists(incident):
     assert incident.detail_key, f"{incident.kind.value} emits no key"
-    assert incident.detail_key in _catalogue("en")
+    assert _forms(_catalogue("en"), incident.detail_key), (
+        f"{incident.detail_key} resolves to nothing in the English catalogue"
+    )
 
 
 @pytest.mark.parametrize("language", ["en", "fr"])
@@ -104,8 +123,8 @@ def test_parameters_match_the_template_placeholders(incident, language):
     A missing name renders a literal ``{proxy}``; a surplus one is a parameter
     the user never sees, usually the residue of a rename on one side only.
     """
-    template = _catalogue(language)[incident.detail_key]
-    assert set(PLACEHOLDER.findall(template)) == set(incident.detail_params)
+    for template in _forms(_catalogue(language), incident.detail_key):
+        assert set(PLACEHOLDER.findall(template)) == set(incident.detail_params)
 
 
 @pytest.mark.parametrize("incident", INCIDENTS, ids=_ids())

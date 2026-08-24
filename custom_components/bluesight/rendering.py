@@ -54,6 +54,27 @@ class Catalogue:
         return self.primary.get(key) or self.fallback.get(key) or None
 
 
+def plural_count(params: dict[str, str] | None, name: str = "count") -> int | None:
+    """The grammatical count for :func:`render`, read off the parameters.
+
+    The plural pivot is deliberately taken from the very parameter the
+    template substitutes rather than carried alongside it. A second copy could
+    drift from the number the user actually reads, and the drift is invisible
+    in review -- it only shows up as "1 failures" in production. Reading the
+    substituted value makes the two agree by construction.
+
+    A parameter that is absent or is not an integer selects no form, so
+    rendering falls back to the unsuffixed key: a template with no plural
+    forms is unaffected by this being called for every key.
+    """
+    if not params:
+        return None
+    try:
+        return int(params[name])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def render(
     key: str,
     params: dict[str, str] | None,

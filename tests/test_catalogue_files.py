@@ -80,6 +80,54 @@ def test_placeholders_match_across_languages(english, french):
 
 
 @pytest.mark.parametrize("language", ["en", "fr"])
+def test_every_plural_key_has_both_forms(language):
+    """``.one`` without ``.other`` (or the reverse) is a half-done split.
+
+    ``render`` falls back to the unsuffixed key when the form it wants is
+    missing, and the unsuffixed key is exactly what a split removes -- so the
+    missing half renders as a bare ``incident.storm.detail`` to the user.
+    """
+    catalogue = _load(language)
+    stems = {
+        key.rsplit(".", 1)[0]
+        for key in catalogue
+        if key.rsplit(".", 1)[1] in ("one", "other")
+    }
+    incomplete = sorted(
+        stem
+        for stem in stems
+        if f"{stem}.one" not in catalogue or f"{stem}.other" not in catalogue
+    )
+    assert not incomplete, f"half-split plural keys in {language}: {incomplete}"
+
+
+@pytest.mark.parametrize("language", ["en", "fr"])
+def test_plural_forms_agree_on_placeholders(language):
+    """The two forms of one key must interpolate the same names.
+
+    ``test_placeholders_match_across_languages`` compares ``.one`` to ``.one``
+    and ``.other`` to ``.other``, so a placeholder dropped from the singular in
+    *every* language slips past it. This closes that: the singular is the form
+    users see least often, which is precisely why it rots unnoticed.
+    """
+    catalogue = _load(language)
+    stems = sorted(
+        key.rsplit(".", 1)[0] for key in catalogue if key.endswith(".one")
+    )
+    mismatched = {
+        stem: (
+            sorted(PLACEHOLDER.findall(catalogue[f"{stem}.one"])),
+            sorted(PLACEHOLDER.findall(catalogue[f"{stem}.other"])),
+        )
+        for stem in stems
+        if f"{stem}.other" in catalogue
+        and set(PLACEHOLDER.findall(catalogue[f"{stem}.one"]))
+        != set(PLACEHOLDER.findall(catalogue[f"{stem}.other"]))
+    }
+    assert not mismatched, f"plural placeholder drift in {language}: {mismatched}"
+
+
+@pytest.mark.parametrize("language", ["en", "fr"])
 def test_no_value_is_blank(language):
     """A blank entry renders as the bare key, which is not a translation."""
     catalogue = _load(language)
