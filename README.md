@@ -239,6 +239,13 @@ proxies.
   detection from the scanner registry; per-proxy online / last-seen entities.
 - **0.3.0 — audit pass (shipped).** A rebuilt storm signal, an offline grace
   period and a `forget_proxy` action, diagnostics, and stable proxy naming.
+- **0.4.0 — the card ships with the integration (shipped).** HACS delivers the
+  Lovelace card, and the integration serves it and registers its dashboard
+  resource itself — replacing two manual steps that failed silently.
+- **0.5.0 — internationalisation (shipped).** Incident details, persistent
+  notifications and the card follow the user's language; English and French
+  ship. The backend renders in the installation's language, the card in the
+  viewer's profile language.
 - **v1.5 — optional ESPHome component.** An auto-detected custom component on the
   proxy exposing raw telemetry the HA API cannot: NimBLE SMP-fail counts,
   connection rejects, BLE RAM, and bond state. This upgrades storm detection from
