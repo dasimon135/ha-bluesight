@@ -77,23 +77,42 @@ def reconcile(
     return to_create, to_dismiss
 
 
+def _ghost_proxy(incident: Incident, catalogue: Catalogue) -> str:
+    """Name the proxy holding the ghost slot, as the user knows it.
+
+    The rendered detail and this notification sit side by side in the same
+    output and must not call the same proxy two different things. The
+    detector puts the proxy's *friendly name* in ``detail_params["proxy"]``,
+    which is what Home Assistant shows everywhere else, so that wins over the
+    MAC in ``sources``.
+
+    An incident with neither is not expected, but a notification that names no
+    proxy still beats an IndexError inside the snapshot loop -- and the phrase
+    it falls back to comes from the catalogue, so it is not English in a
+    French notification.
+    """
+    return (
+        incident.detail_params.get("proxy")
+        or (incident.sources[0] if incident.sources else "")
+        or render("notify.ghost_slot.proxy_unknown", None, catalogue)
+    )
+
+
 #: Per-kind parameters for the ``notify.<kind>.message`` templates, on top of
 #: the ``{address}`` every kind gets. The catalogue holds the wording; this
 #: table holds only what has to be computed from the incident.
-_NOTIFY_PARAMS: dict[IncidentKind, Callable[[Incident], dict[str, str]]] = {
-    IncidentKind.STORM: lambda i: {"detail": i.detail},
-    IncidentKind.DEADLOCK: lambda i: {
+_NOTIFY_PARAMS: dict[
+    IncidentKind, Callable[[Incident, Catalogue], dict[str, str]]
+] = {
+    IncidentKind.STORM: lambda i, c: {"detail": i.detail},
+    IncidentKind.DEADLOCK: lambda i, c: {
         "count": str(len(i.sources)),
         "sources": ", ".join(i.sources),
     },
-    # An incident with no source is not expected, but a notification that
-    # names no proxy still beats an IndexError inside the snapshot loop.
-    IncidentKind.GHOST_SLOT: lambda i: {
-        "proxy": i.sources[0] if i.sources else "a proxy"
-    },
-    IncidentKind.PROXY_OFFLINE: lambda i: {},
-    IncidentKind.PROXY_STALLED: lambda i: {"detail": i.detail},
-    IncidentKind.PROXY_REBOOT_STORM: lambda i: {"detail": i.detail},
+    IncidentKind.GHOST_SLOT: lambda i, c: {"proxy": _ghost_proxy(i, c)},
+    IncidentKind.PROXY_OFFLINE: lambda i, c: {},
+    IncidentKind.PROXY_STALLED: lambda i, c: {"detail": i.detail},
+    IncidentKind.PROXY_REBOOT_STORM: lambda i, c: {"detail": i.detail},
 }
 
 
@@ -121,7 +140,7 @@ def notification_content(
         name = "unknown"
     else:
         name = IncidentKind(incident.kind).value
-        params.update(build(incident))
+        params.update(build(incident, catalogue))
     title = render(f"notify.{name}.title", params, catalogue)
     message = render(f"notify.{name}.message", params, catalogue)
     return title, message

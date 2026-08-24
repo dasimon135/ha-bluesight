@@ -12,6 +12,7 @@
   "notify.deadlock.message": "{address} is holding a connection slot on {count} proxies at once ({sources}) with no working link — this stalls the connection pool (HA core issue #176516). Power-cycle the device or restart the affected proxies to release the slots.",
   "notify.ghost_slot.title": "BlueSight: ghost slot",
   "notify.ghost_slot.message": "A slot on {proxy} is held for {address} but the device is unavailable. If it stays stuck, restart that proxy to free the slot.",
+  "notify.ghost_slot.proxy_unknown": "an unspecified proxy",
   "notify.proxy_offline.title": "BlueSight: proxy offline",
   "notify.proxy_offline.message": "Bluetooth proxy {address} is offline — check its power and Wi-Fi.",
   "notify.proxy_stalled.title": "BlueSight: proxy stalled",

@@ -12,6 +12,7 @@
   "notify.deadlock.message": "{address} occupe un slot de connexion sur {count} proxys à la fois ({sources}) sans lien fonctionnel — cela bloque le pool de connexions (issue HA core #176516). Coupez puis rétablissez l'alimentation de l'appareil, ou redémarrez les proxys concernés, pour libérer les slots.",
   "notify.ghost_slot.title": "BlueSight : slot fantôme",
   "notify.ghost_slot.message": "Un slot sur {proxy} est retenu pour {address} alors que l'appareil est indisponible. S'il reste bloqué, redémarrez ce proxy pour libérer le slot.",
+  "notify.ghost_slot.proxy_unknown": "un proxy non identifié",
   "notify.proxy_offline.title": "BlueSight : proxy hors ligne",
   "notify.proxy_offline.message": "Le proxy Bluetooth {address} est hors ligne — vérifiez son alimentation et son Wi-Fi.",
   "notify.proxy_stalled.title": "BlueSight : proxy figé",

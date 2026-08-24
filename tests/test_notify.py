@@ -183,6 +183,44 @@ def test_content_ghost_without_sources_does_not_crash():
     assert "11:22" in message
 
 
+def test_content_ghost_prefers_the_friendly_name_over_the_source_mac():
+    # The detail and the notification name the same proxy side by side; the
+    # friendly name is what the user sees everywhere else in Home Assistant,
+    # so it wins over the MAC in `sources`.
+    incident = Incident(
+        kind=IncidentKind.GHOST_SLOT,
+        address="11:22",
+        sources=["AA:BB:CC:DD:EE:FF"],
+        detail_key="incident.ghost_slot.detail",
+        detail_params={"proxy": "Proxy Cuisine"},
+    )
+    _, message = notification_content(incident, EN)
+    assert "Proxy Cuisine" in message
+    assert "AA:BB:CC:DD:EE:FF" not in message
+
+
+def test_content_ghost_falls_back_to_the_source_when_no_friendly_name():
+    _, message = notification_content(_ghost("11:22", sources=["PROXY1"]), EN)
+    assert "PROXY1" in message
+
+
+def test_content_ghost_without_a_proxy_names_the_unknown_proxy_in_english():
+    _, message = notification_content(
+        Incident(kind=IncidentKind.GHOST_SLOT, address="11:22", sources=[]), EN
+    )
+    assert "an unspecified proxy" in message
+
+
+def test_content_ghost_without_a_proxy_names_the_unknown_proxy_in_french():
+    # The one English literal that survived the extraction sweep: a French
+    # user with a sourceless ghost slot must not be told "a proxy".
+    _, message = notification_content(
+        Incident(kind=IncidentKind.GHOST_SLOT, address="11:22", sources=[]), FR
+    )
+    assert "un proxy non identifié" in message
+    assert "a proxy" not in message
+
+
 def test_content_proxy_offline_names_source_and_is_actionable():
     title, message = notification_content(_proxy_offline("PX:01"), EN)
     assert title == "BlueSight: proxy offline"
