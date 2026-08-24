@@ -4,12 +4,15 @@ The card is vanilla JS with no build step and no JS test harness, so nothing
 in CI executes it. What CI *can* do is check the two static promises the card
 makes about the catalogue, both of which rot silently:
 
-* every key it asks for exists, and
-* its embedded last-resort English is still a copy of the shipped English.
+* every key it asks for exists,
+* its embedded last-resort English is still a copy of the shipped English, and
+* the catalogue it fetches carries a cache-busting query.
 
-Both failures look like working code in review. A renamed key renders as a
+All three failures look like working code in review. A renamed key renders as a
 literal ``card.proxy.offline`` in the badge; a stale embedded copy is invisible
-until the day the catalogue fetch fails, which is exactly the day it matters.
+until the day the catalogue fetch fails, which is exactly the day it matters;
+and a catalogue served from a month-old browser cache answers this release's
+keys with last release's file.
 """
 from __future__ import annotations
 
@@ -122,3 +125,21 @@ def test_the_custom_element_is_still_defined_only_once(card_source):
     """
     assert 'if (!customElements.get("bluesight-card"))' in card_source
     assert card_source.count("customElements.define(") == 1
+
+
+
+def test_the_catalogue_fetch_is_cache_busted(card_source):
+    """The locale URL must carry the version, not just the language.
+
+    ``StaticPathConfig(URL_BASE, CARD_DIR, True)`` serves this directory with
+    ``Cache-Control: public, max-age=2678400``. The card module escapes that
+    through the ``?v=`` on its Lovelace resource URL; the catalogue is fetched
+    by the card itself and has only what is written here.
+    """
+    match = re.search(
+        r"const localeUrl = \(language\) =>\s*`([^`]+)`", card_source
+    )
+    assert match, "localeUrl is gone or no longer a template literal"
+    url = match.group(1)
+    assert "${language}" in url
+    assert "?v=${CARD_VERSION}" in url

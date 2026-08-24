@@ -21,7 +21,10 @@
  *   title: BlueSight                        # card header text
  */
 
-const CARD_VERSION = "0.3.0";
+// Kept equal to `manifest.json`'s version by tests/test_card_locale.py. The
+// card has no build step, so there is nowhere to inject the real version at
+// package time; a checked constant is the cheap way to make the drift loud.
+const CARD_VERSION = "0.5.0";
 
 // eslint-disable-next-line no-console
 console.info(
@@ -51,7 +54,16 @@ const CRITICAL_KINDS = new Set(["deadlock", "ghost_slot"]);
 // directory this card is served from -- one source of truth for both sides,
 // and no HTTP registration beyond the static path that already exists.
 
-const localeUrl = (language) => `/bluesight/locale/incidents.${language}.json`;
+// `?v=` is a cache-buster, not a parameter: the static path serves the whole
+// `www` directory with `cache_headers=True`, which is `max-age=2678400` -- 31
+// days. The card module itself escapes that because its Lovelace resource URL
+// already carries the integration version, so an upgrade fetches a new module
+// from a new URL; the catalogue had no such query and would have stayed
+// cached for a month behind a card asking it for this release's keys, which
+// degrades to raw keys -- the exact failure the fallback cascade exists to
+// prevent, arriving silently and late.
+const localeUrl = (language) =>
+  `/bluesight/locale/incidents.${language}.json?v=${CARD_VERSION}`;
 
 // Resolved catalogues, by base language. A language we do not ship resolves to
 // an empty object rather than staying absent, so a 404 is remembered and not
