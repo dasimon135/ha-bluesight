@@ -5,6 +5,10 @@ The policy functions in ``incident_policy`` are HA-free and always run. The
 ``hass`` and monkeypatching the module-level ``persistent_notification`` with a
 recorder, so the full create/dismiss/resolve cycle is verified without a
 running Home Assistant.
+
+Wording is asserted against the *shipped* catalogues, read from disk exactly
+as ``async_setup_entry`` reads them. A test written against an inline fake
+catalogue would still pass if the real files were empty or malformed.
 """
 from custom_components.bluesight.incident_policy import (
     dedupe_incidents,
@@ -12,7 +16,13 @@ from custom_components.bluesight.incident_policy import (
     notification_id_for_key,
     reconcile,
 )
+from custom_components.bluesight.locale import read_catalogues
 from custom_components.bluesight.model import Incident, IncidentKind
+from custom_components.bluesight.rendering import Catalogue
+
+_CATALOGUES = read_catalogues()
+EN = Catalogue.for_language("en", _CATALOGUES)
+FR = Catalogue.for_language("fr", _CATALOGUES)
 
 
 def _deadlock(address: str, sources=("AA", "BB")) -> Incident:
@@ -143,7 +153,7 @@ def test_reconcile_empty_is_empty():
 # --- notification_content -------------------------------------------------
 
 def test_content_storm_is_actionable():
-    title, message = notification_content(_storm("11:22", detail="7 fails/5m"))
+    title, message = notification_content(_storm("11:22", detail="7 fails/5m"), EN)
     assert title == "BlueSight: pairing storm"
     assert "11:22" in message
     assert "7 fails/5m" in message
@@ -151,7 +161,7 @@ def test_content_storm_is_actionable():
 
 
 def test_content_deadlock_references_issue_and_sources():
-    title, message = notification_content(_deadlock("11:22", sources=["AA", "BB"]))
+    title, message = notification_content(_deadlock("11:22", sources=["AA", "BB"]), EN)
     assert title == "BlueSight: proxy slot deadlock"
     assert "11:22" in message
     assert "176516" in message
@@ -159,7 +169,7 @@ def test_content_deadlock_references_issue_and_sources():
 
 
 def test_content_ghost_names_the_proxy():
-    title, message = notification_content(_ghost("11:22", sources=["PROXY1"]))
+    title, message = notification_content(_ghost("11:22", sources=["PROXY1"]), EN)
     assert title == "BlueSight: ghost slot"
     assert "11:22" in message
     assert "PROXY1" in message
@@ -168,13 +178,13 @@ def test_content_ghost_names_the_proxy():
 
 def test_content_ghost_without_sources_does_not_crash():
     title, message = notification_content(
-        Incident(kind=IncidentKind.GHOST_SLOT, address="11:22", sources=[])
+        Incident(kind=IncidentKind.GHOST_SLOT, address="11:22", sources=[]), EN
     )
     assert "11:22" in message
 
 
 def test_content_proxy_offline_names_source_and_is_actionable():
-    title, message = notification_content(_proxy_offline("PX:01"))
+    title, message = notification_content(_proxy_offline("PX:01"), EN)
     assert title == "BlueSight: proxy offline"
     assert "PX:01" in message
     assert "offline" in message.lower()
@@ -182,7 +192,7 @@ def test_content_proxy_offline_names_source_and_is_actionable():
 
 def test_content_proxy_stalled_names_source_detail_and_action():
     title, message = notification_content(
-        _proxy_stalled("PX:01", detail="no devices for 12m")
+        _proxy_stalled("PX:01", detail="no devices for 12m"), EN
     )
     assert title == "BlueSight: proxy stalled"
     assert "PX:01" in message
@@ -192,12 +202,55 @@ def test_content_proxy_stalled_names_source_detail_and_action():
 
 def test_content_proxy_reboot_storm_names_source_detail_and_action():
     title, message = notification_content(
-        _proxy_reboot_storm("PX:01", detail="4 reboots/10m")
+        _proxy_reboot_storm("PX:01", detail="4 reboots/10m"), EN
     )
     assert title == "BlueSight: proxy rebooting"
     assert "PX:01" in message
     assert "4 reboots/10m" in message
     assert "power" in message.lower()
+
+
+def test_content_is_rendered_in_home_assistants_language():
+    # The whole point of the release: no wording is hard-coded in Python, so
+    # the same incident notifies in French with nothing else changed.
+    title, message = notification_content(
+        _deadlock("11:22", sources=["AA", "BB"]), FR
+    )
+    assert title == "BlueSight : blocage de slot proxy"
+    assert "occupe un slot de connexion sur 2 proxys" in message
+    assert "11:22" in message
+    assert "AA, BB" in message
+
+
+def test_content_french_storm_carries_the_rendered_detail():
+    title, message = notification_content(
+        _storm("11:22", detail="7 échecs en 300s"), FR
+    )
+    assert title == "BlueSight : tempête d'appairage"
+    assert "7 échecs en 300s" in message
+
+
+def test_content_unknown_kind_degrades_to_the_generic_wording():
+    # A detector added without catalogue strings must still notify: this runs
+    # inside the coordinator's update callback, where raising kills the
+    # snapshot for every other incident too.
+    unknown = Incident(kind="mystery", address="11:22")
+    assert notification_content(unknown, EN) == (
+        "BlueSight: incident",
+        "An incident was detected on 11:22.",
+    )
+    assert notification_content(unknown, FR) == (
+        "BlueSight : incident",
+        "Un incident a été détecté sur 11:22.",
+    )
+
+
+def test_content_with_an_empty_catalogue_shows_the_key_not_a_blank():
+    # Catalogues unreadable on disk: a visible key is diagnosable, a blank
+    # notification is not.
+    title, message = notification_content(_deadlock("11:22"), Catalogue())
+    assert title == "notify.deadlock.title"
+    assert message == "notify.deadlock.message"
 
 
 # --- notification_id_for_key ---------------------------------------------
@@ -244,7 +297,7 @@ def _manager(monkeypatch):
 
     fake = _FakePersistentNotification()
     monkeypatch.setattr(notify_module, "persistent_notification", fake)
-    return notify_module.NotificationManager(hass=object()), fake
+    return notify_module.NotificationManager(hass=object(), catalogue=EN), fake
 
 
 def test_manager_creates_notification_for_new_incident(monkeypatch):

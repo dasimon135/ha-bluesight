@@ -1,8 +1,9 @@
 """Thin Home Assistant glue for BlueSight persistent notifications.
 
 All of the decision logic (dedup/precedence, create/dismiss reconciliation,
-message wording, id sanitizing) lives in the HA-free :mod:`.incident_policy`
-module. This manager only turns those decisions into
+notification parameters, id sanitizing) lives in the HA-free
+:mod:`.incident_policy` module, and the wording itself in the string
+catalogue. This manager only turns those decisions into
 ``persistent_notification`` create/dismiss calls and remembers which incidents
 are currently surfaced so it can dismiss them when they resolve.
 
@@ -22,6 +23,7 @@ from .incident_policy import (
     reconcile,
 )
 from .model import Incident
+from .rendering import Catalogue
 
 
 class NotificationManager:
@@ -32,8 +34,13 @@ class NotificationManager:
     only when the incident actually disappears from the coordinator snapshot.
     """
 
-    def __init__(self, hass: HomeAssistant) -> None:
+    def __init__(self, hass: HomeAssistant, catalogue: Catalogue) -> None:
+        """``catalogue`` is resolved once at setup, for Home Assistant's
+        configured language; a persistent notification is written for the
+        person running this Home Assistant, so it never varies per snapshot.
+        """
         self.hass = hass
+        self.catalogue = catalogue
         self._active_keys: set[str] = set()
 
     @callback
@@ -47,7 +54,7 @@ class NotificationManager:
         deduped = dedupe_incidents(incidents)
         to_create, to_dismiss = reconcile(self._active_keys, deduped)
         for incident in to_create:
-            title, message = notification_content(incident)
+            title, message = notification_content(incident, self.catalogue)
             persistent_notification.async_create(
                 self.hass,
                 message,

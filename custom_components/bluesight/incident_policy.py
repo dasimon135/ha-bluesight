@@ -1,14 +1,19 @@
 """Pure notification policy for BlueSight.
 
 No Home Assistant dependency: incident de-duplication/precedence, create /
-dismiss reconciliation, actionable message wording, and the notification-id
-sanitizer all live here so they are fully unit-testable under plain pytest on
-any platform. The thin HA glue in :mod:`.notify` only calls into these.
+dismiss reconciliation, the parameters each notification interpolates, and the
+notification-id sanitizer all live here so they are fully unit-testable under
+plain pytest on any platform. The wording itself comes from the string
+catalogue, so notifications are written in Home Assistant's configured
+language. The thin HA glue in :mod:`.notify` only calls into these.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from .const import DOMAIN
 from .model import Incident, IncidentKind, normalize_address
+from .rendering import Catalogue, render
 
 
 def dedupe_incidents(incidents: list[Incident]) -> list[Incident]:
@@ -72,57 +77,53 @@ def reconcile(
     return to_create, to_dismiss
 
 
-def notification_content(incident: Incident) -> tuple[str, str]:
+#: Per-kind parameters for the ``notify.<kind>.message`` templates, on top of
+#: the ``{address}`` every kind gets. The catalogue holds the wording; this
+#: table holds only what has to be computed from the incident.
+_NOTIFY_PARAMS: dict[IncidentKind, Callable[[Incident], dict[str, str]]] = {
+    IncidentKind.STORM: lambda i: {"detail": i.detail},
+    IncidentKind.DEADLOCK: lambda i: {
+        "count": str(len(i.sources)),
+        "sources": ", ".join(i.sources),
+    },
+    # An incident with no source is not expected, but a notification that
+    # names no proxy still beats an IndexError inside the snapshot loop.
+    IncidentKind.GHOST_SLOT: lambda i: {
+        "proxy": i.sources[0] if i.sources else "a proxy"
+    },
+    IncidentKind.PROXY_OFFLINE: lambda i: {},
+    IncidentKind.PROXY_STALLED: lambda i: {"detail": i.detail},
+    IncidentKind.PROXY_REBOOT_STORM: lambda i: {"detail": i.detail},
+}
+
+
+def notification_content(
+    incident: Incident, catalogue: Catalogue
+) -> tuple[str, str]:
     """Build an actionable ``(title, message)`` pair for one incident.
 
-    Wording follows the "madoka playbook" style: state the observed fault, then
-    tell the user the physical action that clears it.
+    The wording lives in the catalogue (``notify.<kind>.title`` /
+    ``notify.<kind>.message``) so a notification is written in Home
+    Assistant's configured language; this function only computes the
+    parameters those templates interpolate.
+
+    Wording follows the "madoka playbook" style: state the observed fault,
+    then tell the user the physical action that clears it.
+
+    A kind with no entry in :data:`_NOTIFY_PARAMS` — a detector added without
+    its catalogue strings — degrades to the generic ``notify.unknown.*``
+    wording rather than raising: this runs inside the coordinator's update
+    callback, where an exception would take the snapshot down.
     """
-    address = incident.address
-    if incident.kind is IncidentKind.STORM:
-        title = "BlueSight: pairing storm"
-        message = (
-            f"Repeated connection failures on {address} ({incident.detail}). "
-            "If this is a Daikin/BRC1H-type device, toggle its Bluetooth off "
-            "and on, then trigger a reconnect."
-        )
-    elif incident.kind is IncidentKind.DEADLOCK:
-        sources = ", ".join(incident.sources)
-        title = "BlueSight: proxy slot deadlock"
-        message = (
-            f"{address} is holding a connection slot on {len(incident.sources)} "
-            f"proxies at once ({sources}) with no working link — this stalls "
-            "the connection pool (HA core issue #176516). Power-cycle the "
-            "device or restart the affected proxies to release the slots."
-        )
-    elif incident.kind is IncidentKind.GHOST_SLOT:
-        proxy = incident.sources[0] if incident.sources else "a proxy"
-        title = "BlueSight: ghost slot"
-        message = (
-            f"A slot on {proxy} is held for {address} but the device is "
-            "unavailable. If it stays stuck, restart that proxy to free the "
-            "slot."
-        )
-    elif incident.kind is IncidentKind.PROXY_OFFLINE:
-        title = "BlueSight: proxy offline"
-        message = (
-            f"Bluetooth proxy {address} is offline — check its power and Wi-Fi."
-        )
-    elif incident.kind is IncidentKind.PROXY_STALLED:
-        title = "BlueSight: proxy stalled"
-        message = (
-            f"Bluetooth proxy {address} is online but hasn't seen any device "
-            f"for a while ({incident.detail}) — power-cycle it."
-        )
-    elif incident.kind is IncidentKind.PROXY_REBOOT_STORM:
-        title = "BlueSight: proxy rebooting"
-        message = (
-            f"Bluetooth proxy {address} keeps rebooting ({incident.detail}) — "
-            "check its power supply / for brownouts."
-        )
-    else:  # pragma: no cover - defensive; IncidentKind is a closed enum
-        title = "BlueSight: incident"
-        message = f"An incident was detected on {address}."
+    params: dict[str, str] = {"address": incident.address}
+    build = _NOTIFY_PARAMS.get(incident.kind)
+    if build is None:
+        name = "unknown"
+    else:
+        name = IncidentKind(incident.kind).value
+        params.update(build(incident))
+    title = render(f"notify.{name}.title", params, catalogue)
+    message = render(f"notify.{name}.message", params, catalogue)
     return title, message
 
 

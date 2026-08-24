@@ -31,7 +31,9 @@ from .const import (
 )
 from .coordinator import BlueSightCoordinator
 from .frontend import JSModuleRegistration
+from .locale import read_catalogues
 from .notify import NotificationManager
+from .rendering import Catalogue
 
 FORGET_PROXY_SCHEMA = vol.Schema({vol.Required(ATTR_SOURCE): cv.string})
 
@@ -49,6 +51,12 @@ async def async_setup_entry(
     they simply fall back to the module defaults.
     """
     opts = {**entry.data, **entry.options}
+    # Read the string catalogues once, off the event loop, and resolve the one
+    # language this Home Assistant speaks. Incident details and notifications
+    # are rendered from it on every snapshot, so it must never touch the disk
+    # again after setup.
+    catalogues = await hass.async_add_executor_job(read_catalogues)
+    catalogue = Catalogue.for_language(hass.config.language, catalogues)
     coordinator = BlueSightCoordinator(
         hass,
         config_entry=entry,
@@ -69,7 +77,7 @@ async def async_setup_entry(
     # manager rides on the coordinator instance so runtime_data stays the
     # coordinator (the entity platforms read it directly) and remains
     # retrievable at unload time.
-    manager = NotificationManager(hass)
+    manager = NotificationManager(hass, catalogue)
     coordinator.notification_manager = manager
     manager.async_update(coordinator.data.incidents)
     entry.async_on_unload(
