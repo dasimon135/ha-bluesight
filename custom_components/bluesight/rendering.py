@@ -12,7 +12,12 @@ the snapshot down.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
+
+#: One ``{placeholder}`` in a catalogue template. Names are authored by us, so
+#: the character class is deliberately narrow: anything else stays literal.
+_PLACEHOLDER = re.compile(r"\{(\w+)\}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,7 +43,15 @@ class Catalogue:
         return cls(primary=catalogues.get(base, english), fallback=english)
 
     def lookup(self, key: str) -> str | None:
-        return self.primary.get(key) or self.fallback.get(key)
+        """Return the first usable string for ``key``, or ``None``.
+
+        A blank value counts as missing at *both* levels. An entry a
+        translator left empty is an untranslated one, not a translation to
+        nothing, so it must fall through to English — and an empty English
+        entry must fall through to :func:`render`'s key-of-last-resort rather
+        than surface as an empty badge.
+        """
+        return self.primary.get(key) or self.fallback.get(key) or None
 
 
 def render(
@@ -63,6 +76,16 @@ def render(
         template = catalogue.lookup(key)
     if template is None:
         return key  # self-diagnosing: a visible key beats an empty badge
-    for name, value in (params or {}).items():
-        template = template.replace("{" + name + "}", str(value))
-    return template
+    values = params or {}
+
+    # One pass over the template, so every placeholder is resolved exactly
+    # once against the original text and a substituted value is never
+    # rescanned. Parameters carry user-controlled proxy and device names: a
+    # name containing "{count}" must stay literal instead of being replaced in
+    # turn, and the result must not depend on the order of ``params``. An
+    # unknown name keeps its placeholder — visible, but legible.
+    def _substitute(match: re.Match[str]) -> str:
+        name = match.group(1)
+        return str(values[name]) if name in values else match.group(0)
+
+    return _PLACEHOLDER.sub(_substitute, template)

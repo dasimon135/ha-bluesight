@@ -56,3 +56,30 @@ def test_catalogue_for_language_picks_the_base_language():
     catalogues = {"fr": FR, "en": EN}
     cat = Catalogue.for_language("fr-CA", catalogues)
     assert cat.primary == FR
+
+
+def test_substitution_is_order_independent():
+    """A substituted value must never be rescanned as another placeholder.
+
+    Detector parameters carry user-controlled proxy and device names, so a
+    name that happens to look like ``{count}`` must survive verbatim -- and
+    must render the same whichever order the parameters arrive in.
+    """
+    cat = Catalogue(primary={"k": "{name} on {count} proxies"}, fallback={})
+    forward = render("k", {"name": "{count}", "count": "2"}, cat)
+    reverse = render("k", {"count": "2", "name": "{count}"}, cat)
+    assert forward == reverse == "{count} on 2 proxies"
+
+
+def test_an_empty_primary_string_falls_back_to_english():
+    """A blank entry is an untranslated one, not a translation to nothing."""
+    cat = Catalogue(primary={"incident.deadlock.detail": ""}, fallback=EN)
+    assert render("incident.deadlock.detail", {"count": "2"}, cat) == (
+        "Held on 2 proxies simultaneously"
+    )
+
+
+def test_an_empty_string_at_both_levels_falls_back_to_the_key():
+    """The never-blank promise has to hold even against a blank fallback."""
+    cat = Catalogue(primary={"k": ""}, fallback={"k": ""})
+    assert render("k", {}, cat) == "k"
