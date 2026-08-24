@@ -8,9 +8,10 @@ custom_components/bluesight/frontend/www/locale/incidents.<lang>.json
 
 To add a language: copy `incidents.en.json`, rename it to the two-letter base
 code (`de`, `nl`, `pt`, …), translate the values, and open a PR. **No shipping
-code changes** — the backend globs the directory at setup and the card fetches
-`incidents.<lang>.json` by name. The drift tests do need your language added to
-them, though; see [Checking your work](#checking-your-work).
+code changes, and no test changes either** — the backend globs the directory
+at setup, the card fetches `incidents.<lang>.json` by name, and the drift guards
+discover every catalogue on disk. Run them once when you are done; see
+[Checking your work](#checking-your-work).
 
 The files sit under the card's `www` tree on purpose: the integration already
 serves that directory over HTTP, so the backend reads the very same file the
@@ -98,22 +99,28 @@ python -m pytest tests/test_catalogue_files.py tests/test_catalogue_plurals.py
 | Test | Catches |
 | --- | --- |
 | `test_every_english_key_is_translated` | a key you have not translated yet |
-| `test_no_french_key_is_orphaned` | a key you invented, or one left behind by a rename — it can never be reached, since English is the key set |
+| `test_no_translated_key_is_orphaned` | a key you invented, or one left behind by a rename — it can never be reached, since English is the key set |
 | `test_placeholders_match_across_languages` | a dropped or invented `{placeholder}` (order is not checked, deliberately) |
 | `test_every_plural_key_has_both_forms` | `.one` without `.other`, or the reverse |
 | `test_plural_forms_agree_on_placeholders` | a placeholder present in one form of a key but not the other — the singular rots unnoticed because it is the form seen least |
 | `test_no_value_is_blank` | `""`, which renders as the bare key rather than as nothing |
 | `test_the_catalogue_is_a_flat_map_of_strings` | a nested object or a non-string value |
 
-These tests name their languages: the per-file checks are
-`@pytest.mark.parametrize("language", ["en", "fr"])`, and the cross-language
-ones take the `french` fixture directly. Adding a catalogue means widening both
-to include it — otherwise none of the above runs against your file at all, and
-CI stays green while your translation rots.
+Every check in that table is parametrised over the `incidents.*.json` files
+found on disk, so your catalogue is guarded from the moment it exists — nothing
+to widen, nothing to register. English is the reference the cross-language
+checks measure against rather than one more entry in the list, and a check of
+its own fails if it ever goes missing, so the others can never pass over
+nothing. Every failure names its language in the test ID —
+`test_no_value_is_blank[de]` — so you are told which catalogue is wrong.
 
-`tests/test_catalogue_plurals.py` pins the singular wording of every counted
-string — it exists because "1 devices seen" shipped for a whole release. Add
-your language's singulars there too.
+`tests/test_catalogue_plurals.py` pins the exact singular wording of every
+counted string in English and French — it exists because "1 devices seen"
+shipped for a whole release. That is a wording pin rather than a structural
+guard, so it cannot be derived for a language it has never seen: your catalogue
+is not expected to appear there, and nothing fails because it does not. The
+structural half — both forms present, both interpolating the same placeholders
+— is covered for your language by the table above.
 
 If you also touched `card.*` strings in `incidents.en.json`, run
 `tests/test_card_locale.py`: the card embeds a copy of the English `card.*`
