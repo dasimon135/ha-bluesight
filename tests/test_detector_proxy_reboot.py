@@ -12,6 +12,8 @@ def test_repeated_reboots_is_storm():
     inc = detect_reboot_storm("AA", w)
     assert inc is not None and inc.kind is IncidentKind.PROXY_REBOOT_STORM
     assert inc.address == "AA"
+    assert inc.detail_key == "incident.proxy_reboot_storm.detail"
+    assert inc.detail_params == {"count": "3", "seconds": "600"}
 
 
 def test_few_reboots_not_storm():

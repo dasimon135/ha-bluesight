@@ -11,6 +11,8 @@ def test_burst_of_failures_is_storm():
         w.record("11:22")
     inc = detect_storm("11:22", w)
     assert inc is not None and inc.kind is IncidentKind.STORM
+    assert inc.detail_key == "incident.storm.detail"
+    assert inc.detail_params == {"count": "5", "seconds": "300"}
 
 
 def test_failures_outside_window_expire():

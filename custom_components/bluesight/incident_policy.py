@@ -1,14 +1,19 @@
 """Pure notification policy for BlueSight.
 
 No Home Assistant dependency: incident de-duplication/precedence, create /
-dismiss reconciliation, actionable message wording, and the notification-id
-sanitizer all live here so they are fully unit-testable under plain pytest on
-any platform. The thin HA glue in :mod:`.notify` only calls into these.
+dismiss reconciliation, the parameters each notification interpolates, and the
+notification-id sanitizer all live here so they are fully unit-testable under
+plain pytest on any platform. The wording itself comes from the string
+catalogue, so notifications are written in Home Assistant's configured
+language. The thin HA glue in :mod:`.notify` only calls into these.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from .const import DOMAIN
 from .model import Incident, IncidentKind, normalize_address
+from .rendering import Catalogue, plural_count, render
 
 
 def dedupe_incidents(incidents: list[Incident]) -> list[Incident]:
@@ -72,57 +77,105 @@ def reconcile(
     return to_create, to_dismiss
 
 
-def notification_content(incident: Incident) -> tuple[str, str]:
+def _ghost_proxy(incident: Incident, catalogue: Catalogue) -> str:
+    """Name the proxy holding the ghost slot, as the user knows it.
+
+    The rendered detail and this notification sit side by side in the same
+    output and must not call the same proxy two different things. The
+    detector puts the proxy's *friendly name* in ``detail_params["proxy"]``,
+    which is what Home Assistant shows everywhere else, so that wins over the
+    MAC in ``sources``.
+
+    An incident with neither is not expected, but a notification that names no
+    proxy still beats an IndexError inside the snapshot loop -- and the phrase
+    it falls back to comes from the catalogue, so it is not English in a
+    French notification.
+    """
+    return (
+        incident.detail_params.get("proxy")
+        or (incident.sources[0] if incident.sources else "")
+        or render("notify.ghost_slot.proxy_unknown", None, catalogue)
+    )
+
+
+def _measured(incident: Incident, *names: str) -> dict[str, str]:
+    """Take the named measurements straight off the incident's parameters.
+
+    Notification wording is built from these, never from ``incident.detail``.
+    ``detail`` is rendered by ``build_triage_data``, so interpolating it here
+    made a notification's text correct only if that had run first -- an
+    ordering nothing enforces, and a caller notifying on a freshly detected
+    incident got an empty parenthetical.
+
+    A name the incident does not carry is left out rather than guessed, so it
+    renders as a visible placeholder instead of a plausible wrong number.
+    """
+    return {
+        name: incident.detail_params[name]
+        for name in names
+        if name in incident.detail_params
+    }
+
+
+#: Per-kind parameters for the ``notify.<kind>.message`` templates, on top of
+#: the ``{address}`` every kind gets. The catalogue holds the wording; this
+#: table holds only what has to be computed from the incident.
+_NOTIFY_PARAMS: dict[
+    IncidentKind, Callable[[Incident, Catalogue], dict[str, str]]
+] = {
+    IncidentKind.STORM: lambda i, c: _measured(i, "count", "seconds"),
+    IncidentKind.DEADLOCK: lambda i, c: {
+        "count": str(len(i.sources)),
+        "sources": ", ".join(i.sources),
+    },
+    IncidentKind.GHOST_SLOT: lambda i, c: {"proxy": _ghost_proxy(i, c)},
+    IncidentKind.PROXY_OFFLINE: lambda i, c: {},
+    IncidentKind.PROXY_STALLED: lambda i, c: _measured(i, "seconds"),
+    IncidentKind.PROXY_REBOOT_STORM: lambda i, c: _measured(
+        i, "count", "seconds"
+    ),
+}
+
+
+def notification_content(
+    incident: Incident, catalogue: Catalogue
+) -> tuple[str, str]:
     """Build an actionable ``(title, message)`` pair for one incident.
 
-    Wording follows the "madoka playbook" style: state the observed fault, then
-    tell the user the physical action that clears it.
+    The wording lives in the catalogue (``notify.<kind>.title`` /
+    ``notify.<kind>.message``) so a notification is written in Home
+    Assistant's configured language; this function only computes the
+    parameters those templates interpolate.
+
+    Wording follows the "madoka playbook" style: state the observed fault
+    with its measured numbers, then tell the user the physical action that
+    clears it.
+
+    ``incident.detail`` is deliberately never read: it is rendered elsewhere
+    (``build_triage_data``), so using it here would make this function's
+    output depend on an ordering nothing enforces. Every number a message
+    needs comes from ``incident.detail_params``, which the detector fills in
+    at detection time.
+
+    A kind with no entry in :data:`_NOTIFY_PARAMS` — a detector added without
+    its catalogue strings — degrades to the generic ``notify.unknown.*``
+    wording rather than raising: this runs inside the coordinator's update
+    callback, where an exception would take the snapshot down.
     """
-    address = incident.address
-    if incident.kind is IncidentKind.STORM:
-        title = "BlueSight: pairing storm"
-        message = (
-            f"Repeated connection failures on {address} ({incident.detail}). "
-            "If this is a Daikin/BRC1H-type device, toggle its Bluetooth off "
-            "and on, then trigger a reconnect."
-        )
-    elif incident.kind is IncidentKind.DEADLOCK:
-        sources = ", ".join(incident.sources)
-        title = "BlueSight: proxy slot deadlock"
-        message = (
-            f"{address} is holding a connection slot on {len(incident.sources)} "
-            f"proxies at once ({sources}) with no working link — this stalls "
-            "the connection pool (HA core issue #176516). Power-cycle the "
-            "device or restart the affected proxies to release the slots."
-        )
-    elif incident.kind is IncidentKind.GHOST_SLOT:
-        proxy = incident.sources[0] if incident.sources else "a proxy"
-        title = "BlueSight: ghost slot"
-        message = (
-            f"A slot on {proxy} is held for {address} but the device is "
-            "unavailable. If it stays stuck, restart that proxy to free the "
-            "slot."
-        )
-    elif incident.kind is IncidentKind.PROXY_OFFLINE:
-        title = "BlueSight: proxy offline"
-        message = (
-            f"Bluetooth proxy {address} is offline — check its power and Wi-Fi."
-        )
-    elif incident.kind is IncidentKind.PROXY_STALLED:
-        title = "BlueSight: proxy stalled"
-        message = (
-            f"Bluetooth proxy {address} is online but hasn't seen any device "
-            f"for a while ({incident.detail}) — power-cycle it."
-        )
-    elif incident.kind is IncidentKind.PROXY_REBOOT_STORM:
-        title = "BlueSight: proxy rebooting"
-        message = (
-            f"Bluetooth proxy {address} keeps rebooting ({incident.detail}) — "
-            "check its power supply / for brownouts."
-        )
-    else:  # pragma: no cover - defensive; IncidentKind is a closed enum
-        title = "BlueSight: incident"
-        message = f"An incident was detected on {address}."
+    params: dict[str, str] = {"address": incident.address}
+    build = _NOTIFY_PARAMS.get(incident.kind)
+    if build is None:
+        name = "unknown"
+    else:
+        name = IncidentKind(incident.kind).value
+        params.update(build(incident, catalogue))
+    # The plural pivot is the same "{count}" the message interpolates, so
+    # the noun always agrees with the number the user reads.
+    count = plural_count(params)
+    title = render(f"notify.{name}.title", params, catalogue, count=count)
+    message = render(
+        f"notify.{name}.message", params, catalogue, count=count
+    )
     return title, message
 
 

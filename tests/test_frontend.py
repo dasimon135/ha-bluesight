@@ -1,15 +1,20 @@
 """Tests for the embedded Lovelace card registration.
 
-Runs under plain pytest. ``frontend`` keeps its Home Assistant import inside
-the one method that needs it (the ``adapter.py`` pattern), so the registration
-logic below is exercised against fakes on any platform. The single test that
-does touch the real ``StaticPathConfig`` guards itself with ``importorskip``.
+``frontend`` keeps its Home Assistant import inside the one method that needs
+it (the ``adapter.py`` pattern), so the module *imports* without HA. It does
+not *run* without HA: ``async_register_path`` imports ``StaticPathConfig`` from
+``homeassistant.components.http`` at call time, and every test here goes
+through it. So the whole module is guarded — it is real coverage only where
+Home Assistant is really installed (CI/Linux), never against the stub that
+``conftest.py`` installs on a machine without HA.
 """
 from __future__ import annotations
 
 from typing import Any
 
 import pytest
+
+pytest.importorskip("homeassistant.components.http")
 
 from custom_components.bluesight.frontend import CARD_FILENAME, JSModuleRegistration
 
@@ -237,7 +242,6 @@ async def test_static_path_uses_the_real_home_assistant_config() -> None:
     ``path`` must point at the Python-free ``www`` subdirectory: serving the
     package directory itself would publish ``__init__.py`` over HTTP.
     """
-    pytest.importorskip("homeassistant.components.http")
     from homeassistant.components.http import StaticPathConfig
 
     hass = _FakeHass(_FakeLovelace())

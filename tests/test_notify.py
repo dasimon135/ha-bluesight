@@ -5,14 +5,28 @@ The policy functions in ``incident_policy`` are HA-free and always run. The
 ``hass`` and monkeypatching the module-level ``persistent_notification`` with a
 recorder, so the full create/dismiss/resolve cycle is verified without a
 running Home Assistant.
+
+Wording is asserted against the *shipped* catalogues, read from disk exactly
+as ``async_setup_entry`` reads them. A test written against an inline fake
+catalogue would still pass if the real files were empty or malformed.
 """
+from dataclasses import replace
+
+import pytest
+
 from custom_components.bluesight.incident_policy import (
     dedupe_incidents,
     notification_content,
     notification_id_for_key,
     reconcile,
 )
+from custom_components.bluesight.locale import read_catalogues
 from custom_components.bluesight.model import Incident, IncidentKind
+from custom_components.bluesight.rendering import Catalogue
+
+_CATALOGUES = read_catalogues()
+EN = Catalogue.for_language("en", _CATALOGUES)
+FR = Catalogue.for_language("fr", _CATALOGUES)
 
 
 def _deadlock(address: str, sources=("AA", "BB")) -> Incident:
@@ -25,8 +39,12 @@ def _ghost(address: str, sources=("AA",)) -> Incident:
                     sources=list(sources))
 
 
-def _storm(address: str, detail="7 fails/5m") -> Incident:
-    return Incident(kind=IncidentKind.STORM, address=address, detail=detail)
+def _storm(address: str, count="7", seconds="300", detail="") -> Incident:
+    return Incident(
+        kind=IncidentKind.STORM, address=address, detail=detail,
+        detail_key="incident.storm.detail",
+        detail_params={"count": count, "seconds": seconds},
+    )
 
 
 def _proxy_offline(source: str) -> Incident:
@@ -34,14 +52,22 @@ def _proxy_offline(source: str) -> Incident:
                     sources=[source])
 
 
-def _proxy_stalled(source: str, detail="no devices for 12m") -> Incident:
-    return Incident(kind=IncidentKind.PROXY_STALLED, address=source,
-                    sources=[source], detail=detail)
+def _proxy_stalled(source: str, seconds="742", detail="") -> Incident:
+    return Incident(
+        kind=IncidentKind.PROXY_STALLED, address=source, sources=[source],
+        detail=detail, detail_key="incident.proxy_stalled.detail",
+        detail_params={"seconds": seconds},
+    )
 
 
-def _proxy_reboot_storm(source: str, detail="4 reboots/10m") -> Incident:
-    return Incident(kind=IncidentKind.PROXY_REBOOT_STORM, address=source,
-                    sources=[source], detail=detail)
+def _proxy_reboot_storm(
+    source: str, count="4", seconds="600", detail=""
+) -> Incident:
+    return Incident(
+        kind=IncidentKind.PROXY_REBOOT_STORM, address=source, sources=[source],
+        detail=detail, detail_key="incident.proxy_reboot_storm.detail",
+        detail_params={"count": count, "seconds": seconds},
+    )
 
 
 # --- dedupe_incidents / precedence ---------------------------------------
@@ -143,15 +169,17 @@ def test_reconcile_empty_is_empty():
 # --- notification_content -------------------------------------------------
 
 def test_content_storm_is_actionable():
-    title, message = notification_content(_storm("11:22", detail="7 fails/5m"))
+    title, message = notification_content(
+        _storm("11:22", count="7", seconds="300"), EN
+    )
     assert title == "BlueSight: pairing storm"
     assert "11:22" in message
-    assert "7 fails/5m" in message
+    assert "7" in message and "300" in message
     assert "reconnect" in message.lower()
 
 
 def test_content_deadlock_references_issue_and_sources():
-    title, message = notification_content(_deadlock("11:22", sources=["AA", "BB"]))
+    title, message = notification_content(_deadlock("11:22", sources=["AA", "BB"]), EN)
     assert title == "BlueSight: proxy slot deadlock"
     assert "11:22" in message
     assert "176516" in message
@@ -159,7 +187,7 @@ def test_content_deadlock_references_issue_and_sources():
 
 
 def test_content_ghost_names_the_proxy():
-    title, message = notification_content(_ghost("11:22", sources=["PROXY1"]))
+    title, message = notification_content(_ghost("11:22", sources=["PROXY1"]), EN)
     assert title == "BlueSight: ghost slot"
     assert "11:22" in message
     assert "PROXY1" in message
@@ -168,36 +196,181 @@ def test_content_ghost_names_the_proxy():
 
 def test_content_ghost_without_sources_does_not_crash():
     title, message = notification_content(
-        Incident(kind=IncidentKind.GHOST_SLOT, address="11:22", sources=[])
+        Incident(kind=IncidentKind.GHOST_SLOT, address="11:22", sources=[]), EN
     )
     assert "11:22" in message
 
 
+def test_content_ghost_prefers_the_friendly_name_over_the_source_mac():
+    # The detail and the notification name the same proxy side by side; the
+    # friendly name is what the user sees everywhere else in Home Assistant,
+    # so it wins over the MAC in `sources`.
+    incident = Incident(
+        kind=IncidentKind.GHOST_SLOT,
+        address="11:22",
+        sources=["AA:BB:CC:DD:EE:FF"],
+        detail_key="incident.ghost_slot.detail",
+        detail_params={"proxy": "Proxy Cuisine"},
+    )
+    _, message = notification_content(incident, EN)
+    assert "Proxy Cuisine" in message
+    assert "AA:BB:CC:DD:EE:FF" not in message
+
+
+def test_content_ghost_falls_back_to_the_source_when_no_friendly_name():
+    _, message = notification_content(_ghost("11:22", sources=["PROXY1"]), EN)
+    assert "PROXY1" in message
+
+
+def test_content_ghost_without_a_proxy_names_the_unknown_proxy_in_english():
+    _, message = notification_content(
+        Incident(kind=IncidentKind.GHOST_SLOT, address="11:22", sources=[]), EN
+    )
+    assert "an unspecified proxy" in message
+
+
+def test_content_ghost_without_a_proxy_names_the_unknown_proxy_in_french():
+    # The one English literal that survived the extraction sweep: a French
+    # user with a sourceless ghost slot must not be told "a proxy".
+    _, message = notification_content(
+        Incident(kind=IncidentKind.GHOST_SLOT, address="11:22", sources=[]), FR
+    )
+    assert "un proxy non identifié" in message
+    assert "a proxy" not in message
+
+
 def test_content_proxy_offline_names_source_and_is_actionable():
-    title, message = notification_content(_proxy_offline("PX:01"))
+    title, message = notification_content(_proxy_offline("PX:01"), EN)
     assert title == "BlueSight: proxy offline"
     assert "PX:01" in message
     assert "offline" in message.lower()
 
 
-def test_content_proxy_stalled_names_source_detail_and_action():
-    title, message = notification_content(
-        _proxy_stalled("PX:01", detail="no devices for 12m")
-    )
+def test_content_proxy_stalled_names_source_measurement_and_action():
+    title, message = notification_content(_proxy_stalled("PX:01", seconds="742"), EN)
     assert title == "BlueSight: proxy stalled"
     assert "PX:01" in message
-    assert "no devices for 12m" in message
+    assert "742" in message
     assert "power-cycle" in message.lower()
 
 
-def test_content_proxy_reboot_storm_names_source_detail_and_action():
+def test_content_proxy_reboot_storm_names_source_measurement_and_action():
     title, message = notification_content(
-        _proxy_reboot_storm("PX:01", detail="4 reboots/10m")
+        _proxy_reboot_storm("PX:01", count="4", seconds="600"), EN
     )
     assert title == "BlueSight: proxy rebooting"
     assert "PX:01" in message
-    assert "4 reboots/10m" in message
+    assert "4" in message and "600" in message
     assert "power" in message.lower()
+
+
+def test_content_is_rendered_in_home_assistants_language():
+    # The whole point of the release: no wording is hard-coded in Python, so
+    # the same incident notifies in French with nothing else changed.
+    title, message = notification_content(
+        _deadlock("11:22", sources=["AA", "BB"]), FR
+    )
+    assert title == "BlueSight : blocage de slot proxy"
+    assert "occupe un slot de connexion sur 2 proxys" in message
+    assert "11:22" in message
+    assert "AA, BB" in message
+
+
+def test_content_french_storm_carries_the_measured_numbers():
+    title, message = notification_content(
+        _storm("11:22", count="7", seconds="300"), FR
+    )
+    assert title == "BlueSight : tempête d'appairage"
+    assert "7 échecs de connexion" in message
+    assert "300s" in message
+
+
+def test_content_unknown_kind_degrades_to_the_generic_wording():
+    # A detector added without catalogue strings must still notify: this runs
+    # inside the coordinator's update callback, where raising kills the
+    # snapshot for every other incident too.
+    unknown = Incident(kind="mystery", address="11:22")
+    assert notification_content(unknown, EN) == (
+        "BlueSight: incident",
+        "An incident was detected on 11:22.",
+    )
+    assert notification_content(unknown, FR) == (
+        "BlueSight : incident",
+        "Un incident a été détecté sur 11:22.",
+    )
+
+
+def test_content_with_an_empty_catalogue_shows_the_key_not_a_blank():
+    # Catalogues unreadable on disk: a visible key is diagnosable, a blank
+    # notification is not.
+    title, message = notification_content(_deadlock("11:22"), Catalogue())
+    assert title == "notify.deadlock.title"
+    assert message == "notify.deadlock.message"
+
+
+#: One incident per kind, each with `detail` deliberately blank and its
+#: structured parameters populated -- exactly the shape a caller gets from a
+#: freshly detected incident, before `build_triage_data` has rendered
+#: anything.
+_UNRENDERED = [
+    _storm("11:22", count="7", seconds="300"),
+    _deadlock("11:22", sources=["AA", "BB"]),
+    Incident(
+        kind=IncidentKind.GHOST_SLOT, address="11:22", sources=["AA"],
+        detail_key="incident.ghost_slot.detail",
+        detail_params={"proxy": "Proxy Cuisine"},
+    ),
+    _proxy_offline("PX:01"),
+    _proxy_stalled("PX:01", seconds="742"),
+    _proxy_reboot_storm("PX:01", count="4", seconds="600"),
+]
+
+
+@pytest.mark.parametrize("catalogue", [EN, FR], ids=["en", "fr"])
+@pytest.mark.parametrize(
+    "incident", _UNRENDERED, ids=[i.kind.value for i in _UNRENDERED]
+)
+def test_content_needs_no_rendered_detail(incident, catalogue):
+    """Notification text must not depend on `build_triage_data` running first.
+
+    Nothing enforces that ordering, so a notification built straight off a
+    freshly detected incident used to get an empty parenthetical.
+    """
+    assert incident.detail == ""
+    title, message = notification_content(incident, catalogue)
+    assert title and message
+    assert "{" not in message, f"unresolved placeholder: {message}"
+    assert "()" not in message, f"empty parenthetical: {message}"
+
+
+@pytest.mark.parametrize("catalogue", [EN, FR], ids=["en", "fr"])
+def test_content_carries_the_numbers_without_a_rendered_detail(catalogue):
+    for incident, expected in (
+        (_storm("11:22", count="7", seconds="300"), ("7", "300")),
+        (_proxy_stalled("PX:01", seconds="742"), ("742",)),
+        (_proxy_reboot_storm("PX:01", count="4", seconds="600"), ("4", "600")),
+    ):
+        _, message = notification_content(incident, catalogue)
+        for number in expected:
+            assert number in message, (incident.kind, number, message)
+
+
+@pytest.mark.parametrize("catalogue", [EN, FR], ids=["en", "fr"])
+@pytest.mark.parametrize(
+    "incident", _UNRENDERED, ids=[i.kind.value for i in _UNRENDERED]
+)
+def test_content_never_interpolates_the_rendered_detail(incident, catalogue):
+    """Mechanical proof that `notification_content` ignores `incident.detail`.
+
+    A sentinel in the one field the function must not read: if any template
+    ever reinstates `{detail}`, it lands in the output verbatim.
+    """
+    sentinel = "SENTINEL-DETAIL-MUST-NOT-BE-RENDERED"
+    title, message = notification_content(
+        replace(incident, detail=sentinel), catalogue
+    )
+    assert sentinel not in title
+    assert sentinel not in message
 
 
 # --- notification_id_for_key ---------------------------------------------
@@ -244,7 +417,7 @@ def _manager(monkeypatch):
 
     fake = _FakePersistentNotification()
     monkeypatch.setattr(notify_module, "persistent_notification", fake)
-    return notify_module.NotificationManager(hass=object()), fake
+    return notify_module.NotificationManager(hass=object(), catalogue=EN), fake
 
 
 def test_manager_creates_notification_for_new_incident(monkeypatch):
