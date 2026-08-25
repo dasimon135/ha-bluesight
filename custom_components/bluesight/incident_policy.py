@@ -19,19 +19,34 @@ from .rendering import Catalogue, plural_count, render
 def dedupe_incidents(incidents: list[Incident]) -> list[Incident]:
     """Collapse redundant incidents so one physical fault == one alert.
 
-    Two orthogonal precedence rules apply, on separate namespaces (a device
-    address and a proxy source never collide in practice):
+    Three precedence rules apply, on two separate namespaces (a device address
+    and a proxy source never collide in practice):
 
     * Address layer — ``DEADLOCK`` supersedes ``GHOST_SLOT``: a held-but-dead
       slot is exactly what a deadlock looks like, so if both are raised for the
       same address we keep only the deadlock (the actionable root cause).
+    * Address layer — ``BOND_LOST`` supersedes ``STORM``: a proxy that holds no
+      bond for a device fails to pair with it over and over, which is exactly
+      what the storm window counts, so the two are one fault. The bond-lost
+      incident is the more specific reading *and* the only one that names the
+      remedy — re-pair through that particular proxy — so it is the one kept.
+      Deliberately decided on the address alone, never on which proxies the two
+      incidents name: a storm merges measured and inferred failures and
+      frequently names no proxy at all, so requiring an overlap would stand the
+      rule down in the cases it exists for.
     * Proxy layer — ``PROXY_OFFLINE`` supersedes ``PROXY_STALLED``: an offline
       proxy shouldn't also alert as stalled, so for the same proxy source we
       keep only the offline incident.
 
-    ``STORM`` and ``PROXY_REBOOT_STORM`` are orthogonal signals (repeated
-    failures / reboots over time) and may legitimately co-exist with a
-    structural incident for the same address/source, so they are always kept.
+    ``PROXY_REBOOT_STORM`` is an orthogonal signal (repeated reboots over time)
+    and may legitimately co-exist with a structural incident for the same
+    source, so it is always kept. So is ``STORM`` for an address with no bond
+    evidence — the heuristic keeps its voice wherever the firmware is silent.
+
+    Every rule reads the *input* set, never what an earlier rule left behind,
+    so no rule can chain into another and the result does not depend on the
+    order incidents arrive in. Nothing supersedes ``DEADLOCK``, ``BOND_LOST``
+    or ``PROXY_OFFLINE``, so there is no chain to build in the first place.
 
     Input order is preserved for every incident that survives.
     """
@@ -39,6 +54,11 @@ def dedupe_incidents(incidents: list[Incident]) -> list[Incident]:
         normalize_address(i.address)
         for i in incidents
         if i.kind is IncidentKind.DEADLOCK
+    }
+    bond_lost_addrs = {
+        normalize_address(i.address)
+        for i in incidents
+        if i.kind is IncidentKind.BOND_LOST
     }
     offline_sources = {
         normalize_address(i.address)
@@ -50,6 +70,11 @@ def dedupe_incidents(incidents: list[Incident]) -> list[Incident]:
         if (
             incident.kind is IncidentKind.GHOST_SLOT
             and normalize_address(incident.address) in deadlock_addrs
+        ):
+            continue
+        if (
+            incident.kind is IncidentKind.STORM
+            and normalize_address(incident.address) in bond_lost_addrs
         ):
             continue
         if (
@@ -117,24 +142,55 @@ def _measured(incident: Incident, *names: str) -> dict[str, str]:
     }
 
 
-#: Per-kind parameters for the ``notify.<kind>.message`` templates, on top of
-#: the ``{address}`` every kind gets. The catalogue holds the wording; this
-#: table holds only what has to be computed from the incident.
-_NOTIFY_PARAMS: dict[
-    IncidentKind, Callable[[Incident, Catalogue], dict[str, str]]
-] = {
-    IncidentKind.STORM: lambda i, c: _measured(i, "count", "seconds"),
-    IncidentKind.DEADLOCK: lambda i, c: {
+#: Detail keys that mean a different *fault* under a kind another detector
+#: already owns, and so need their own wording.
+#:
+#: ``detect_idle_slots`` raises ``GHOST_SLOT`` from measured idle time for an
+#: address Home Assistant has no device for, while ``detect_ghost_slots``
+#: raises it from an unavailable entity. Rendering the second's wording for the
+#: first is not merely vaguer: "the device is unavailable" is a statement about
+#: an entity that does not exist, and the measured ``{seconds}`` the alert
+#: actually rests on is dropped on the floor. The kind stays one kind — it is
+#: one class of fault, and the card labels and de-duplicates it as one — so the
+#: split lives here, at the wording, and nowhere else.
+_NOTIFY_VARIANTS: dict[str, str] = {
+    "incident.ghost_slot.idle_detail": "ghost_slot_idle",
+}
+
+#: Per-wording parameters for the ``notify.<name>.message`` templates, on top
+#: of the ``{address}`` every one of them gets. The catalogue holds the
+#: wording; this table holds only what has to be computed from the incident.
+#:
+#: Keyed by wording name rather than by :class:`IncidentKind` so a variant from
+#: :data:`_NOTIFY_VARIANTS` can carry its own parameters: the idle ghost slot
+#: needs a measurement the entity-based one has never heard of.
+_NOTIFY_PARAMS: dict[str, Callable[[Incident, Catalogue], dict[str, str]]] = {
+    "storm": lambda i, c: _measured(i, "count", "seconds"),
+    "deadlock": lambda i, c: {
         "count": str(len(i.sources)),
         "sources": ", ".join(i.sources),
     },
-    IncidentKind.GHOST_SLOT: lambda i, c: {"proxy": _ghost_proxy(i, c)},
-    IncidentKind.PROXY_OFFLINE: lambda i, c: {},
-    IncidentKind.PROXY_STALLED: lambda i, c: _measured(i, "seconds"),
-    IncidentKind.PROXY_REBOOT_STORM: lambda i, c: _measured(
-        i, "count", "seconds"
-    ),
+    "ghost_slot": lambda i, c: {"proxy": _ghost_proxy(i, c)},
+    "ghost_slot_idle": lambda i, c: {
+        "proxy": _ghost_proxy(i, c),
+        **_measured(i, "seconds"),
+    },
+    # The proxy is *not* resolved through `_ghost_proxy` here, on purpose. Its
+    # last resort is the catalogue's "an unspecified proxy", which reads fine
+    # in the ghost-slot message but would turn this one's remedy into nonsense
+    # ("re-pair it through an unspecified proxy"). The detector always supplies
+    # the name, and if some future caller does not, `_measured` leaves a
+    # visible `{proxy}` — plainly broken, rather than plausibly useless.
+    "bond_lost": lambda i, c: _measured(i, "count", "proxy"),
+    "proxy_offline": lambda i, c: {},
+    "proxy_stalled": lambda i, c: _measured(i, "seconds"),
+    "proxy_reboot_storm": lambda i, c: _measured(i, "count", "seconds"),
 }
+
+#: Grammatical number to render with when a message names a count the incident
+#: did not carry. Anything but 1 selects the plural form; see
+#: :func:`notification_content` for why a form must be selected at all.
+_UNKNOWN_COUNT = 0
 
 
 def notification_content(
@@ -157,21 +213,39 @@ def notification_content(
     needs comes from ``incident.detail_params``, which the detector fills in
     at detection time.
 
-    A kind with no entry in :data:`_NOTIFY_PARAMS` — a detector added without
-    its catalogue strings — degrades to the generic ``notify.unknown.*``
+    Two detectors may raise one kind from different evidence, so the wording is
+    chosen from the incident's ``detail_key`` first (see
+    :data:`_NOTIFY_VARIANTS`) and from its kind otherwise.
+
+    A wording with no entry in :data:`_NOTIFY_PARAMS` — a detector added
+    without its catalogue strings — degrades to the generic ``notify.unknown.*``
     wording rather than raising: this runs inside the coordinator's update
     callback, where an exception would take the snapshot down.
     """
     params: dict[str, str] = {"address": incident.address}
-    build = _NOTIFY_PARAMS.get(incident.kind)
+    name = _NOTIFY_VARIANTS.get(incident.detail_key, "") or str(
+        getattr(incident.kind, "value", incident.kind)
+    )
+    build = _NOTIFY_PARAMS.get(name)
     if build is None:
         name = "unknown"
     else:
-        name = IncidentKind(incident.kind).value
         params.update(build(incident, catalogue))
     # The plural pivot is the same "{count}" the message interpolates, so
     # the noun always agrees with the number the user reads.
+    #
+    # A message the incident gave no count for still has to be *rendered*: a
+    # plural-split key has no unsuffixed entry to fall back on, so leaving the
+    # pivot unset would send `render` to its key-of-last-resort and put a bare
+    # "notify.bond_lost.message" where the fault and its remedy belong. Picking
+    # a form keeps the prose and leaves the unknown number as a visible
+    # "{count}" — the same degradation `_measured` already chooses for every
+    # other value an incident does not carry. Wordings with no plural forms are
+    # unaffected: their ".other" lookup misses and falls through to the bare key
+    # exactly as before.
     count = plural_count(params)
+    if count is None:
+        count = _UNKNOWN_COUNT
     title = render(f"notify.{name}.title", params, catalogue, count=count)
     message = render(
         f"notify.{name}.message", params, catalogue, count=count

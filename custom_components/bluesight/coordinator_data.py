@@ -9,8 +9,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 
 from .detector import (
+    detect_bond_lost,
     detect_deadlocks,
     detect_ghost_slots,
+    detect_idle_slots,
     detect_offline_proxies,
     detect_reboot_storm,
     detect_stalled_proxies,
@@ -18,6 +20,7 @@ from .detector import (
 )
 from .model import Incident, ProxyHealth, ProxySlots
 from .rendering import Catalogue, plural_count, render
+from .telemetry import CounterDeltas, ProxyTelemetry
 from .window import FailureWindow
 
 
@@ -31,6 +34,10 @@ class BlueSightData:
     # Surfaced on the incident sensor and in diagnostics so a broken signal is
     # observable instead of silently reading as "nothing wrong".
     availability_degraded: bool = False
+    # What each proxy reported this snapshot, carried verbatim so diagnostics
+    # and the card can show the raw readings the verdicts were drawn from. A
+    # proxy without the ESPHome component is simply absent from this list.
+    telemetry: list[ProxyTelemetry] = field(default_factory=list)
 
 
 def build_triage_data(
@@ -46,6 +53,11 @@ def build_triage_data(
     offline_grace_s: float = 0.0,
     availability_degraded: bool = False,
     catalogue: Catalogue | None = None,
+    telemetry: list[ProxyTelemetry] | None = None,
+    counter_deltas: CounterDeltas | None = None,
+    idle_threshold_s: float = 300.0,
+    proxy_names: dict[str, str] | None = None,
+    managed_addresses: set[str] | None = None,
 ) -> BlueSightData:
     """Pure assembly: run all detectors over a snapshot + the rolling failure
     windows and return the combined incident list. No HA, no I/O.
@@ -59,17 +71,92 @@ def build_triage_data(
     language; without one they are returned exactly as the detectors built
     them, which is the honest default for a pure function and keeps every
     detector test independent of any catalogue.
+
+    ``telemetry`` holds one entry per proxy running the BlueSight ESPHome
+    component. A real fleet is mixed, so the storm heuristic is replaced **per
+    proxy and never globally**: a proxy that reports SMP counters contributes
+    measured failures, a proxy that does not keeps contributing inferred ones
+    (recorded into ``storm_window`` by the caller), and both land in the *same*
+    window. One window means one threshold and one storm concept -- only
+    ``Incident.evidence`` and the named ``sources`` differ.
+
+    ``managed_addresses`` must be the addresses Home Assistant can *judge* --
+    those resolving to a device in the registry -- and never the keys of
+    ``availability``, which the coordinator fills for every allocated address
+    with unknown ones biased to "alive". Passing the latter would stand
+    :func:`detect_idle_slots` down for exactly the unmanaged devices it exists
+    to cover, and nothing would look wrong.
+
+    That detector reads ``proxies`` as well, and needs both: the firmware
+    reports every GATT connection on its node, so an idle reading is judged
+    only where habluetooth says Home Assistant holds a slot for it *and* the
+    registry cannot judge the device itself.
     """
     proxies_health = proxies_health or []
     known_sources = known_sources or set()
+    telemetry = telemetry or []
+    proxy_names = proxy_names or {}
     incidents: list[Incident] = []
     # Slot-layer incidents
     incidents += detect_deadlocks(proxies)
     incidents += detect_ghost_slots(proxies, availability)
+    # Measured SMP failures, fed into the same rolling window the heuristic
+    # uses. Feeding one window keeps a single storm threshold and a single
+    # storm concept: only the evidence label differs. The proxy that measured
+    # each failure is recorded with it, so attribution outlives the snapshot
+    # the counter moved in and cannot be lost to an address-spelling
+    # disagreement between the two routes into this window.
+    if counter_deltas is not None:
+        for tel in telemetry:
+            for address, count in counter_deltas.update(
+                tel.source, tel.smp_failures
+            ).items():
+                # Cap the replay. `count` is a firmware-supplied delta with no
+                # upper bound, so a corrupt-but-well-formed 4294967295 would
+                # spin 4.3 billion iterations on Home Assistant's event loop.
+                # `detect_storm` fires at `count >= window.threshold`, so
+                # anything at or above the threshold is already a storm and the
+                # extra iterations buy nothing. The trade: the incident's
+                # reported count understates a genuinely huge burst.
+                for _ in range(min(count, storm_window.threshold)):
+                    storm_window.record(address, tel.source)
     for addr in storm_window.addresses():
         inc = detect_storm(addr, storm_window)
-        if inc is not None:
-            incidents.append(inc)
+        if inc is None:
+            continue
+        # Every proxy that measured a live failure for this address, not just
+        # the last one heard from: one device failing on two proxies is worse
+        # news than on one, and it is the second proxy that says so.
+        #
+        # A window holding both kinds of event labels "smp" and names the
+        # proxies that measured theirs. The heuristic can name nobody -- a
+        # released slot does not say which proxy dropped it -- so there is no
+        # fuller answer to give, and the measured half is the stronger claim
+        # and the actionable one.
+        #
+        # This attribution can vanish under a storm that is still open: the
+        # measured events age out of the window while inferred ones hold the
+        # count above threshold, and the incident drops back to "heuristic"
+        # with no sources. That is honest -- the evidence really is gone -- and
+        # it does not re-alert, because `Incident.key` excludes `sources` for
+        # `STORM` (see `KINDS_WHOSE_SOURCES_ARE_EVIDENCE` in `model`).
+        sources = storm_window.sources(addr)
+        if sources:
+            inc = replace(inc, sources=sources, evidence="smp")
+        incidents.append(inc)
+    incidents += detect_bond_lost(telemetry, proxy_names)
+    # `proxies` is handed in whole rather than as a pre-built per-source
+    # allocated map: it is the same plain snapshot `detect_deadlocks` and
+    # `detect_ghost_slots` already take, there is exactly one thing a caller
+    # could pass, and the canonicalisation of habluetooth's raw address list
+    # stays inside the detector where its own tests reach it. A derived map
+    # would put that step here, in the one place no detector test covers, and
+    # would be a second set-shaped argument next to `managed_addresses` --
+    # which is precisely the pair this call site has already been mixed up
+    # once for.
+    incidents += detect_idle_slots(
+        telemetry, proxies, managed_addresses or set(), idle_threshold_s, proxy_names
+    )
     # Proxy-health incidents
     incidents += detect_offline_proxies(
         proxies_health, known_sources, offline_for, offline_grace_s
@@ -104,4 +191,5 @@ def build_triage_data(
         incidents=incidents,
         proxies_health=proxies_health,
         availability_degraded=availability_degraded,
+        telemetry=telemetry,
     )

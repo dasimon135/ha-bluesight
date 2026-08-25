@@ -20,14 +20,17 @@ from pathlib import Path
 import pytest
 
 from custom_components.bluesight.detector import (
+    detect_bond_lost,
     detect_deadlocks,
     detect_ghost_slots,
+    detect_idle_slots,
     detect_offline_proxies,
     detect_reboot_storm,
     detect_stalled_proxies,
     detect_storm,
 )
 from custom_components.bluesight.model import Incident, ProxyHealth, ProxySlots
+from custom_components.bluesight.telemetry import ProxyTelemetry
 from custom_components.bluesight.window import FailureWindow
 
 LOCALE_DIR = (
@@ -70,7 +73,7 @@ def _window(window_s: float, threshold: int, address: str, hits: int) -> Failure
 
 
 def _every_detector_incident() -> list[Incident]:
-    """One incident from each of the six detectors.
+    """One incident from each of the eight detectors.
 
     Kept as a single list rather than a fixture per detector: the point is
     coverage of *all* of them, and a detector added later must be added here or
@@ -84,12 +87,24 @@ def _every_detector_incident() -> list[Incident]:
         *detect_ghost_slots(
             [ProxySlots("AA", "Salon", 2, 1, ["11:22"])], {"11:22": False}
         ),
+        *detect_idle_slots(
+            [ProxyTelemetry("AA", slot_idle_seconds={"11:22": 900.0})],
+            # Judged only where habluetooth says Home Assistant holds the slot.
+            [ProxySlots("AA", "Salon", 2, 1, ["11:22"])],
+            set(),
+            300.0,
+            {"AA": "Salon"},
+        ),
         *detect_offline_proxies([], {"BB"}, {"BB": 999.0}, grace_s=90.0),
         *detect_stalled_proxies(
             [ProxyHealth("AA", "p-AA", True, True, 200.0, 0)], threshold_s=180.0
         ),
         detect_storm("11:22", _window(300, 5, "11:22", 5)),
         detect_reboot_storm("PX", _window(600, 3, "PX", 3)),
+        *detect_bond_lost(
+            [ProxyTelemetry("AA", smp_failures={"11:22": 3}, bonds=set())],
+            {"AA": "Salon"},
+        ),
     ]
 
 
@@ -97,14 +112,43 @@ INCIDENTS = _every_detector_incident()
 
 
 def _ids() -> list[str]:
-    return [inc.kind.value for inc in INCIDENTS]
+    """One ID per incident, taken from the detail key rather than the kind.
+
+    Two detectors now raise ``GHOST_SLOT`` -- the entity-based one and the
+    idle-slot one, which read different evidence about the same kind of fault
+    -- so the kind alone no longer names a row here, and the key is what a
+    failure has to point at anyway.
+    """
+    return [inc.detail_key or inc.kind.value for inc in INCIDENTS]
+
+
+#: Kinds that exist in the model but that no detector raises yet.
+#:
+#: Empty, and the machinery is kept for the next kind that lands ahead of its
+#: detector. ``BOND_LOST`` was the last one: it arrived with the ESPHome
+#: telemetry data model and was exempted until :func:`detect_bond_lost` could
+#: raise it from real SMP evidence. That exemption was never a way to skip the
+#: catalogue work -- the assertion below is an equality, so the moment a
+#: detector does emit the kind this test fails until the entry is removed,
+#: which is exactly when its strings must be written.
+PENDING_DETECTOR: set[str] = set()
 
 
 def test_every_incident_kind_is_covered():
     """A new detector must be wired into this module, not silently skipped."""
     from custom_components.bluesight.model import IncidentKind
 
-    assert {inc.kind for inc in INCIDENTS} == set(IncidentKind)
+    expected = {kind for kind in IncidentKind if kind.value not in PENDING_DETECTOR}
+    assert {inc.kind for inc in INCIDENTS} == expected
+
+
+def test_the_pending_list_names_real_kinds():
+    """A typo or a renamed kind would silently exempt nothing -- or, worse,
+    leave a real kind permanently unguarded under a name nobody greps for."""
+    from custom_components.bluesight.model import IncidentKind
+
+    unknown = PENDING_DETECTOR - {kind.value for kind in IncidentKind}
+    assert not unknown, f"pending kinds that do not exist: {sorted(unknown)}"
 
 
 @pytest.mark.parametrize("incident", INCIDENTS, ids=_ids())

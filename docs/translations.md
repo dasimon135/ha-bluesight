@@ -80,8 +80,9 @@ first — open an issue rather than approximating.
 
 ## Never translate `kind` values
 
-Incident kinds — `deadlock`, `ghost_slot`, `storm`, `proxy_offline`,
-`proxy_stalled`, `proxy_reboot_storm` — are machine identifiers. They are
+Incident kinds — `deadlock`, `ghost_slot`, `storm`, `bond_lost`,
+`proxy_offline`, `proxy_stalled`, `proxy_reboot_storm` — are machine
+identifiers. They are
 published in the `incidents` attribute and users match on them in automation
 templates, so translating one breaks somebody's automation silently.
 

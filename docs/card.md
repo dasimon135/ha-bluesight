@@ -5,7 +5,10 @@ fallback** you can paste with zero custom JavaScript. Both read the same
 entities the integration creates:
 
 - `sensor.<proxy>_slots_used` — state = used count; attributes `total`, `free`,
-  `allocated` (list of MACs), `source`.
+  `allocated` (list of MACs), `allocated_devices` (the same slots in the same
+  order, each `{address, name, device_id}`; `name` is `""` and `device_id` is
+  `null` for an address Home Assistant's device registry does not know),
+  `source`.
 - `sensor.<proxy>_slots_free` — state = free count.
 - `binary_sensor.<proxy>_online` — `on` while the proxy is a registered scanner.
 - `sensor.<proxy>_last_device_seen` — seconds since that proxy last heard any
@@ -13,7 +16,8 @@ entities the integration creates:
 - `binary_sensor.bluesight_incident` — `on` when incidents exist; attributes
   `incident_count` (int), `availability_degraded` (bool), and `incidents` (list
   of `{kind, address, sources, detail}`, `kind` ∈ `deadlock` / `ghost_slot` /
-  `storm` / `proxy_offline` / `proxy_stalled` / `proxy_reboot_storm`).
+  `storm` / `bond_lost` / `proxy_offline` / `proxy_stalled` /
+  `proxy_reboot_storm`).
 
 ---
 
@@ -22,17 +26,48 @@ entities the integration creates:
 The custom card auto-discovers every proxy from `hass` (any
 `sensor.*_slots_used` that carries a `total` attribute) and renders, per proxy:
 
-- a **slot-pip row** (filled = used, empty = free) with a `used/total` count,
+- a **`used/total` count** beside the proxy's name,
+- a **slot rack** — one row per slot, a pip on the left (filled = used, empty =
+  free) and, beside it, the Home Assistant device holding that slot. Free slots
+  keep their row, so the rack reads as a gauge at a glance without reading the
+  numbers, and each name sits on its own slot's row rather than in a list whose
+  order you have to trust:
+
+  ```
+  Proxy Buanderie              2/3
+  ▣  C3:EB:49:65:67:55
+     unknown to Home Assistant
+  ▣  Madoka parents
+  □
+  ```
+
+  An address the device registry cannot account for shows as its raw MAC marked
+  **`unknown to Home Assistant`** on the line under it — that is the diagnostic,
+  not a rendering defect: something Home Assistant knows nothing about is
+  spending one of a handful of connection slots. A device the registry knows but
+  nobody has named shows its MAC unmarked. A backend older than 0.6.0 publishes
+  no names and the rack draws bare pips,
 - a **health line** — how long since that proxy last heard an advertisement and
   how many devices it currently sees,
-- **`offline`** in place of the pips when the proxy's online sensor says it is
-  gone, and **`scan only — no connection slots`** for a passive scanner (which
-  habluetooth reports with zero slots) — English wording shown here; the card
-  is translated, see [Languages](#languages).
+- **`offline`** in place of the rack when the proxy's online sensor says it is
+  gone (its last known occupants are exactly what you must not believe), and
+  **`scan only — no connection slots`** for a passive scanner, which habluetooth
+  reports with zero slots and which therefore has no rack — English wording
+  shown here; the card is translated, see [Languages](#languages).
+
+The rack costs one row per slot, so a saturated 3-slot proxy is four rows tall
+and a large fleet makes a tall card. That is a deliberate trade: free slots keep
+their row so the rack reads as a gauge at a glance, and a rack that collapsed its
+empty rows would lose exactly the thing you look at it for.
 
 Below that it draws a **coloured incident feed**: red for `deadlock` and
-`ghost_slot`, amber for everything else, each badge carrying the incident kind,
-the device address, the detail, and the proxies involved.
+`ghost_slot`, amber for everything else — including `bond_lost` — each badge
+carrying the incident kind, the device address, the detail, and the proxies
+involved. The rule behind the colours, rather than the list: red is for an
+incident that **wastes a scarce resource**, a connection slot held for nothing. A
+lost bond holds no slot; it is a device that cannot connect, which is bad and
+differently bad. A pairing problem also tends to hit several devices at once, and
+a card that turns entirely red stops meaning anything.
 
 It is a single vanilla-JS file — no build step, no dependencies.
 
@@ -176,9 +211,12 @@ Notes:
 - The card list is static, so add one row per proxy you have. (The custom card
   in Option A discovers them automatically; the native fallback cannot, by
   design.) Find your entity ids under Developer Tools → States, filter `slots_`.
-- `sensor.<proxy>_slots_used` carries `total`, `free` and `allocated` as
-  attributes, so a tile on it already tells you the whole slot story; the
-  separate `_slots_free` sensor is there for templates and history.
+- `sensor.<proxy>_slots_used` carries `total`, `free`, `allocated` and
+  `allocated_devices` as attributes, so a tile on it already tells you the whole
+  slot story; the separate `_slots_free` sensor is there for templates and
+  history. A markdown card can iterate `allocated_devices` to name the devices
+  holding the slots, exactly as the custom card does — the resolution is done in
+  the backend, so the names are simply there to read.
 - The markdown card iterates the `incidents` attribute with a Jinja `for` loop
   and guards the empty case with `or []`, so it renders cleanly even mid-update.
 - `conditional` cards hide themselves entirely when their condition is false, so

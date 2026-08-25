@@ -22,7 +22,8 @@
           "stalled_threshold_s": "Seuil de proxy muet (secondes)",
           "reboot_window_s": "Fenêtre de redémarrages (secondes)",
           "reboot_threshold": "Seuil de redémarrages",
-          "offline_grace_s": "Délai de grâce hors ligne (secondes)"
+          "offline_grace_s": "Délai de grâce hors ligne (secondes)",
+          "idle_threshold_s": "Seuil de slot inactif (secondes)"
         },
         "data_description": {
           "storm_window_s": "Fenêtre glissante sur laquelle les échecs de connexion répétés sont comptés.",
@@ -31,7 +32,8 @@
           "stalled_threshold_s": "Durée pendant laquelle un proxy peut ne recevoir aucune annonce Bluetooth avant d'être signalé comme muet.",
           "reboot_window_s": "Fenêtre glissante sur laquelle les redémarrages de proxy sont comptés.",
           "reboot_threshold": "Nombre de redémarrages dans la fenêtre qui déclenche un incident de proxy instable.",
-          "offline_grace_s": "Durée d'absence tolérée avant de signaler un proxy hors ligne. Un proxy disparaît du bus à chaque mise à jour OTA ; mettez 0 pour signaler dès le premier instantané manquant."
+          "offline_grace_s": "Durée d'absence tolérée avant de signaler un proxy hors ligne. Un proxy disparaît du bus à chaque mise à jour OTA ; mettez 0 pour signaler dès le premier instantané manquant.",
+          "idle_threshold_s": "Durée pendant laquelle une connexion GATT ouverte peut rester sans trafic avant que le slot ne soit signalé comme bloqué. Seuls les proxys équipés du composant ESPHome BlueSight fournissent cette mesure, et seuls les appareils que Home Assistant ne connaît pas par ailleurs sont jugés ainsi. Réglez ce seuil au-dessus de l'appareil le plus silencieux que vous possédez : un capteur qui ne notifie qu'en cas de changement peut garder une connexion parfaitement saine muette pendant plusieurs minutes, et une valeur inférieure le signalerait comme slot fantôme. Une valeur plus élevée retarde d'autant le signalement d'un slot réellement bloqué."
         }
       }
     }

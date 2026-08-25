@@ -12,6 +12,12 @@ ignore = ["B008"]
 # Home Assistant's own convention: `homeassistant` is its own import section,
 # between third-party and this integration's relative imports.
 known-first-party = ["homeassistant"]
+# `esphome/components/bluesight/` is firmware source that ESPHome compiles from
+# its own installation; it is not a package this repository provides. Without
+# this, ruff's src detection sees the `esphome/` directory at the repo root,
+# decides `esphome` is first-party, and splits the ESPHome imports across two
+# sections — an artefact of our directory layout, not of the code.
+known-third-party = ["esphome"]
 
 [tool.ruff.lint.per-file-ignores]
 # Tests import the module under test after an `importorskip` guard, which has

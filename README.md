@@ -45,14 +45,15 @@ Assistant already tracks internally:
 | Detector | Fires when |
 | --- | --- |
 | **Deadlock** (`#176516`) | the same device address is allocated on **two or more distinct** proxies at once — a BLE peripheral can only be connected to one central, so the extra allocations are stale duplicates spending slots across the pool. |
-| **Ghost slot** | an address is in a proxy's allocated list while its Home Assistant device is dead — the device is found in the registry (by MAC in `connections` or `identifiers`) and **all** its entities are `unavailable`. Availability is judged from entity state, not advertising: a connected device stops advertising, so advertisement presence would false-positive every healthy persistent connection. Unmanaged devices (no registry entry) are never flagged — see [Limitations](#limitations). |
-| **Pairing storm** | a device's slot is released, over and over, while its Home Assistant device is unavailable — beyond the configured threshold inside the storm window (best-effort heuristic — see [Limitations](#limitations)). |
+| **Ghost slot** | an address is in a proxy's allocated list while its Home Assistant device is dead — the device is found in the registry (by MAC in `connections` or `identifiers`) and **all** its entities are `unavailable`. Availability is judged from entity state, not advertising: a connected device stops advertising, so advertisement presence would false-positive every healthy persistent connection. A device with no registry entry cannot be judged this way and is treated as alive — unless the proxy holding it runs the optional [ESPHome component](#measured-evidence-060-optional), which measures the connection's idle time directly instead. See [Limitations](#limitations). |
+| **Pairing storm** | a device's slot is released, over and over, while its Home Assistant device is unavailable — beyond the configured threshold inside the storm window. A best-effort heuristic on its own; on a proxy running the optional [ESPHome component](#measured-evidence-060-optional) the same window is fed real SMP-failure counts instead — see [Limitations](#limitations). |
 
 It surfaces the state as:
 
 - **Per-proxy sensors** — `sensor.<proxy>_slots_used` and
-  `sensor.<proxy>_slots_free`, with the total, free count, and the list of
-  allocated device addresses as attributes.
+  `sensor.<proxy>_slots_free`, with the total, free count, the list of
+  allocated device addresses, and those same addresses resolved to Home
+  Assistant devices as attributes.
 - **A global incident binary sensor** — `binary_sensor.bluesight_incident`
   (device class `problem`), `on` whenever any incident is open, with the full
   incident list in its attributes.
@@ -90,8 +91,43 @@ without an advertisement before it is flagged), the **reboot window**, and the
 **reboot threshold** (register/unregister cycles within that window that trip a
 reboot storm).
 
-RAM, Wi-Fi signal, and uptime telemetry are **not** part of v1.2 — those need
-per-proxy instrumentation and are deferred to the v1.5 ESPHome component.
+RAM, Wi-Fi signal, and uptime telemetry are **not** part of BlueSight at all.
+They need per-proxy instrumentation, and when that instrumentation arrived in
+0.6.0 it deliberately carried none of them: they describe the health of a *node*,
+not of the connection layer, nothing in BlueSight would consume them, and ESPHome
+already exposes all three directly if you want them on a dashboard.
+
+## Measured evidence (0.6.0, optional)
+
+Everything above runs on what Home Assistant already knows. Two things it does
+not know, and cannot: **why a pairing failed** — the reason is raised as a
+`BleakError` to whichever integration owns the connection and never becomes
+state — and **what is in a proxy's bond store**, which lives in that proxy's NVS
+flash and is not exposed over the ESPHome API at all.
+
+An optional ESPHome component closes both gaps. It is a passive observer on the
+proxy's BLE event stream that opens no connection and writes no bond — the
+read-only invariant holds into the firmware — and it publishes three text
+sensors of raw facts: SMP failure counts, the bond list, and per-connection idle
+time. It reaches no verdicts; the integration does, which is why a retune is an
+options change and not a reflash. Two diagnoses become possible:
+
+| Incident | Fires when |
+| --- | --- |
+| **Bond lost** | a device's pairing keeps failing on a proxy whose own bond store holds no entry for it. The remedy is exact, and is the whole reason this diagnosis is worth firmware: **re-pair through that specific proxy**. Bonds are stored per proxy, so pairing through whichever proxy Home Assistant happens to pick next will not fix it. |
+| **Ghost slot, by idle time** | a slot **Home Assistant holds on that proxy** goes without GATT traffic for longer than the idle threshold, for a device Home Assistant does not manage. The entity-based ghost detector cannot judge such a device and treats it as alive; measured silence is the only way to see it at all. Only addresses habluetooth reports as allocated are judged, so a connection the node opened for itself — an ESPHome `ble_client:` link — is reported by the sensor and never mistaken for a stuck slot. It raises an ordinary `ghost_slot` incident — a new source of evidence, not a new kind. |
+
+It also upgrades storm detection from the heuristic to counted SMP failures —
+**per proxy, never globally**. A real fleet is mixed, so it degrades proxy by
+proxy: a flashed proxy contributes measurements while an unflashed one keeps
+contributing inferred failures, into the same window and the same storm concept.
+`Incident.evidence` records which was used.
+
+**You do not need any of this.** BlueSight works with no firmware change, every
+detector above keeps exactly its previous behaviour on a proxy that does not run
+the component, and adding it to one proxy does not change how the others are
+judged. Installation, the wire format, the two new diagnoses and how to verify
+it is working are in **[docs/esphome-component.md](docs/esphome-component.md)**.
 
 ## Requirements
 
@@ -128,6 +164,7 @@ Open the integration's **Configure** dialog to tune:
 | Reboot window | 600 s | sliding window over which proxy register/unregister cycles are counted. |
 | Reboot threshold | 3 | reboots within the window that trip a reboot-storm incident. |
 | Offline grace | 90 s | how long a proxy may be missing before it is reported offline. A proxy drops off the bus for ~20-30 s on every OTA update; 0 reports the first missing snapshot. |
+| Idle-slot threshold | 300 s | how long a held GATT connection may go without traffic before the slot is reported stuck (min 60 s). Needs the [BlueSight ESPHome component](docs/esphome-component.md) on the proxy. Raise it above your quietest device: a notify-on-change sensor holds a healthy connection in silence for minutes. |
 
 ### Actions
 
@@ -147,11 +184,11 @@ that the same address is held on two proxies.
 
 | Entity | Type | State | Key attributes |
 | --- | --- | --- | --- |
-| `sensor.<proxy>_slots_used` | sensor | slots allocated on that proxy | `total`, `free`, `allocated` (list of MACs), `source` |
+| `sensor.<proxy>_slots_used` | sensor | slots allocated on that proxy | `total`, `free`, `allocated` (list of MACs), `allocated_devices` (list of `{address, name, device_id}`, same slots in the same order), `source` |
 | `sensor.<proxy>_slots_free` | sensor | slots still free on that proxy | — |
 | `binary_sensor.<proxy>_online` | binary_sensor (`connectivity`) | `on` while the proxy is a registered scanner | — |
 | `sensor.<proxy>_last_device_seen` | sensor (`duration`, seconds) | seconds since that proxy last heard an advertisement | `device_count`, `connectable`, `online` |
-| `binary_sensor.bluesight_incident` | binary_sensor (`problem`) | `on` when any incident is open | `incident_count`, `availability_degraded`, `incidents` (list of `{kind, address, sources, detail}`; `kind` ∈ `deadlock` / `ghost_slot` / `storm` / `proxy_offline` / `proxy_stalled` / `proxy_reboot_storm`) |
+| `binary_sensor.bluesight_incident` | binary_sensor (`problem`) | `on` when any incident is open | `incident_count`, `availability_degraded`, `incidents` (list of `{kind, address, sources, detail}`; `kind` ∈ `deadlock` / `ghost_slot` / `storm` / `bond_lost` / `proxy_offline` / `proxy_stalled` / `proxy_reboot_storm`) |
 
 `availability_degraded` turns `true` if the device/entity registry lookup behind
 ghost-slot detection ever fails. Ghost verdicts are biased toward "alive", so a
@@ -246,11 +283,17 @@ proxies.
   notifications and the card follow the user's language; English and French
   ship. The backend renders in the installation's language, the card in the
   viewer's profile language.
-- **v1.5 — optional ESPHome component.** An auto-detected custom component on the
-  proxy exposing raw telemetry the HA API cannot: NimBLE SMP-fail counts,
-  connection rejects, BLE RAM, and bond state. This upgrades storm detection from
-  the current heuristic to real SMP evidence. Additive — the integration keeps
-  working without it.
+- **0.6.0 — measured evidence, and who holds each slot (shipped).** An optional
+  ESPHome component publishes what the Home Assistant API cannot see — SMP
+  (pairing) failures and the proxy's own bond store — which upgrades storm
+  detection from heuristic to measurement and adds two diagnoses: **bond lost**,
+  and ghost slots judged by measured idle time for devices Home Assistant does
+  not manage. Evidence is replaced **per proxy**, so a mixed fleet improves proxy
+  by proxy and an unflashed proxy is judged exactly as it was before. The card
+  gained a slot rack that names the device holding each slot. Two items from the
+  v1.5 sketch did **not** ship: connection-reject counts, which remain a possible
+  addition, and BLE RAM, which is node health rather than connection-layer
+  evidence and which ESPHome already exposes on its own.
 - **v2 — self-healing.** Guided, then automatic remediation: "free this slot" and
   guided re-pair, built on the proven v1 base.
 
@@ -258,21 +301,41 @@ proxies.
 
 BlueSight is honest about its edges:
 
-- **Storm detection is a best-effort heuristic.** With HA-only data there are no
-  raw SMP-failure counters, so v1 infers a failed connection from the only thing
-  it can observe: a slot **released** while the device it belonged to is
-  unavailable. A healthy poll cycle also releases its slot, but leaves its
-  entities available, so it is not counted. It is a useful early warning, not a
-  precise SMP tally; the v1.5 ESPHome component is what upgrades it to real
-  bond-failure telemetry. It also inherits the ghost-slot limitation below:
-  a device Home Assistant does not manage can never be judged as failing.
-- **Ghost detection only judges HA-managed devices.** Availability comes from
-  the device's Home Assistant entities, so a slot held for a device that has no
-  registry entry (an unmanaged BLE peripheral HA does not track) is treated as
-  alive rather than flagged. This is deliberate — the alternative, advertisement
-  presence, false-positives every healthy persistent connection. Robust
-  stale-slot detection for unmanaged devices lands with the v1.5 ESPHome
-  component, which sees the connection directly.
+- **Storm detection is a best-effort heuristic on any proxy that does not
+  measure it.** With HA-only data there are no raw SMP-failure counters, so
+  BlueSight infers a failed connection from the only thing it can observe: a slot
+  **released** while the device it belonged to is unavailable. A healthy poll
+  cycle also releases its slot, but leaves its entities available, so it is not
+  counted. It is a useful early warning, not a precise SMP tally. The optional
+  [ESPHome component](docs/esphome-component.md) replaces it with a counted one —
+  but **per proxy**, so on a mixed fleet the heuristic and every edge below are
+  still live on each proxy that does not run it, and the integration keeps
+  working with no proxy running it at all. Wherever the heuristic is what is
+  available, it also inherits the ghost-slot limitation below: a device Home
+  Assistant does not manage can never be judged as failing.
+- **Ghost detection judges HA-managed devices from entity state, and everything
+  else only where a proxy measures it.** Availability comes from the device's
+  Home Assistant entities, so a slot held for a device that has no registry entry
+  (an unmanaged BLE peripheral HA does not track) is treated as alive rather than
+  flagged. This is deliberate — the alternative, advertisement presence,
+  false-positives every healthy persistent connection. The optional
+  [ESPHome component](docs/esphome-component.md) removes that blind spot on the
+  proxies that run it, because it sees the connection itself and can measure how
+  long it has been silent — for the slots Home Assistant holds there, which is
+  the subset it judges; on a proxy without it, an unmanaged device is still
+  never flagged. Measured silence is not proof either — a legitimately quiet link
+  looks identical to a stuck one — which is why the idle threshold is a tunable
+  with a floor rather than a constant. See
+  [docs/esphome-component.md](docs/esphome-component.md).
+- **The measured path has edges of its own.** A device using a resolvable
+  private address is reported by the bond store, and by the pairing-failure
+  event, under its *identity* address — which may not be the address habluetooth
+  knows it by. The two then fail to correlate and **bond lost** simply does not
+  fire: a false negative, never a false positive. And a proxy whose bond store is
+  too large to fit in a Home Assistant entity state leaves the list unpublished
+  rather than truncating it, because a truncated list reads as "unbonded", which
+  is exactly what **bond lost** fires on. Both are detailed in
+  [docs/esphome-component.md](docs/esphome-component.md).
 - **The custom card needs a browser to eyeball.** The entities and notifications
   work headless, but the pip/feed visualisation is a dashboard card you have to
   look at.
