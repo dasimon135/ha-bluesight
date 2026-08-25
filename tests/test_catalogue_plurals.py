@@ -43,6 +43,14 @@ COUNTED = [
         "1 redémarrage du proxy en 600s",
     ),
     (
+        "incident.bond_lost.detail",
+        {"count": "1", "proxy": "Salon"},
+        "1 pairing failure on Salon, which holds no bond for this device "
+        "— re-pair through Salon",
+        "1 échec d'appairage sur Salon, qui ne détient aucun bond pour cet "
+        "appareil — réappairez via Salon",
+    ),
+    (
         "card.proxy.last_advert_with_devices",
         {"age": "3 min", "count": "1"},
         "last advert 3 min ago · 1 device seen",
@@ -92,6 +100,27 @@ def test_storm_notification_agrees_with_a_single_failure():
     _, french = notification_content(incident, FR)
     assert english.startswith("1 connection failure on")
     assert french.startswith("1 échec de connexion sur")
+
+
+def test_bond_lost_notification_agrees_with_a_single_failure():
+    """One failure is the common case, not the rare one.
+
+    A bond is either there or it is not, so the very first attempt after it
+    goes missing raises this — the counter has no threshold to climb to, and
+    ``count`` is a cumulative SMP reading that is often exactly 1.
+    """
+    incident = Incident(
+        IncidentKind.BOND_LOST,
+        "11:22:33:44:55:66",
+        ["AA:BB:CC:DD:EE:FF"],
+        detail_key="incident.bond_lost.detail",
+        detail_params={"count": "1", "proxy": "Salon"},
+        evidence="smp",
+    )
+    _, english = notification_content(incident, EN)
+    assert english.startswith("1 pairing failure for")
+    _, french = notification_content(incident, FR)
+    assert french.startswith("1 échec d'appairage pour")
 
 
 def test_reboot_storm_notification_agrees_with_a_single_reboot():

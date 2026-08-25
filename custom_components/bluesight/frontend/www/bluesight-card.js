@@ -36,6 +36,17 @@ console.info(
 const DEFAULT_INCIDENT_ENTITY = "binary_sensor.bluesight_incident";
 
 // Incident kinds that are considered critical (red). Anything else is amber.
+//
+// The criterion, so the next kind added has one instead of a precedent: red is
+// for a fault that WASTES A SCARCE RESOURCE -- a connection slot held for
+// nothing. A proxy has a handful of slots and every one of them is spent on a
+// device that is not there, which is why those two are red.
+//
+// A device that cannot connect is bad, and differently bad: it holds no slot,
+// takes nothing from anything else, and waits for a person. `bond_lost` is
+// therefore deliberately NOT in this set. A pairing problem also tends to hit
+// several devices at once, so putting it here would turn the whole card red at
+// once -- and a card that is always red has stopped saying anything.
 const CRITICAL_KINDS = new Set(["deadlock", "ghost_slot"]);
 
 // ---------------------------------------------------------------------------

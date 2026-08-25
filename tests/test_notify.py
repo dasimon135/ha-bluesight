@@ -11,9 +11,11 @@ as ``async_setup_entry`` reads them. A test written against an inline fake
 catalogue would still pass if the real files were empty or malformed.
 """
 from dataclasses import replace
+from itertools import permutations
 
 import pytest
 
+from custom_components.bluesight.detector import detect_idle_slots
 from custom_components.bluesight.incident_policy import (
     dedupe_incidents,
     notification_content,
@@ -23,6 +25,7 @@ from custom_components.bluesight.incident_policy import (
 from custom_components.bluesight.locale import read_catalogues
 from custom_components.bluesight.model import Incident, IncidentKind
 from custom_components.bluesight.rendering import Catalogue
+from custom_components.bluesight.telemetry import ProxyTelemetry
 
 _CATALOGUES = read_catalogues()
 EN = Catalogue.for_language("en", _CATALOGUES)
@@ -44,6 +47,36 @@ def _storm(address: str, count="7", seconds="300", detail="") -> Incident:
         kind=IncidentKind.STORM, address=address, detail=detail,
         detail_key="incident.storm.detail",
         detail_params={"count": count, "seconds": seconds},
+    )
+
+
+def _bond_lost(
+    address: str, proxy="Salon", count="3", sources=("AA:BB:CC:DD:EE:FF",),
+    detail="",
+) -> Incident:
+    """As :func:`detector.detect_bond_lost` builds it: measured, per proxy."""
+    return Incident(
+        kind=IncidentKind.BOND_LOST, address=address, sources=list(sources),
+        detail=detail, detail_key="incident.bond_lost.detail",
+        detail_params={"count": count, "proxy": proxy}, evidence="smp",
+    )
+
+
+def _idle_ghost(
+    address: str, proxy="Salon", seconds="900", sources=("AA:BB:CC:DD:EE:FF",),
+    detail="",
+) -> Incident:
+    """The *other* ``GHOST_SLOT``: measured idle time, not entity availability.
+
+    ``detect_idle_slots`` raises the same kind as ``detect_ghost_slots`` from
+    different evidence and with different parameters, so both shapes reach
+    ``notification_content`` under one kind. That seam is what these fixtures
+    exist to pin.
+    """
+    return Incident(
+        kind=IncidentKind.GHOST_SLOT, address=address, sources=list(sources),
+        detail=detail, detail_key="incident.ghost_slot.idle_detail",
+        detail_params={"proxy": proxy, "seconds": seconds}, evidence="smp",
     )
 
 
@@ -106,6 +139,88 @@ def test_dedupe_preserves_input_order():
     b = _deadlock("33:44")
     c = _ghost("55:66")
     assert dedupe_incidents([a, b, c]) == [a, b, c]
+
+
+# --- dedupe_incidents / bond-lost precedence ------------------------------
+
+def test_dedupe_bond_lost_supersedes_storm_for_same_address():
+    """One physical fault, one alert -- and the one that names the fix wins.
+
+    A device whose bond a proxy has lost fails to pair over and over, which is
+    exactly what the storm heuristic counts. Alerting twice would tell the
+    user to toggle the device's Bluetooth (the storm's advice) for a fault
+    that only re-pairing through that proxy clears.
+    """
+    incidents = [_storm("11:22"), _bond_lost("11:22")]
+    result = dedupe_incidents(incidents)
+    assert [i.kind for i in result] == [IncidentKind.BOND_LOST]
+
+
+def test_dedupe_storm_on_a_different_address_survives_a_bond_lost():
+    incidents = [_bond_lost("11:22"), _storm("33:44")]
+    assert dedupe_incidents(incidents) == incidents
+
+
+def test_dedupe_keeps_a_lone_storm_when_no_bond_evidence_exists():
+    incidents = [_storm("11:22")]
+    assert dedupe_incidents(incidents) == incidents
+
+
+def test_dedupe_keeps_a_lone_bond_lost():
+    incidents = [_bond_lost("11:22")]
+    assert dedupe_incidents(incidents) == incidents
+
+
+def test_dedupe_bond_lost_precedence_uses_normalized_address():
+    incidents = [_storm("aa:bb"), _bond_lost("AA:BB")]
+    result = dedupe_incidents(incidents)
+    assert [i.kind for i in result] == [IncidentKind.BOND_LOST]
+
+
+def test_dedupe_bond_lost_supersedes_a_storm_measured_on_another_proxy():
+    """Deliberate: the address layer ignores which proxy measured what.
+
+    The storm window is keyed by address and merges measured and inferred
+    failures, so a storm frequently names *no* proxy at all (the release
+    heuristic cannot say which one dropped the slot) and an SMP counter that
+    was already high before BlueSight started contributes no delta to name one
+    with. Requiring the two incidents' sources to overlap would therefore
+    stand the rule down in precisely the cases it exists for, to protect a
+    storm whose own advice is the vaguer of the two -- and the surviving
+    bond-lost message names its proxy, so nothing actionable is lost.
+    """
+    storm = replace(_storm("11:22"), sources=["PROXY-B"])
+    incidents = [storm, _bond_lost("11:22", sources=["PROXY-A"])]
+    result = dedupe_incidents(incidents)
+    assert [i.kind for i in result] == [IncidentKind.BOND_LOST]
+
+
+def test_dedupe_bond_lost_coexists_with_a_deadlock_on_the_same_address():
+    """Different resources: a lost bond holds no slot, a deadlock holds two."""
+    incidents = [_deadlock("11:22"), _bond_lost("11:22")]
+    result = dedupe_incidents(incidents)
+    assert {i.kind for i in result} == {
+        IncidentKind.DEADLOCK, IncidentKind.BOND_LOST
+    }
+
+
+def test_dedupe_rules_neither_chain_nor_depend_on_input_order():
+    """Three address-layer rules, applied to one address, in every order.
+
+    Each rule reads the *input* set rather than what survived before it, so
+    adding the third cannot make the outcome depend on the order incidents
+    arrive in -- which is not obvious from the code and would show up as an
+    alert that appears or vanishes with the detector call order in
+    ``build_triage_data``.
+    """
+    everything = [
+        _ghost("11:22"), _deadlock("11:22"), _storm("11:22"), _bond_lost("11:22")
+    ]
+    for order in permutations(everything):
+        result = dedupe_incidents(list(order))
+        assert {i.kind for i in result} == {
+            IncidentKind.DEADLOCK, IncidentKind.BOND_LOST
+        }, order
 
 
 # --- dedupe_incidents / proxy precedence ---------------------------------
@@ -180,21 +295,22 @@ def test_reconcile_does_not_re_alert_when_only_the_evidence_changes():
     assert to_dismiss == []
 
 
-def test_a_kind_with_no_wording_yet_degrades_instead_of_raising():
-    """`BOND_LOST` exists in the model before its detector and its wording.
+def test_a_suppressed_storm_does_not_re_alert_while_the_bond_lost_persists():
+    """Precedence must be stable, not merely correct once.
 
-    Nothing can raise it yet, but `notification_content` runs inside the
-    coordinator's update callback, so "no catalogue entry" must stay a dull
-    generic notification rather than an exception that takes the snapshot
-    down. When the detector lands, this becomes the real wording's test.
+    `dedupe_incidents` runs on every snapshot, so a rule that dropped the
+    storm only sometimes would show up here as a create/dismiss pair on a
+    fault that never changed. (The `BOND_LOST` kind used to have no wording
+    at all, and this slot in the file pinned that it degraded to
+    `notify.unknown.*`; that degradation is now pinned by
+    `test_content_unknown_kind_degrades_to_the_generic_wording`, which uses a
+    kind no detector will ever raise.)
     """
-    title, message = notification_content(
-        Incident(kind=IncidentKind.BOND_LOST, address="11:22", sources=["AA"],
-                 evidence="smp"),
-        EN,
-    )
-    assert title == "BlueSight: incident"
-    assert "11:22" in message
+    incidents = [_storm("11:22"), _bond_lost("11:22")]
+    first = {i.key for i in dedupe_incidents(incidents)}
+    to_create, to_dismiss = reconcile(first, dedupe_incidents(incidents))
+    assert to_create == []
+    assert to_dismiss == []
 
 
 # --- notification_content -------------------------------------------------
@@ -268,6 +384,116 @@ def test_content_ghost_without_a_proxy_names_the_unknown_proxy_in_french():
     )
     assert "un proxy non identifié" in message
     assert "a proxy" not in message
+
+
+def test_content_bond_lost_names_the_proxy_and_the_remedy():
+    """The whole value of measured evidence: it knows *which* proxy to re-pair.
+
+    Bonds are per central, so "re-pair the device" is not advice -- Home
+    Assistant will route the next connection through whichever proxy it likes.
+    The message has to name the one that holds no bond.
+    """
+    title, message = notification_content(
+        _bond_lost("11:22", proxy="Proxy Cuisine", count="4"), EN
+    )
+    assert title == "BlueSight: bond lost"
+    assert "11:22" in message
+    assert "Proxy Cuisine" in message
+    assert "4" in message
+    assert "re-pair" in message.lower()
+
+
+def test_content_bond_lost_in_french_names_the_proxy_and_the_remedy():
+    title, message = notification_content(
+        _bond_lost("11:22", proxy="Proxy Cuisine", count="4"), FR
+    )
+    assert title == "BlueSight : appairage perdu"
+    assert "11:22" in message
+    assert "Proxy Cuisine" in message
+    assert "4 échecs d'appairage" in message
+    assert "réappairez" in message.lower()
+
+
+def test_content_bond_lost_without_a_count_still_states_fault_and_remedy():
+    """A plural-split message must not collapse to its own catalogue key.
+
+    `render` falls back to the unsuffixed key when no pivot is supplied, and a
+    split key is exactly the one that has no unsuffixed entry -- so the whole
+    notification would read "notify.bond_lost.message". The detector always
+    supplies `count`, but the degradation has to be the same one `_measured`
+    already chooses everywhere else: a visible placeholder inside legible
+    prose, never a bare key in place of the remedy.
+    """
+    incident = Incident(
+        kind=IncidentKind.BOND_LOST, address="11:22", sources=["AA"],
+        detail_key="incident.bond_lost.detail",
+        detail_params={"proxy": "Proxy Cuisine"}, evidence="smp",
+    )
+    for catalogue in (EN, FR):
+        _, message = notification_content(incident, catalogue)
+        assert "notify.bond_lost.message" not in message
+        assert "Proxy Cuisine" in message
+        assert "11:22" in message
+
+
+def test_content_idle_ghost_slot_does_not_claim_the_device_is_unavailable():
+    """Two detectors, one kind: the wording must fit the evidence it names.
+
+    `detect_idle_slots` fires only for an address Home Assistant has no device
+    for -- it cannot be "unavailable", because there is no entity to be
+    unavailable -- and its measured idle time is the only evidence the alert
+    rests on. The entity-based ghost message says the opposite of the first
+    and silently drops the second.
+    """
+    _, message = notification_content(
+        _idle_ghost("11:22", proxy="Salon", seconds="900"), EN
+    )
+    assert "unavailable" not in message.lower()
+    assert "900" in message
+    assert "Salon" in message
+    assert "11:22" in message
+
+
+def test_content_idle_ghost_slot_in_french():
+    _, message = notification_content(
+        _idle_ghost("11:22", proxy="Salon", seconds="900"), FR
+    )
+    assert "indisponible" not in message.lower()
+    assert "900" in message
+    assert "Salon" in message
+
+
+def test_the_idle_ghost_wording_is_reached_from_the_real_detector():
+    """The variant is selected by a detail key a detector must still emit.
+
+    Everything above builds the incident by hand. If ``detect_idle_slots``
+    renamed its key, the notification layer would silently route the idle slot
+    back to the entity-based wording -- correct-looking code, and a message
+    that says the opposite of what was measured.
+    """
+    [incident] = detect_idle_slots(
+        [ProxyTelemetry("AA:BB:CC:DD:EE:FF", slot_idle_seconds={"11:22": 900.0})],
+        set(),
+        300.0,
+        {"AA:BB:CC:DD:EE:FF": "Salon"},
+    )
+    _, message = notification_content(incident, EN)
+    assert "900" in message
+    assert "Salon" in message
+    assert "unavailable" not in message.lower()
+
+
+def test_content_entity_ghost_slot_wording_is_unchanged_by_the_idle_variant():
+    """The variant must not be reached by the detector it is not for."""
+    _, message = notification_content(
+        Incident(
+            kind=IncidentKind.GHOST_SLOT, address="11:22", sources=["AA"],
+            detail_key="incident.ghost_slot.detail",
+            detail_params={"proxy": "Salon"},
+        ),
+        EN,
+    )
+    assert "unavailable" in message.lower()
 
 
 def test_content_proxy_offline_names_source_and_is_actionable():
@@ -351,15 +577,22 @@ _UNRENDERED = [
         detail_key="incident.ghost_slot.detail",
         detail_params={"proxy": "Proxy Cuisine"},
     ),
+    _idle_ghost("11:22", proxy="Proxy Cuisine", seconds="900"),
+    _bond_lost("11:22", proxy="Proxy Cuisine", count="4"),
     _proxy_offline("PX:01"),
     _proxy_stalled("PX:01", seconds="742"),
     _proxy_reboot_storm("PX:01", count="4", seconds="600"),
 ]
 
+#: One ID per incident, from the detail key where there is one: two detectors
+#: raise ``GHOST_SLOT``, so the kind alone no longer names a row (same reason
+#: as in ``test_detector_catalogue_keys``).
+_UNRENDERED_IDS = [i.detail_key or i.kind.value for i in _UNRENDERED]
+
 
 @pytest.mark.parametrize("catalogue", [EN, FR], ids=["en", "fr"])
 @pytest.mark.parametrize(
-    "incident", _UNRENDERED, ids=[i.kind.value for i in _UNRENDERED]
+    "incident", _UNRENDERED, ids=_UNRENDERED_IDS
 )
 def test_content_needs_no_rendered_detail(incident, catalogue):
     """Notification text must not depend on `build_triage_data` running first.
@@ -388,7 +621,7 @@ def test_content_carries_the_numbers_without_a_rendered_detail(catalogue):
 
 @pytest.mark.parametrize("catalogue", [EN, FR], ids=["en", "fr"])
 @pytest.mark.parametrize(
-    "incident", _UNRENDERED, ids=[i.kind.value for i in _UNRENDERED]
+    "incident", _UNRENDERED, ids=_UNRENDERED_IDS
 )
 def test_content_never_interpolates_the_rendered_detail(incident, catalogue):
     """Mechanical proof that `notification_content` ignores `incident.detail`.
@@ -484,6 +717,34 @@ def test_manager_applies_precedence_before_notifying(monkeypatch):
     manager.async_update([_ghost("11:22"), _deadlock("11:22")])
     titles = {t for t, _ in fake.created.values()}
     assert titles == {"BlueSight: proxy slot deadlock"}
+
+
+def test_manager_hands_the_storm_over_when_bond_evidence_arrives(monkeypatch):
+    """Telemetry lands mid-storm: the alert is replaced, not doubled.
+
+    The storm was notified under its own key, so the handover has to dismiss
+    that notification as well as create the bond-lost one -- otherwise the
+    vaguer alert is orphaned on the user's dashboard with nothing left to
+    dismiss it, since the suppressed storm never reappears in `_active_keys`.
+    """
+    manager, fake = _manager(monkeypatch)
+    storm = _storm("11:22")
+    manager.async_update([storm])
+    storm_id = notification_id_for_key(storm.key)
+    assert storm_id in fake.created
+
+    fake.created.clear()
+    bond = _bond_lost("11:22")
+    manager.async_update([storm, bond])
+    assert fake.dismissed == [storm_id]
+    assert set(fake.created) == {notification_id_for_key(bond.key)}
+
+    # And it stays handed over: a stable pair must not re-alert every snapshot.
+    fake.created.clear()
+    fake.dismissed.clear()
+    manager.async_update([storm, bond])
+    assert fake.created == {}
+    assert fake.dismissed == []
 
 
 def test_manager_shutdown_dismisses_all_active(monkeypatch):
