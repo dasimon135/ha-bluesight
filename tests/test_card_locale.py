@@ -212,6 +212,68 @@ def test_an_unresolved_address_is_marked_in_the_viewers_language(card_source):
     assert '_t("card.proxy.unknown_device")' in card_source
 
 
+def test_the_slot_rack_draws_a_row_per_slot(card_source):
+    """The rack is the tile's gauge, so a free slot keeps its row.
+
+    A pip row with a name list under it carried the pip-to-name correspondence
+    in list order alone -- nothing on screen said the first filled pip was the
+    first name. Dropping the free rows would compact the tile and take the
+    gauge with it: saturation would only be readable off the numbers.
+    """
+    body = _method_body(card_source, "_renderSlotRack")
+    assert 'rack.className = "slot-rack"' in body
+    assert "for (let i = 0; i < rows; i += 1)" in body
+    css = _method_body(card_source, "_css")
+    assert ".slot-rack {" in css
+    assert ".slot {" in css
+
+
+def test_the_rack_does_not_truncate_the_occupant_list(card_source):
+    """More occupants than slots is drawn, not dropped.
+
+    ``slots - free`` and the allocated-address list reach the sensor from the
+    same habluetooth snapshot but not from the same field, so they can
+    momentarily disagree. A device holding a connection that the card silently
+    refused to draw is the one failure this feature cannot have; an extra row,
+    marked, merely says the two numbers disagree.
+    """
+    body = _method_body(card_source, "_renderSlotRack")
+    assert "Math.max(slots, allocated.length)" in body
+    assert "pip.filled.overflow" in _method_body(card_source, "_css")
+
+
+def test_an_offline_proxy_and_the_card_sizer_agree_it_draws_no_rack(card_source):
+    """One rule, two readers.
+
+    An offline proxy's last known occupants are exactly what a viewer must not
+    believe, so the tile draws no rack -- and ``getCardSize`` must reserve no
+    height for one. The rule therefore lives in ``_reachability`` and is called
+    twice; inlined in both, the copy that drifted would be the one nobody looks
+    at.
+    """
+    assert card_source.count("this._reachability(") == 2
+    assert _code_only(card_source).count('=== "unavailable"') == 1
+
+
+def test_a_scan_only_proxy_says_so_instead_of_racking_up(card_source):
+    """A passive scanner reports zero slots: no rack, and a word saying why."""
+    body = _method_body(card_source, "_renderProxyTile")
+    assert 'this._t("card.proxy.scan_only")' in body
+    assert "total <= 0" in body
+
+
+def test_the_card_size_counts_slots_rather_than_proxies(card_source):
+    """``1 + proxies + 1`` was a guess, and became a wrong one.
+
+    With a row per slot, an 8-slot proxy is four times the height of a 2-slot
+    one; a single number per proxy cannot say that, and masonry lays the
+    dashboard out from this.
+    """
+    body = _method_body(card_source, "getCardSize")
+    assert "this._slotRowCount(" in body
+    assert "1 + Math.max(1, proxies.length) + 1" not in card_source
+
+
 def test_the_connected_devices_are_part_of_the_render_signature(card_source):
     """The card skips a rebuild when its signature is unchanged.
 

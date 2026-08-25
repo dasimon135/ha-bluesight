@@ -4,10 +4,11 @@
  * A vanilla-JS Lovelace custom card that visualises the state exposed by the
  * BlueSight integration:
  *
- *   - Per ESPHome/Bluetooth proxy: a tile with slot "pips" (filled = used,
- *     empty = free), a "used/total" count, and a line per occupied slot naming
- *     the device that holds it. Auto-discovered from any
- *     `sensor.*_slots_used` entity that carries a `total` attribute.
+ *   - Per ESPHome/Bluetooth proxy: a tile with a "used/total" count and a
+ *     vertical rack of slots -- one row per slot, a "pip" on the left (filled
+ *     = used, empty = free) and, beside it, the device holding that slot.
+ *     Auto-discovered from any `sensor.*_slots_used` entity that carries a
+ *     `total` attribute.
  *   - A global incident banner driven by `binary_sensor.bluesight_incident`.
  *     Each incident is rendered as a coloured badge (red for deadlock/ghost
  *     slot, amber for storm) with its kind, address and detail.
@@ -385,6 +386,24 @@ class BlueSightCard extends HTMLElement {
     };
   }
 
+  /**
+   * Is this proxy reachable, and is its slot sensor carrying live values?
+   *
+   * Extracted rather than inlined in the tile because `getCardSize` needs the
+   * same answer: an offline proxy draws no rack, so it contributes no rack
+   * rows to the card's height. Two copies of this rule would drift, and the
+   * copy that drifted would be the one nothing looks at.
+   */
+  _reachability(stateObj, states, health) {
+    const onlineState = states[health.online];
+    const unavailable =
+      stateObj.state === "unavailable" || stateObj.state === "unknown";
+    // The dedicated online sensor is authoritative when present; fall back to
+    // the slot sensor's own availability for a pre-0.2 install.
+    const offline = onlineState ? onlineState.state !== "on" : unavailable;
+    return { offline, unavailable };
+  }
+
   /** Compact "3 min" / "2 h" style age, from a seconds value. */
   _formatAge(seconds) {
     const n = this._toInt(seconds, -1);
@@ -562,14 +581,7 @@ class BlueSightCard extends HTMLElement {
 
     const states = (hass && hass.states) || {};
     const health = this._healthEntities(entityId);
-    const onlineState = states[health.online];
-    // The dedicated online sensor is authoritative when present; fall back to
-    // the slot sensor's own availability for a pre-0.2 install.
-    const offline = onlineState
-      ? onlineState.state !== "on"
-      : stateObj.state === "unavailable" || stateObj.state === "unknown";
-    const unavailable =
-      stateObj.state === "unavailable" || stateObj.state === "unknown";
+    const { offline, unavailable } = this._reachability(stateObj, states, health);
     const attrs = stateObj.attributes || {};
     const total = this._toInt(attrs.total, 0);
     const used = this._toInt(stateObj.state, 0);
@@ -608,51 +620,36 @@ class BlueSightCard extends HTMLElement {
       }
     }
 
-    const pips = document.createElement("div");
-    pips.className = "pips";
-    const drawable = !offline && !unavailable;
-    if (total > 0 && drawable) {
-      // Clamp used into [0, total] so a stale value can't over/under-draw.
-      const filled = Math.max(0, Math.min(used, total));
-      for (let i = 0; i < total; i += 1) {
-        const pip = document.createElement("span");
-        pip.className = i < filled ? "pip filled" : "pip";
-        pips.appendChild(pip);
-      }
-    } else if (drawable) {
-      // A passive (non-connectable) scanner reports slots=0: it can see
-      // devices but never hold a connection, so there is nothing to draw.
-      const hint = document.createElement("span");
-      hint.className = "pip-hint";
-      hint.textContent = this._t("card.proxy.scan_only");
-      pips.appendChild(hint);
-    }
-    tile.appendChild(pips);
-
-    // Who holds each slot -- the part that says what to blame when a proxy is
-    // saturated. Drawn under the pips and only where there is something to
-    // say: a proxy at 0/3 contributes no lines, so the card grows only where
-    // it informs. Deliberately not gated on saturation, either: at 2/3 the
-    // list is the warning you still have time to act on.
+    // The slot rack: one row per slot, the pip on the left, whoever holds that
+    // slot beside it. An offline or unavailable proxy draws none of it -- its
+    // last known occupants are exactly the thing you must not believe.
     //
     // The names arrive resolved from the backend. Re-deriving them here from
     // `hass.devices` would mean reimplementing `build_device_index`'s rule in
     // JavaScript -- which registry evidence may speak for a BLE address --
-    // for no benefit.
+    // for no benefit. A pre-0.6.0 backend publishes no `allocated_devices` at
+    // all: the rack then draws bare pips, which is what the card drew before
+    // the attribute existed.
+    const drawable = !offline && !unavailable;
     const allocated = drawable && Array.isArray(attrs.allocated_devices)
       ? attrs.allocated_devices
       : [];
-    if (allocated.length) {
-      const list = document.createElement("div");
-      list.className = "proxy-devices";
-      for (const device of allocated) {
-        const row = this._renderConnectedDevice(device);
-        if (row) {
-          list.appendChild(row);
-        }
+    if (drawable) {
+      if (total <= 0) {
+        // A passive (non-connectable) scanner reports slots=0: it can see
+        // devices but never hold a connection, so there is no rack to draw --
+        // the sentence takes its place, exactly as before the rack existed.
+        const hint = document.createElement("div");
+        hint.className = "pip-hint";
+        hint.textContent = this._t("card.proxy.scan_only");
+        tile.appendChild(hint);
       }
-      if (list.childElementCount) {
-        tile.appendChild(list);
+      // Not an `else`: a scanner reporting zero slots AND an allocated address
+      // is a contradiction, and the occupant is the half of it worth seeing.
+      // It draws under the sentence, as an overflow row.
+      const rack = this._renderSlotRack(used, total, allocated);
+      if (rack) {
+        tile.appendChild(rack);
       }
     }
 
@@ -660,7 +657,74 @@ class BlueSightCard extends HTMLElement {
   }
 
   /**
-   * One line for one occupied slot, or `null` for an entry with nothing in it.
+   * The rack: one row per slot, or `null` for a proxy with no slots and
+   * nothing holding one.
+   *
+   * Vertical, one occupant per row, because the correspondence between a pip
+   * and a name used to be carried only by list order -- nothing on screen said
+   * the first filled pip was the first name. A free slot keeps its row (empty
+   * pip, no label) so the tile still reads as a gauge: saturation stays
+   * visible without reading the numbers, at the price of a fixed height.
+   *
+   * Two numbers decide the drawing and they come from the same habluetooth
+   * snapshot but not from the same field: `used` is `slots - free`, while the
+   * occupant list is the allocated-address list. They can momentarily
+   * disagree, in either direction, and each direction is handled on purpose:
+   *
+   *   - Fewer occupants than `used` -- a pre-0.6.0 backend, or a resolver that
+   *     answered nothing -- fills the pips anyway. The count is authoritative
+   *     about how many slots are spent even when nothing can name them.
+   *   - More occupants than `slots` gets a row each, past the end of the rack
+   *     and marked. Dropping one would hide a device that is holding a
+   *     connection, which is the single thing this card exists to show; an
+   *     extra row merely says the two numbers disagree. The header count is
+   *     left alone -- it reports what the sensor says, not what we drew.
+   */
+  _renderSlotRack(used, total, allocated) {
+    const slots = Math.max(0, total);
+    // Clamp used into [0, slots] so a stale value can't over/under-draw, then
+    // let the occupants extend it: a named device always gets a filled pip.
+    const filled = Math.max(
+      Math.max(0, Math.min(used, slots)),
+      allocated.length
+    );
+    const rows = Math.max(slots, allocated.length);
+    if (rows <= 0) {
+      return null;
+    }
+    const rack = document.createElement("div");
+    rack.className = "slot-rack";
+    for (let i = 0; i < rows; i += 1) {
+      rack.appendChild(this._renderSlot(i < filled, i >= slots, allocated[i]));
+    }
+    return rack;
+  }
+
+  /** One rack row: the pip, then whatever holds it (if anything). */
+  _renderSlot(occupied, overflow, device) {
+    const row = document.createElement("div");
+    row.className = "slot";
+
+    const pip = document.createElement("span");
+    pip.className = "pip";
+    if (occupied) {
+      pip.classList.add("filled");
+    }
+    if (overflow) {
+      pip.classList.add("overflow");
+    }
+    row.appendChild(pip);
+
+    const label = this._renderConnectedDevice(device);
+    if (label) {
+      row.appendChild(label);
+    }
+    return row;
+  }
+
+  /**
+   * The label beside one slot's pip, or `null` for a free slot (and for an
+   * occupied one whose entry carries nothing to print).
    *
    * Three cases, and the third is the one this feature exists for:
    *
@@ -684,22 +748,25 @@ class BlueSightCard extends HTMLElement {
       return null;
     }
 
-    const row = document.createElement("div");
-    row.className = "proxy-device";
+    const cell = document.createElement("div");
+    cell.className = "slot-label";
 
     const label = document.createElement("span");
     label.className = name ? "device-name" : "device-addr";
     label.textContent = name || address;
-    row.appendChild(label);
+    cell.appendChild(label);
 
     if (!entry.device_id) {
+      // Its own line, under the address rather than after it: the address is
+      // already long enough to wrap on a phone, and a marker that wraps into
+      // the middle of a MAC reads as part of it.
       const marker = document.createElement("span");
       marker.className = "device-unknown";
       marker.textContent = this._t("card.proxy.unknown_device");
-      row.appendChild(marker);
+      cell.appendChild(marker);
     }
 
-    return row;
+    return cell;
   }
 
   _renderIncidents(incidentEntity, incidentState) {
@@ -873,11 +940,20 @@ class BlueSightCard extends HTMLElement {
         font-size: 0.8rem;
         color: var(--secondary-text-color, #888);
       }
-      .pips {
+      .slot-rack {
         display: flex;
-        flex-wrap: wrap;
-        gap: 5px;
+        flex-direction: column;
+        gap: 4px;
         margin-top: 8px;
+      }
+      .slot {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        /* A free slot's row is a bare 14px pip; a held one is a line of text.
+           The floor keeps the rack evenly spaced either way, which is what
+           makes it readable as a gauge. */
+        min-height: 20px;
       }
       .pip {
         width: 14px;
@@ -886,22 +962,26 @@ class BlueSightCard extends HTMLElement {
         border: 1px solid var(--divider-color, #b0b0b0);
         background: transparent;
         box-sizing: border-box;
+        flex: 0 0 auto;
+        /* Optically centres the pip on the label's first line. */
+        margin-top: 3px;
       }
       .pip.filled {
         background: var(--success-color, #43a047);
         border-color: var(--success-color, #43a047);
       }
-      .proxy-devices {
-        margin-top: 8px;
+      .pip.filled.overflow {
+        /* A row past the end of the rack: more occupants than the proxy says
+           it has slots. Amber, not green, so it does not read as one more
+           slot the proxy turns out to have. */
+        background: var(--warning-color, #ffa600);
+        border-color: var(--warning-color, #ffa600);
+      }
+      .slot-label {
         display: flex;
         flex-direction: column;
-        gap: 2px;
-      }
-      .proxy-device {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: baseline;
-        gap: 6px;
+        gap: 1px;
+        min-width: 0;
         font-size: 0.85rem;
         color: var(--secondary-text-color, #888);
       }
@@ -910,11 +990,13 @@ class BlueSightCard extends HTMLElement {
       }
       .device-addr {
         font-family: var(--code-font-family, monospace);
+        word-break: break-all;
       }
       .device-unknown {
         font-style: italic;
       }
       .pip-hint {
+        margin-top: 8px;
         font-size: 0.8rem;
         color: var(--secondary-text-color, #888);
         font-style: italic;
@@ -975,11 +1057,64 @@ class BlueSightCard extends HTMLElement {
     `;
   }
 
-  // HA calls this to size the card in masonry layouts.
+  /**
+   * How many rack rows a proxy will draw, from `hass` alone.
+   *
+   * `getCardSize` is called without rendering, so this reproduces
+   * `_renderSlotRack`'s row count rather than measuring the DOM. It shares
+   * `_reachability` with the tile so the two cannot disagree about which
+   * proxies draw a rack at all.
+   */
+  _slotRowCount(entityId, states) {
+    const stateObj = states[entityId];
+    if (!stateObj) {
+      return 0; // the "missing" tile: name and a word, no rack
+    }
+    const { offline, unavailable } = this._reachability(
+      stateObj,
+      states,
+      this._healthEntities(entityId)
+    );
+    if (offline || unavailable) {
+      return 0;
+    }
+    const attrs = stateObj.attributes || {};
+    const allocated = Array.isArray(attrs.allocated_devices)
+      ? attrs.allocated_devices
+      : [];
+    return Math.max(Math.max(0, this._toInt(attrs.total, 0)), allocated.length);
+  }
+
+  /**
+   * How many ~50px masonry rows this card occupies.
+   *
+   * Worth computing rather than guessing now that the rack has a fixed height:
+   * a proxy tile is no longer "about one row" -- an 8-slot proxy is four times
+   * a 2-slot one, and the old `1 + proxies + 1` under-reported both. The
+   * arithmetic below is in pixels of the CSS this file ships, divided by the
+   * 50px Lovelace assumes:
+   *
+   *   - the card header, ~39px, plus the card's own padding: one unit;
+   *   - each proxy tile's fixed part -- borders, padding, the name line, the
+   *     health line, the gap to the next tile: ~64px, one unit;
+   *   - each rack row: 20px plus a 4px gap, so two rows to a unit;
+   *   - the incident area: one unit, which is the "no incidents" line or a
+   *     badge or two. A long incident feed still under-reports, but that is a
+   *     transient state and masonry re-asks on every state change.
+   */
   getCardSize() {
-    const proxies = this._discoverProxyEntities(this._hass || {});
-    // ~1 row header + 1 per proxy + 1 for the incident area.
-    return 1 + Math.max(1, proxies.length) + 1;
+    const hass = this._hass;
+    const states = (hass && hass.states) || {};
+    const proxies = this._discoverProxyEntities(hass || {});
+    if (!proxies.length) {
+      // The empty-state paragraph is three lines of small text.
+      return 3;
+    }
+    let size = 2; // card header + incident area
+    for (const entityId of proxies) {
+      size += 1 + Math.ceil(this._slotRowCount(entityId, states) / 2);
+    }
+    return size;
   }
 
   // Used by the "add card" UI to seed a default config.

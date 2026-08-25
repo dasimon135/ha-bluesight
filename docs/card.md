@@ -25,20 +25,34 @@ entities the integration creates:
 The custom card auto-discovers every proxy from `hass` (any
 `sensor.*_slots_used` that carries a `total` attribute) and renders, per proxy:
 
-- a **slot-pip row** (filled = used, empty = free) with a `used/total` count,
+- a **`used/total` count** beside the proxy's name,
+- a **slot rack** — one row per slot, a pip on the left (filled = used, empty =
+  free) and, beside it, the Home Assistant device holding that slot. Free slots
+  keep their row, so the rack reads as a gauge at a glance without reading the
+  numbers, and each name sits on its own slot's row rather than in a list whose
+  order you have to trust:
+
+  ```
+  Proxy Buanderie              2/3
+  ▣  C3:EB:49:65:67:55
+     unknown to Home Assistant
+  ▣  Madoka parents
+  □
+  ```
+
+  An address the device registry cannot account for shows as its raw MAC marked
+  **`unknown to Home Assistant`** on the line under it — that is the diagnostic,
+  not a rendering defect: something Home Assistant knows nothing about is
+  spending one of a handful of connection slots. A device the registry knows but
+  nobody has named shows its MAC unmarked. A backend older than 0.6.0 publishes
+  no names and the rack draws bare pips,
 - a **health line** — how long since that proxy last heard an advertisement and
   how many devices it currently sees,
-- **`offline`** in place of the pips when the proxy's online sensor says it is
-  gone, and **`scan only — no connection slots`** for a passive scanner (which
-  habluetooth reports with zero slots) — English wording shown here; the card
-  is translated, see [Languages](#languages),
-- a **connected-device line per occupied slot**, naming the Home Assistant
-  device that holds it. A proxy holding nothing contributes no lines, so the
-  card grows only where there is something to read. An address the device
-  registry cannot account for shows as its raw MAC marked **`unknown to Home
-  Assistant`** — that is the diagnostic, not a rendering defect: something Home
-  Assistant knows nothing about is spending one of a handful of connection
-  slots.
+- **`offline`** in place of the rack when the proxy's online sensor says it is
+  gone (its last known occupants are exactly what you must not believe), and
+  **`scan only — no connection slots`** for a passive scanner, which habluetooth
+  reports with zero slots and which therefore has no rack — English wording
+  shown here; the card is translated, see [Languages](#languages).
 
 Below that it draws a **coloured incident feed**: red for `deadlock` and
 `ghost_slot`, amber for everything else, each badge carrying the incident kind,
