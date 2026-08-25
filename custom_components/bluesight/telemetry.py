@@ -229,3 +229,78 @@ class ProxyTelemetry:
             v is not None
             for v in (self.smp_failures, self.bonds, self.slot_idle_seconds)
         )
+
+
+
+class CounterDeltas:
+    """Turn per-proxy monotonic counters into per-snapshot event counts.
+
+    Stateful across snapshots but pure: no clock, no I/O, no Home Assistant.
+
+    Three rules carry the weight:
+
+    * The first reading only establishes a baseline. The counter has been
+      climbing since the proxy booted, possibly for weeks; replaying that
+      history as fresh failures would open a storm incident on startup. The
+      same applies per address: an address seen for the first time from a
+      known proxy only baselines, because "absent last snapshot" does not
+      mean "new" -- :func:`parse_counts` drops individual malformed fields,
+      so it may equally be an address whose field has never yet parsed and
+      whose counter has been climbing all along.
+    * A decrease means the proxy rebooted, not that anything recovered. The
+      baseline rearms at the new value and nothing is counted, so the climb
+      back up is not counted a second time.
+    * Keys are canonicalised on the way in, both the proxy and the address.
+      Everything downstream correlates on the normalised form -- the storm
+      window is keyed verbatim, and an incident address is matched against
+      the device registry -- so a key that arrived in the wrong case would
+      quietly open a second bucket for a device that already has one, and
+      split one real storm into two counts below the threshold.
+
+    Every difference between what happened and what is reported is an
+    *under*-count, never an over-count: a reboot swallows the failures that
+    preceded it in the same interval. That direction is deliberate. This class
+    feeds the storm detector, and BlueSight's value is surfacing real
+    incidents without crying wolf.
+    """
+
+    def __init__(self) -> None:
+        self._baseline: dict[str, dict[str, int]] = {}
+
+    def update(
+        self, source: str, counts: dict[str, int] | None
+    ) -> dict[str, int]:
+        """Advance one snapshot for ``source``; return new events per address.
+
+        ``counts`` of None means the telemetry is absent this snapshot. The
+        baseline is deliberately kept rather than dropped: a proxy that blips
+        unavailable would otherwise replay its entire counter on return.
+
+        Addresses missing from an otherwise-present ``counts`` keep their
+        baseline for the same reason, and this must stay that way. The parser
+        drops malformed fields one at a time, so an address can vanish from
+        one reading and return in the next; holding the baseline defers those
+        failures to the next good reading, where pruning would either lose
+        them or rearm and count them twice.
+        """
+        if counts is None:
+            return {}
+        previous = self._baseline.setdefault(normalize_address(source), {})
+        new_events: dict[str, int] = {}
+        for raw_address, current in counts.items():
+            address = normalize_address(raw_address)
+            before = previous.get(address)
+            if before is not None and current > before:
+                new_events[address] = current - before
+            previous[address] = current
+        return new_events
+
+    def forget(self, source: str) -> None:
+        """Drop a retired proxy's baselines (pairs with ``forget_proxy``).
+
+        Normalises ``source`` because the ``forget_proxy`` service hands
+        through whatever MAC the user typed. Without that, a lowercase call
+        would report success while leaving the baseline in place, and a
+        replacement proxy reusing the MAC would inherit a stranger's counter.
+        """
+        self._baseline.pop(normalize_address(source), None)
