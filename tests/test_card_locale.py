@@ -163,3 +163,60 @@ def test_the_card_version_matches_the_manifest(card_source):
     assert match.group(1) == version, (
         f"card says {match.group(1)}, manifest says {version}"
     )
+
+
+# --- the connected-device list ----------------------------------------------
+
+
+def _code_only(source: str) -> str:
+    """``source`` with its comment lines dropped.
+
+    The card documents what it deliberately does *not* do, naming the API it
+    avoids; a plain substring search would read that prose as the very thing it
+    forbids.
+    """
+    return "\n".join(
+        line
+        for line in source.splitlines()
+        if not line.lstrip().startswith(("//", "/*", "*"))
+    )
+
+
+def _method_body(source: str, name: str) -> str:
+    """The source of one method, from its declaration to the next one.
+
+    Crude on purpose: the point is to assert that a particular string appears
+    in a particular method, which a whole-file grep cannot do.
+    """
+    start = source.index(f"  {name}(")
+    end = source.index("\n  }\n", start)
+    return source[start:end]
+
+
+def test_the_card_draws_the_backends_resolved_names(card_source):
+    """The names are resolved in Python, in `coordinator._build_device_index`,
+    which settles which registry evidence may speak for a BLE address. The card
+    reads the published `allocated_devices` and must not re-derive any of it
+    from `hass.devices`.
+    """
+    body = _method_body(card_source, "_renderProxyTile")
+    assert "allocated_devices" in body
+    assert "hass.devices" not in _code_only(card_source)
+
+
+def test_an_unresolved_address_is_marked_in_the_viewers_language(card_source):
+    """An address Home Assistant knows nothing about, holding a slot on a
+    saturated proxy, is the case this feature exists for -- so it gets a word,
+    not a bare MAC that reads as a rendering defect.
+    """
+    assert '_t("card.proxy.unknown_device")' in card_source
+
+
+def test_the_connected_devices_are_part_of_the_render_signature(card_source):
+    """The card skips a rebuild when its signature is unchanged.
+
+    `used/total` can stay put while *which* devices hold the slots changes --
+    one device disconnects as another connects, or a device is renamed. Left
+    out of the signature, the list silently shows the previous fleet.
+    """
+    assert "allocated_devices" in _method_body(card_source, "_computeSignature")

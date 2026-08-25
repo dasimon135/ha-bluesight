@@ -1,6 +1,7 @@
 from dataclasses import fields
 
 from custom_components.bluesight.model import (
+    DeviceRef,
     Incident,
     IncidentKind,
     ProxyHealth,
@@ -198,3 +199,100 @@ def test_only_a_storms_key_ignores_its_sources():
         one = Incident(kind, "11:22", ["p1"])
         other = Incident(kind, "11:22", ["p2"])
         assert (one.key == other.key) is (kind is IncidentKind.STORM), kind
+
+
+# --- allocated_devices: who holds each slot ---------------------------------
+#
+# `allocated` (raw MACs, published since 0.1) and `allocated_devices` (the same
+# slots, named) describe the same thing, so they must not be able to disagree.
+# `allocated` stays the stored field and `allocated_devices` is DERIVED from
+# it: the resolved names live in a side map keyed by normalized address, and
+# the property walks `allocated` to build one entry per occupied slot. Nothing
+# can add, drop or reorder an entry without doing the same to `allocated`.
+
+
+def test_devices_defaults_empty_and_yields_a_bare_entry_per_slot():
+    """A ProxySlots built without a resolver still answers the question."""
+    p = ProxySlots("AA:BB", "Salon", 3, 1, ["11:22", "33:44"])
+    assert p.devices == {}
+    assert p.allocated_devices == [
+        {"address": "11:22", "name": "", "device_id": None},
+        {"address": "33:44", "name": "", "device_id": None},
+    ]
+
+
+def test_allocated_devices_is_present_and_empty_for_an_idle_proxy():
+    """Empty, never absent: `allocated` is already `[]` for an idle proxy, and
+    an attribute that appears and disappears is worse to template against."""
+    p = ProxySlots("AA:BB", "Salon", 3, 3)
+    assert p.allocated_devices == []
+
+
+def test_allocated_devices_resolves_through_the_normalized_address():
+    """habluetooth's spelling of an address and the registry index's need not
+    match byte for byte; the side map is keyed by `normalize_address`."""
+    p = ProxySlots(
+        "AA:BB", "Salon", 3, 2, ["c3:eb:49:65:67:aa"],
+        {"C3:EB:49:65:67:AA": DeviceRef("Madoka salon", "dev_1")},
+    )
+    assert p.allocated_devices == [
+        {
+            # Verbatim from `allocated`: the two attributes name the same
+            # slots with the same strings.
+            "address": "c3:eb:49:65:67:aa",
+            "name": "Madoka salon",
+            "device_id": "dev_1",
+        }
+    ]
+
+
+def test_an_address_the_registry_does_not_know_keeps_its_raw_mac():
+    """The interesting case: an unknown address holding a slot. The backend
+    leaves the name empty and the device_id null; the card supplies the
+    translated marker, because only the card knows the viewer's language."""
+    p = ProxySlots(
+        "AA:BB", "Salon", 3, 2, ["C3:EB:49:65:67:55"],
+        {"11:22:33:44:55:66": DeviceRef("Elsewhere", "dev_9")},
+    )
+    assert p.allocated_devices == [
+        {"address": "C3:EB:49:65:67:55", "name": "", "device_id": None}
+    ]
+
+
+def test_allocated_devices_cannot_diverge_from_allocated():
+    """The lockstep guarantee, stated directly: same length, same addresses,
+    same order, whatever the side map happens to contain."""
+    for allocated, devices in (
+        ([], {}),
+        (["11:22"], {}),
+        (["11:22", "33:44"], {"11:22": DeviceRef("A", "dev_a")}),
+        # A resolver map holding addresses this proxy does not hold cannot
+        # inject an entry.
+        (["11:22"], {"55:66": DeviceRef("Stranger", "dev_x")}),
+        # The same address twice on one proxy is two slots and two entries.
+        (["11:22", "11:22"], {"11:22": DeviceRef("A", "dev_a")}),
+    ):
+        p = ProxySlots("AA:BB", "Salon", 3, 0, allocated, devices)
+        entries = p.allocated_devices
+        assert [e["address"] for e in entries] == list(p.allocated)
+
+
+def test_resolved_names_do_not_enter_proxyslots_identity():
+    """Two snapshots that differ only in a resolved name hold the same slots.
+
+    The names are decoration read out of the device registry; the allocation
+    state is the connection-layer fact. Tests that care about the names assert
+    on `allocated_devices` directly rather than on ProxySlots equality.
+    """
+    bare = ProxySlots("AA:BB", "Salon", 3, 2, ["11:22"])
+    named = ProxySlots(
+        "AA:BB", "Salon", 3, 2, ["11:22"], {"11:22": DeviceRef("Madoka", "dev_1")}
+    )
+    assert bare == named
+    assert bare.allocated_devices != named.allocated_devices
+
+
+def test_device_ref_defaults_to_an_unknown_device():
+    ref = DeviceRef()
+    assert ref.name == ""
+    assert ref.device_id is None

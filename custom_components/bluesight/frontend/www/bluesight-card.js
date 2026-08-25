@@ -5,7 +5,8 @@
  * BlueSight integration:
  *
  *   - Per ESPHome/Bluetooth proxy: a tile with slot "pips" (filled = used,
- *     empty = free) and a "used/total" count. Auto-discovered from any
+ *     empty = free), a "used/total" count, and a line per occupied slot naming
+ *     the device that holds it. Auto-discovered from any
  *     `sensor.*_slots_used` entity that carries a `total` attribute.
  *   - A global incident banner driven by `binary_sensor.bluesight_incident`.
  *     Each incident is rendered as a coloured badge (red for deadlock/ghost
@@ -98,6 +99,7 @@ const EMBEDDED_EN = {
   "card.proxy.missing": "missing",
   "card.proxy.offline": "offline",
   "card.proxy.scan_only": "scan only — no connection slots",
+  "card.proxy.unknown_device": "unknown to Home Assistant",
   "card.proxy.last_advert": "last advert {age} ago",
   "card.proxy.last_advert_with_devices.one": "last advert {age} ago · {count} device seen",
   "card.proxy.last_advert_with_devices.other": "last advert {age} ago · {count} devices seen",
@@ -456,6 +458,18 @@ class BlueSightCard extends HTMLElement {
       }
       const a = s.attributes || {};
       parts.push(`${id}:${s.state}:${a.total}:${a.free}`);
+      // Which devices hold the slots, not just how many. `used/total` can sit
+      // perfectly still while one device disconnects and another connects, or
+      // while a device is renamed in the registry; left out here, the list
+      // would keep showing the previous fleet until something else moved.
+      const allocated = Array.isArray(a.allocated_devices)
+        ? a.allocated_devices
+        : [];
+      parts.push(
+        `dev:${allocated
+          .map((d) => `${(d || {}).address}=${(d || {}).name}`)
+          .join(",")}`
+      );
       // The health companions are drawn too, so they belong in the signature.
       const health = this._healthEntities(id);
       const online = hass.states ? hass.states[health.online] : undefined;
@@ -615,7 +629,77 @@ class BlueSightCard extends HTMLElement {
     }
     tile.appendChild(pips);
 
+    // Who holds each slot -- the part that says what to blame when a proxy is
+    // saturated. Drawn under the pips and only where there is something to
+    // say: a proxy at 0/3 contributes no lines, so the card grows only where
+    // it informs. Deliberately not gated on saturation, either: at 2/3 the
+    // list is the warning you still have time to act on.
+    //
+    // The names arrive resolved from the backend. Re-deriving them here from
+    // `hass.devices` would mean reimplementing `build_device_index`'s rule in
+    // JavaScript -- which registry evidence may speak for a BLE address --
+    // for no benefit.
+    const allocated = drawable && Array.isArray(attrs.allocated_devices)
+      ? attrs.allocated_devices
+      : [];
+    if (allocated.length) {
+      const list = document.createElement("div");
+      list.className = "proxy-devices";
+      for (const device of allocated) {
+        const row = this._renderConnectedDevice(device);
+        if (row) {
+          list.appendChild(row);
+        }
+      }
+      if (list.childElementCount) {
+        tile.appendChild(list);
+      }
+    }
+
     return tile;
+  }
+
+  /**
+   * One line for one occupied slot, or `null` for an entry with nothing in it.
+   *
+   * Three cases, and the third is the one this feature exists for:
+   *
+   *   - Home Assistant knows the device and it has a name -> show the name.
+   *     The address is already published in the `allocated` attribute, and a
+   *     MAC beside every name is noise on a phone.
+   *   - Home Assistant knows the device but it has no name -> show the raw
+   *     address, unmarked. HA allows a nameless device; saying it is unknown
+   *     would be false.
+   *   - Home Assistant does not know the address at all -> show the raw
+   *     address WITH the marker. A device the registry cannot account for,
+   *     holding one of a proxy's handful of connection slots, is exactly what
+   *     wants surfacing. `device_id` decides this, not the emptiness of the
+   *     name, because those are two different facts.
+   */
+  _renderConnectedDevice(device) {
+    const entry = device || {};
+    const address = entry.address ? String(entry.address) : "";
+    const name = entry.name ? String(entry.name) : "";
+    if (!address && !name) {
+      return null;
+    }
+
+    const row = document.createElement("div");
+    row.className = "proxy-device";
+
+    const label = document.createElement("span");
+    label.className = name ? "device-name" : "device-addr";
+    label.textContent = name || address;
+    row.appendChild(label);
+
+    if (!entry.device_id) {
+      const marker = document.createElement("span");
+      marker.className = "device-unknown";
+      marker.textContent = this._t("card.proxy.unknown_device");
+      row.appendChild(marker);
+    }
+
+    return row;
   }
 
   _renderIncidents(incidentEntity, incidentState) {
@@ -806,6 +890,29 @@ class BlueSightCard extends HTMLElement {
       .pip.filled {
         background: var(--success-color, #43a047);
         border-color: var(--success-color, #43a047);
+      }
+      .proxy-devices {
+        margin-top: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .proxy-device {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 6px;
+        font-size: 0.85rem;
+        color: var(--secondary-text-color, #888);
+      }
+      .device-name {
+        color: var(--primary-text-color);
+      }
+      .device-addr {
+        font-family: var(--code-font-family, monospace);
+      }
+      .device-unknown {
+        font-style: italic;
       }
       .pip-hint {
         font-size: 0.8rem;

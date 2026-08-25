@@ -51,8 +51,9 @@ Assistant already tracks internally:
 It surfaces the state as:
 
 - **Per-proxy sensors** — `sensor.<proxy>_slots_used` and
-  `sensor.<proxy>_slots_free`, with the total, free count, and the list of
-  allocated device addresses as attributes.
+  `sensor.<proxy>_slots_free`, with the total, free count, the list of
+  allocated device addresses, and those same addresses resolved to Home
+  Assistant devices as attributes.
 - **A global incident binary sensor** — `binary_sensor.bluesight_incident`
   (device class `problem`), `on` whenever any incident is open, with the full
   incident list in its attributes.
@@ -148,7 +149,7 @@ that the same address is held on two proxies.
 
 | Entity | Type | State | Key attributes |
 | --- | --- | --- | --- |
-| `sensor.<proxy>_slots_used` | sensor | slots allocated on that proxy | `total`, `free`, `allocated` (list of MACs), `source` |
+| `sensor.<proxy>_slots_used` | sensor | slots allocated on that proxy | `total`, `free`, `allocated` (list of MACs), `allocated_devices` (list of `{address, name, device_id}`, same slots in the same order), `source` |
 | `sensor.<proxy>_slots_free` | sensor | slots still free on that proxy | — |
 | `binary_sensor.<proxy>_online` | binary_sensor (`connectivity`) | `on` while the proxy is a registered scanner | — |
 | `sensor.<proxy>_last_device_seen` | sensor (`duration`, seconds) | seconds since that proxy last heard an advertisement | `device_count`, `connectable`, `online` |

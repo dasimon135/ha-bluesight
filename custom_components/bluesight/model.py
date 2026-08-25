@@ -59,16 +59,76 @@ KINDS_WHOSE_SOURCES_ARE_EVIDENCE: frozenset[IncidentKind] = frozenset(
 
 
 @dataclass(frozen=True, slots=True)
+class DeviceRef:
+    """What Home Assistant knows about one BLE address.
+
+    Deliberately not an address: it is only ever reached *through* one, and
+    carrying a second copy of the address is how the two published views of a
+    proxy's slots would come to disagree about which addresses they describe.
+    See :attr:`ProxySlots.allocated_devices`.
+
+    An address the device registry cannot account for has no ``DeviceRef`` at
+    all rather than an empty one. The empty *name* is a different fact -- Home
+    Assistant allows a device with no name -- and the card draws a different
+    thing for each, so the two must stay distinguishable.
+    """
+
+    name: str = ""
+    device_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ProxySlots:
     source: str            # proxy/adapter MAC
     name: str              # friendly name
     slots: int
     free: int
     allocated: list[str] = field(default_factory=list)
+    #: Normalized address -> what Home Assistant knows about it, for the
+    #: addresses in ``allocated`` that resolve to a registry device. Filled by
+    #: :func:`adapter.current_proxy_slots` from a resolver the coordinator
+    #: injects; empty for a snapshot taken without one.
+    #:
+    #: Excluded from equality: two snapshots that differ only in a device's
+    #: friendly name hold the same slots, and the allocation state is the
+    #: connection-layer fact this class is about. The names are decoration read
+    #: out of a registry. Tests that care about them assert on
+    #: :attr:`allocated_devices`, never on ``ProxySlots`` equality.
+    devices: dict[str, DeviceRef] = field(default_factory=dict, compare=False)
 
     @property
     def used(self) -> int:
         return self.slots - self.free
+
+    @property
+    def allocated_devices(self) -> list[dict[str, str | None]]:
+        """One entry per occupied slot: the address, its name, its device id.
+
+        Published verbatim as the ``allocated_devices`` attribute of the slots
+        sensor, which is why the entries are plain dicts: they go through the
+        recorder and the websocket, where a dataclass cannot follow.
+
+        **Derived from** ``allocated``, never stored beside it. The two
+        attributes describe the same slots, and a stored second list could
+        drift in length, order or spelling -- so this walks ``allocated`` and
+        takes each address from it, leaving nothing for the resolver map to
+        add, drop or reorder. An address the map does not know keeps its raw
+        MAC with no name and no id; the card turns that into a translated
+        marker, because only the card knows the viewer's language.
+        """
+        entries: list[dict[str, str | None]] = []
+        for address in self.allocated:
+            ref = self.devices.get(normalize_address(address))
+            entries.append(
+                {
+                    # From `allocated`, so `allocated_devices` says exactly the
+                    # addresses `allocated` says, in exactly its spelling.
+                    "address": address,
+                    "name": ref.name if ref is not None else "",
+                    "device_id": ref.device_id if ref is not None else None,
+                }
+            )
+        return entries
 
     @property
     def is_full(self) -> bool:

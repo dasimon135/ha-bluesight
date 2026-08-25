@@ -190,3 +190,91 @@ def test_the_recorded_source_is_canonicalised():
 
 def test_no_records_and_no_fallback_resolve_nothing():
     assert build_proxy_index([], {}) == {}
+
+
+# --- display names ----------------------------------------------------------
+#
+# Naming an allocated address is one more lookup in a registry the coordinator
+# already walks once per snapshot, so the name comes back from the same pass
+# that produced the ids. Keyed by device id, not by address: one device can be
+# reachable through both an identifier and a connection.
+
+
+class _NamedDevice(_Device):
+    def __init__(self, device_id, *, name=None, name_by_user=None, **kwargs):
+        super().__init__(device_id, **kwargs)
+        self.name = name
+        self.name_by_user = name_by_user
+
+
+def test_a_devices_display_name_comes_back_with_its_id():
+    index = _index(
+        _NamedDevice(
+            "dev_madoka",
+            name="Madoka BRC1H",
+            identifiers={("daikin_madoka", PERIPHERAL_MAC)},
+        )
+    )
+    assert index.names[index.peripherals[PERIPHERAL_MAC]] == "Madoka BRC1H"
+
+
+def test_the_users_own_name_wins_over_the_integrations():
+    """`name_by_user` is what the user sees everywhere else in Home Assistant,
+    so it is what the card has to show."""
+    index = _index(
+        _NamedDevice(
+            "dev_madoka",
+            name="Madoka BRC1H",
+            name_by_user="Madoka salon",
+            identifiers={("daikin_madoka", PERIPHERAL_MAC)},
+        )
+    )
+    assert index.names["dev_madoka"] == "Madoka salon"
+
+
+def test_a_device_with_no_name_at_all_resolves_to_the_empty_string():
+    """Home Assistant allows a nameless device. It is still a *known* device,
+    so it keeps its id -- the card decides what to draw from that, not from
+    the emptiness of the name."""
+    index = _index(
+        _NamedDevice(
+            "dev_nameless", identifiers={("daikin_madoka", PERIPHERAL_MAC)}
+        )
+    )
+    assert index.names["dev_nameless"] == ""
+    assert index.peripherals[PERIPHERAL_MAC] == "dev_nameless"
+
+
+def test_a_whitespace_only_name_reads_as_no_name():
+    index = _index(
+        _NamedDevice(
+            "dev_blank",
+            name="   ",
+            identifiers={("daikin_madoka", PERIPHERAL_MAC)},
+        )
+    )
+    assert index.names["dev_blank"] == ""
+
+
+def test_a_registry_entry_without_name_attributes_is_tolerated():
+    """The entries are read duck-typed, exactly as the module docstring says;
+    a registry object that lacks the attribute must not abort the snapshot."""
+    index = _index(_Device("dev_bare", identifiers={("daikin_madoka", PERIPHERAL_MAC)}))
+    assert index.names["dev_bare"] == ""
+
+
+def test_names_cover_only_the_devices_that_entered_an_index():
+    """A real registry holds hundreds of devices and this runs every snapshot;
+    naming the ones no BLE address can reach would be pure waste."""
+    index = _index(
+        _NamedDevice("dev_ble", name="Madoka", identifiers={("daikin_madoka", PERIPHERAL_MAC)}),
+        _NamedDevice("dev_proxy", name="Proxy Buanderie", connections={(NETWORK, PROXY_MAC)}),
+        _NamedDevice("dev_cloud", name="Weather", identifiers={("met", "home")}),
+    )
+    assert set(index.names) == {"dev_ble", "dev_proxy"}
+
+
+def test_names_default_empty_so_a_hand_built_index_still_works():
+    from custom_components.bluesight.device_index import DeviceIndex
+
+    assert DeviceIndex({}, {}).names == {}

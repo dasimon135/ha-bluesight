@@ -38,6 +38,7 @@
   "card.proxy.missing": "missing",
   "card.proxy.offline": "offline",
   "card.proxy.scan_only": "scan only — no connection slots",
+  "card.proxy.unknown_device": "unknown to Home Assistant",
   "card.proxy.last_advert": "last advert {age} ago",
   "card.proxy.last_advert_with_devices.one": "last advert {age} ago · {count} device seen",
   "card.proxy.last_advert_with_devices.other": "last advert {age} ago · {count} devices seen",

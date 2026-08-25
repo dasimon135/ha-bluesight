@@ -38,6 +38,7 @@
   "card.proxy.missing": "introuvable",
   "card.proxy.offline": "hors ligne",
   "card.proxy.scan_only": "scan seul — aucun slot de connexion",
+  "card.proxy.unknown_device": "inconnu de Home Assistant",
   "card.proxy.last_advert": "dernière annonce il y a {age}",
   "card.proxy.last_advert_with_devices.one": "dernière annonce il y a {age} · {count} appareil vu",
   "card.proxy.last_advert_with_devices.other": "dernière annonce il y a {age} · {count} appareils vus",

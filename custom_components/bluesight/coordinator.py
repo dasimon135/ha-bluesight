@@ -37,7 +37,7 @@ from .const import (
 )
 from .coordinator_data import BlueSightData, build_triage_data
 from .device_index import DeviceIndex, build_device_index, build_proxy_index
-from .model import normalize_address
+from .model import DeviceRef, normalize_address
 from .rendering import Catalogue
 from .storm_signal import ReleaseTracker
 from .telemetry import CounterDeltas
@@ -243,16 +243,40 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
                 self._last_online[h.source] = now
         offline_for = {src: now - seen for src, seen in self._last_online.items()}
 
-        proxies = current_proxy_slots(self._manager, self._name_for)
         # Resolve availability from the device's HA entities rather than its
         # advertising presence: a connected device (holding a slot) stops
         # advertising, so advertisement-presence falsely flagged working,
         # persistently-connected devices as ghost slots. Build the MAC->device
         # index and grab the entity registry once per snapshot and reuse them
         # for every allocated address (avoid O(devices) per address).
+        #
+        # Built BEFORE the slot snapshot, not after: the same index also names
+        # the devices holding the slots, and `current_proxy_slots` resolves
+        # those names as it builds each `ProxySlots`.
         ent_reg = er.async_get(self.hass)
         index = self._build_device_index()
         mac_index = index.peripherals
+
+        def device_for(address: str) -> DeviceRef | None:
+            """Who holds this slot, for the card to show under the pips.
+
+            Deliberately the *peripheral* index: a name is a claim about which
+            device is on the other end of a BLE connection, and a Wi-Fi MAC is
+            not evidence for that. An address it cannot account for gets no
+            reference at all, and the card marks it -- which is the diagnostic,
+            not a display defect: an address Home Assistant knows nothing about
+            is holding one of a handful of connection slots.
+
+            `address` arrives canonicalised from the adapter, matching how the
+            index is keyed; normalized again here so this stays correct for any
+            caller and costs a string operation.
+            """
+            device_id = mac_index.get(normalize_address(address))
+            if device_id is None:
+                return None
+            return DeviceRef(name=index.names.get(device_id, ""), device_id=device_id)
+
+        proxies = current_proxy_slots(self._manager, self._name_for, device_for)
         # Memoized per snapshot: the release tracker asks about addresses that
         # are no longer allocated, so the answer set is wider than `proxies`.
         verdicts: dict[str, bool] = {}

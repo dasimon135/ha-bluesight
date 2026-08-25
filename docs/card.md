@@ -5,7 +5,10 @@ fallback** you can paste with zero custom JavaScript. Both read the same
 entities the integration creates:
 
 - `sensor.<proxy>_slots_used` — state = used count; attributes `total`, `free`,
-  `allocated` (list of MACs), `source`.
+  `allocated` (list of MACs), `allocated_devices` (the same slots in the same
+  order, each `{address, name, device_id}`; `name` is `""` and `device_id` is
+  `null` for an address Home Assistant's device registry does not know),
+  `source`.
 - `sensor.<proxy>_slots_free` — state = free count.
 - `binary_sensor.<proxy>_online` — `on` while the proxy is a registered scanner.
 - `sensor.<proxy>_last_device_seen` — seconds since that proxy last heard any
@@ -28,7 +31,14 @@ The custom card auto-discovers every proxy from `hass` (any
 - **`offline`** in place of the pips when the proxy's online sensor says it is
   gone, and **`scan only — no connection slots`** for a passive scanner (which
   habluetooth reports with zero slots) — English wording shown here; the card
-  is translated, see [Languages](#languages).
+  is translated, see [Languages](#languages),
+- a **connected-device line per occupied slot**, naming the Home Assistant
+  device that holds it. A proxy holding nothing contributes no lines, so the
+  card grows only where there is something to read. An address the device
+  registry cannot account for shows as its raw MAC marked **`unknown to Home
+  Assistant`** — that is the diagnostic, not a rendering defect: something Home
+  Assistant knows nothing about is spending one of a handful of connection
+  slots.
 
 Below that it draws a **coloured incident feed**: red for `deadlock` and
 `ghost_slot`, amber for everything else, each badge carrying the incident kind,
@@ -176,9 +186,12 @@ Notes:
 - The card list is static, so add one row per proxy you have. (The custom card
   in Option A discovers them automatically; the native fallback cannot, by
   design.) Find your entity ids under Developer Tools → States, filter `slots_`.
-- `sensor.<proxy>_slots_used` carries `total`, `free` and `allocated` as
-  attributes, so a tile on it already tells you the whole slot story; the
-  separate `_slots_free` sensor is there for templates and history.
+- `sensor.<proxy>_slots_used` carries `total`, `free`, `allocated` and
+  `allocated_devices` as attributes, so a tile on it already tells you the whole
+  slot story; the separate `_slots_free` sensor is there for templates and
+  history. A markdown card can iterate `allocated_devices` to name the devices
+  holding the slots, exactly as the custom card does — the resolution is done in
+  the backend, so the names are simply there to read.
 - The markdown card iterates the `incidents` attribute with a Jinja `for` loop
   and guards the empty case with `or []`, so it renders cleanly even mid-update.
 - `conditional` cards hide themselves entirely when their condition is false, so

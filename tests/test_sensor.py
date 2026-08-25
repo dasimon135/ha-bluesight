@@ -8,7 +8,7 @@ here (native_value / attributes / availability); wiring is CI-only.
 from __future__ import annotations
 
 from custom_components.bluesight.coordinator_data import BlueSightData
-from custom_components.bluesight.model import ProxyHealth, ProxySlots
+from custom_components.bluesight.model import DeviceRef, ProxyHealth, ProxySlots
 from custom_components.bluesight.sensor import (
     LastDeviceSeenSensor,
     SlotsFreeSensor,
@@ -42,6 +42,10 @@ def test_slots_used_native_value_and_attributes() -> None:
         "total": 3,
         "free": 1,
         "allocated": ["11:22", "33:44"],
+        "allocated_devices": [
+            {"address": "11:22", "name": "", "device_id": None},
+            {"address": "33:44", "name": "", "device_id": None},
+        ],
         "source": "AA:BB",
     }
 
@@ -121,3 +125,86 @@ def test_last_device_seen_unavailable_when_absent() -> None:
     assert sensor.available is False
     assert sensor.native_value is None
     assert sensor.extra_state_attributes is None
+
+
+# --- the published slot attributes ------------------------------------------
+
+
+def _slots_used_attrs(proxy: ProxySlots) -> dict:
+    return SlotsUsedSensor(_coord(proxy), proxy.source).extra_state_attributes
+
+
+def test_allocated_is_still_exactly_what_0_5_0_published() -> None:
+    """A regression guard on a contract, not a description of the code.
+
+    `allocated` has been published since 0.1 and user automations read it, so
+    adding `allocated_devices` beside it must leave it byte-identical: a plain
+    list of the raw address strings habluetooth reported, in habluetooth's
+    order and habluetooth's spelling, and a copy rather than the live list.
+    """
+    proxy = ProxySlots(
+        "AA:BB", "proxy-a", 3, 1, ["11:22", "33:44"],
+        {"11:22": DeviceRef("Madoka salon", "dev_1")},
+    )
+    allocated = _slots_used_attrs(proxy)["allocated"]
+
+    assert allocated == ["11:22", "33:44"]
+    assert type(allocated) is list
+    assert [type(a) for a in allocated] == [str, str]
+    assert allocated is not proxy.allocated   # a copy, not the live list
+
+
+def test_allocated_and_allocated_devices_describe_the_same_slots() -> None:
+    """The two attributes are two views of one fact and must never disagree.
+
+    `allocated_devices` is derived from `allocated` in the model, so this is a
+    guard on the published surface rather than on arithmetic: if the two ever
+    came apart, an automation reading one and a dashboard reading the other
+    would show different fleets.
+    """
+    proxy = ProxySlots(
+        "AA:BB", "proxy-a", 3, 0, ["11:22", "33:44", "55:66"],
+        {"33:44": DeviceRef("Madoka salon", "dev_1")},
+    )
+    attrs = _slots_used_attrs(proxy)
+    assert [e["address"] for e in attrs["allocated_devices"]] == attrs["allocated"]
+
+
+def test_allocated_devices_names_the_slots_it_can_and_says_so_when_it_cannot():
+    proxy = ProxySlots(
+        "AA:BB", "proxy-a", 3, 0,
+        ["C3:EB:49:65:67:55", "1C:54:9E:8E:1D:2C", "1C:54:9E:90:E3:0E"],
+        {
+            "1C:54:9E:8E:1D:2C": DeviceRef("Madoka salon", "dev_salon"),
+            "1C:54:9E:90:E3:0E": DeviceRef("Madoka parents", "dev_parents"),
+        },
+    )
+    assert _slots_used_attrs(proxy)["allocated_devices"] == [
+        # The saturated proxy from the field report: one of the three slots is
+        # held by an address Home Assistant knows nothing about.
+        {"address": "C3:EB:49:65:67:55", "name": "", "device_id": None},
+        {"address": "1C:54:9E:8E:1D:2C", "name": "Madoka salon", "device_id": "dev_salon"},
+        {"address": "1C:54:9E:90:E3:0E", "name": "Madoka parents", "device_id": "dev_parents"},
+    ]
+
+
+def test_allocated_devices_is_present_and_empty_on_an_idle_proxy() -> None:
+    """Present, not absent: `state_attr()` returning None instead of an empty
+    list is a different shape for templates to handle, and the card iterates
+    it unconditionally."""
+    attrs = _slots_used_attrs(ProxySlots("AA:BB", "proxy-a", 3, 3))
+    assert attrs["allocated"] == []
+    assert attrs["allocated_devices"] == []
+
+
+def test_the_published_attributes_are_json_shaped() -> None:
+    """They go into the recorder and over the websocket, so every value has to
+    survive `json.dumps` -- a dataclass would not."""
+    import json
+
+    proxy = ProxySlots(
+        "AA:BB", "proxy-a", 3, 2, ["11:22"], {"11:22": DeviceRef("Madoka", "dev_1")}
+    )
+    assert json.loads(json.dumps(_slots_used_attrs(proxy)))["allocated_devices"] == [
+        {"address": "11:22", "name": "Madoka", "device_id": "dev_1"}
+    ]

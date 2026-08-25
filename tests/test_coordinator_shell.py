@@ -115,10 +115,21 @@ def test_snapshot_flags_ghost_slot(monkeypatch):
 # --- Registry-backed availability: fakes for dr/er/states ---------------
 
 class _FakeDevice:
-    def __init__(self, device_id, *, connections=(), identifiers=()):
+    def __init__(
+        self,
+        device_id,
+        *,
+        connections=(),
+        identifiers=(),
+        name=None,
+        name_by_user=None,
+    ):
         self.id = device_id
         self.connections = set(connections)
         self.identifiers = set(identifiers)
+        # What the card shows for an allocated address. `name_by_user` wins.
+        self.name = name
+        self.name_by_user = name_by_user
 
 
 class _FakeDeviceRegistry:
@@ -764,3 +775,126 @@ def test_an_unreadable_config_entry_list_falls_back_instead_of_degrading(monkeyp
     c.hass.config_entries.async_entries = _boom
     assert [t.source for t in c._snapshot().telemetry] == [PROXY]
     assert c._availability_degraded is False
+
+
+# --- naming the devices that hold the slots ---------------------------------
+#
+# The resolution is done here, in Python, and never in the card: the peripheral
+# index settles which registry evidence may speak for a BLE address, and
+# reimplementing that rule in JavaScript would be a correctness risk for no
+# benefit.
+
+SALON = "1C:54:9E:8E:1D:2C"
+UNKNOWN = "C3:EB:49:65:67:55"
+
+
+class _AllocOnly:
+    """A manager that reports one saturated proxy and no scanners."""
+
+    def __init__(self, source, slots, free, allocated):
+        self._alloc = type(
+            "_A",
+            (),
+            {"source": source, "slots": slots, "free": free, "allocated": allocated},
+        )()
+
+    def async_current_allocations(self, source=None):
+        return [self._alloc]
+
+    def async_current_scanners(self):
+        return []
+
+
+def _saturated_proxy_coordinator(monkeypatch, devices, entries_by_device, states):
+    c = _bare_coordinator()
+    c._manager = _AllocOnly("D8:3B:DA:11:22:33", 3, 1, [UNKNOWN, SALON])
+    c.hass = _wire_registries(
+        monkeypatch,
+        devices=devices,
+        entries_by_device=entries_by_device,
+        states=states,
+    )
+    return c
+
+
+def test_snapshot_names_the_device_holding_each_slot(monkeypatch):
+    """The whole feature, end to end through the shell: a saturated proxy whose
+    slots are named, and the one address the registry cannot account for left
+    as a raw MAC for the card to mark."""
+    c = _saturated_proxy_coordinator(
+        monkeypatch,
+        devices=[
+            _FakeDevice(
+                "dev_salon",
+                identifiers={("daikin_madoka", SALON)},
+                name="Madoka BRC1H",
+                name_by_user="Madoka salon",
+            )
+        ],
+        entries_by_device={"dev_salon": [_FakeEntry("climate.salon")]},
+        states={"climate.salon": _FakeState("off")},
+    )
+    assert c._snapshot().proxies[0].allocated_devices == [
+        {"address": UNKNOWN, "name": "", "device_id": None},
+        {"address": SALON, "name": "Madoka salon", "device_id": "dev_salon"},
+    ]
+
+
+def test_a_slot_named_through_a_wifi_mac_is_not_named_at_all(monkeypatch):
+    """The asymmetry the peripheral index exists for, applied to naming.
+
+    A network MAC is not evidence about a BLE peripheral. If it were allowed
+    to name one, an allocated BLE address colliding with some device's Wi-Fi
+    MAC would be labelled with that device's name -- a confident lie, which is
+    worse here than the raw MAC the card would otherwise show.
+    """
+    c = _saturated_proxy_coordinator(
+        monkeypatch,
+        devices=[
+            _FakeDevice(
+                "dev_router",
+                connections={(coordinator_module.dr.CONNECTION_NETWORK_MAC, UNKNOWN)},
+                name="Some router",
+            )
+        ],
+        entries_by_device={},
+        states={},
+    )
+    named = c._snapshot().proxies[0].allocated_devices
+    assert named[0] == {"address": UNKNOWN, "name": "", "device_id": None}
+
+
+def test_naming_walks_the_device_registry_once_per_snapshot(monkeypatch):
+    """Naming is one more lookup in an index that is already built, not a
+    registry scan per allocated address."""
+    c = _saturated_proxy_coordinator(
+        monkeypatch,
+        devices=[
+            _FakeDevice("dev_salon", identifiers={("daikin_madoka", SALON)}, name="Salon")
+        ],
+        entries_by_device={},
+        states={},
+    )
+    fetched = coordinator_module.dr.async_get
+    calls = []
+
+    def _counted(hass):
+        calls.append(hass)
+        return fetched(hass)
+
+    monkeypatch.setattr(coordinator_module.dr, "async_get", _counted)
+    c._snapshot()
+    assert len(calls) == 1
+
+
+def test_a_broken_registry_costs_the_names_and_nothing_else(monkeypatch):
+    """`_build_device_index` fails toward empty indexes. Every slot then reads
+    as unresolved -- honest, since nothing could be looked up -- and the slot
+    counts, which come from habluetooth, are untouched."""
+    c = _saturated_proxy_coordinator(monkeypatch, devices=[], entries_by_device={}, states={})
+    c._build_device_index = lambda: DeviceIndex({}, {})
+
+    proxy = c._snapshot().proxies[0]
+    assert proxy.used == 2
+    assert proxy.allocated == [UNKNOWN, SALON]
+    assert [e["name"] for e in proxy.allocated_devices] == ["", ""]

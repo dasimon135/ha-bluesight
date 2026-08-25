@@ -26,6 +26,11 @@ under plain pytest.
   other half: on current firmware the scanner source is the ESP32's
   *Bluetooth* MAC, which appears in no device-registry connection at all.
 
+Both indexes come back with a companion ``names`` map -- the display name of
+every device either one reached -- because the caller that asks "which device
+is this?" is usually about to ask "what is it called?", and the registry has
+already been walked.
+
 The asymmetry is safe in the direction it is applied. A wrong proxy match
 costs nothing: the reader looks for three specific sensor names on that device
 and finds none, so the proxy reports no signal, which is what it would have
@@ -36,7 +41,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .model import normalize_address
@@ -56,6 +61,23 @@ def looks_like_mac(value: object) -> bool:
     )
 
 
+def display_name(device: Any) -> str:
+    """The name Home Assistant shows for ``device``, or ``""`` if it has none.
+
+    ``name_by_user`` is what the user renamed the device to and is what they
+    see everywhere else in Home Assistant, so it wins over the integration's
+    own ``name``. Read with ``getattr`` for the same reason the rest of this
+    module reads registry entries duck-typed, and because the tests build
+    registry stand-ins that carry only what they are about.
+
+    A device really can have no name; that is not the same fact as an address
+    the registry cannot account for at all, and the two must stay
+    distinguishable downstream (see :class:`.model.DeviceRef`).
+    """
+    name = getattr(device, "name_by_user", None) or getattr(device, "name", None)
+    return str(name).strip() if name else ""
+
+
 @dataclass(frozen=True, slots=True)
 class DeviceIndex:
     """The two lookups the coordinator needs, built from one registry scan."""
@@ -68,6 +90,16 @@ class DeviceIndex:
     #: The *fallback* half of proxy resolution; :func:`build_proxy_index`
     #: layers Home Assistant's own scanner record on top.
     proxies: dict[str, str]
+    #: device_id -> display name, for the devices that entered either index
+    #: above and no others (a real registry holds hundreds, and this is rebuilt
+    #: every snapshot). Keyed by id rather than by address because one device
+    #: can be reachable through both an identifier and a connection.
+    #:
+    #: Naming is a *display* concern and cannot fabricate an incident, but it
+    #: is fed from the peripheral index all the same: a name is a claim about
+    #: which device holds a slot, and answering it from a Wi-Fi MAC would put a
+    #: confident wrong name on a BLE address -- worse than the raw MAC.
+    names: dict[str, str] = field(default_factory=dict)
 
     @property
     def managed_addresses(self) -> set[str]:
@@ -106,7 +138,9 @@ def build_device_index(
 
     Three passes rather than one loop with three tests, and one loop rather
     than three calls: this runs on every snapshot, so the registry is walked
-    once and both answers come back together.
+    once and both answers come back together. A fourth pass then names the
+    devices an index reached, for the same reason: the caller needs the names
+    on the same snapshot and must not walk the registry again to get them.
     """
     devices = list(devices)
     peripherals: dict[str, str] = {}
@@ -130,7 +164,16 @@ def build_device_index(
                 # peripheral, and letting it speak for one is how a healthy
                 # device gets reported as a ghost.
                 proxies[normalize_address(conn[1])] = device.id
-    return DeviceIndex(peripherals=peripherals, proxies=proxies)
+    # A fourth pass, over the devices an index actually reached. Names are only
+    # ever asked for by device id, so naming the whole registry would be work
+    # thrown away on every snapshot.
+    indexed = set(peripherals.values()) | set(proxies.values())
+    names = {
+        device.id: display_name(device)
+        for device in devices
+        if device.id in indexed
+    }
+    return DeviceIndex(peripherals=peripherals, proxies=proxies, names=names)
 
 
 def build_proxy_index(

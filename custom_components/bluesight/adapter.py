@@ -12,7 +12,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from .model import ProxyHealth, ProxySlots, normalize_address
+from .model import DeviceRef, ProxyHealth, ProxySlots, normalize_address
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -28,21 +28,77 @@ def get_manager() -> Any:
     return _gm()
 
 
+def _resolve_devices(
+    allocated: list[str], device_for: Callable[[str], DeviceRef | None] | None
+) -> dict[str, DeviceRef]:
+    """Ask ``device_for`` who holds each allocated address.
+
+    The resolver is handed the **canonical** spelling, because the thing on the
+    other end of it is the device-registry index, which is keyed by
+    :func:`normalize_address`. Passing habluetooth's raw string instead would
+    resolve nothing, silently, for every device -- and the resulting card would
+    look like a display bug rather than a mismatch between two subsystems'
+    idea of an address. The same canonical key is what
+    :attr:`ProxySlots.allocated_devices` looks the answers back up by.
+
+    One lookup per distinct address, however many slots it holds.
+
+    Any exception from the resolver costs that one name and nothing else. The
+    breadth is deliberate: this runs inside the snapshot every entity the
+    integration owns is built from, and a friendly name is not worth blanking
+    the slot counts, the incidents and the proxy health for. Debug, not warn --
+    the availability path already warns loudly when the same registry breaks
+    under it, and that failure actually changes a verdict.
+    """
+    devices: dict[str, DeviceRef] = {}
+    if device_for is None:
+        return devices
+    for address in dict.fromkeys(normalize_address(a) for a in allocated):
+        try:
+            ref = device_for(address)
+        # Broad on purpose; see the docstring. A name is never worth a blank
+        # snapshot, so nothing the resolver can raise may escape here.
+        except Exception:
+            _LOGGER.debug(
+                "Could not resolve a device name for %s; showing the raw "
+                "address instead",
+                address,
+                exc_info=True,
+            )
+            continue
+        if ref is not None:
+            devices[address] = ref
+    return devices
+
+
 def current_proxy_slots(
-    manager: Any, name_for: Callable[[str], str]
+    manager: Any,
+    name_for: Callable[[str], str],
+    device_for: Callable[[str], DeviceRef | None] | None = None,
 ) -> list[ProxySlots]:
-    """Snapshot current per-proxy slot allocations as ProxySlots."""
+    """Snapshot current per-proxy slot allocations as ProxySlots.
+
+    ``name_for`` names the **proxy**; ``device_for`` names the **devices
+    holding its slots**, and is injected the same way and for the same reason:
+    both answers come from Home Assistant, and this module is the only one
+    coupled to habluetooth. A caller that wants slot counts alone may omit it,
+    and every allocated address then reads as unresolved.
+    """
     allocs = manager.async_current_allocations() or []
-    return [
-        ProxySlots(
-            normalize_address(a.source),
-            name_for(a.source),
-            a.slots,
-            a.free,
-            list(a.allocated),
+    proxies: list[ProxySlots] = []
+    for a in allocs:
+        allocated = list(a.allocated)
+        proxies.append(
+            ProxySlots(
+                normalize_address(a.source),
+                name_for(a.source),
+                a.slots,
+                a.free,
+                allocated,
+                _resolve_devices(allocated, device_for),
+            )
         )
-        for a in allocs
-    ]
+    return proxies
 
 
 class SlotAdapter:

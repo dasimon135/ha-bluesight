@@ -111,7 +111,16 @@ class SlotsUsedSensor(_BaseSlotSensor):
         return {
             "total": proxy.slots,
             "free": proxy.free,
+            # Published since 0.1 and read by user automations: raw address
+            # strings, in habluetooth's order and spelling. Frozen by contract
+            # -- `allocated_devices` was added beside it rather than replacing
+            # it for exactly this reason.
             "allocated": list(proxy.allocated),
+            # The same slots, named. Derived from `allocated` in the model, so
+            # the two can never disagree about which slots are held. Always
+            # present, `[]` on an idle proxy: an attribute that comes and goes
+            # is a second shape for templates to handle.
+            "allocated_devices": proxy.allocated_devices,
             "source": proxy.source,
         }
 
