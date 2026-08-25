@@ -173,3 +173,79 @@ def detect_bond_lost(
                 detail_params={"count": str(count), "proxy": name},
                 evidence="smp"))
     return out
+
+
+
+def detect_idle_slots(
+    telemetry: list[ProxyTelemetry],
+    managed_addresses: set[str],
+    threshold_s: float,
+    names: dict[str, str],
+) -> list[Incident]:
+    """A slot held with no GATT traffic, for a device Home Assistant cannot judge.
+
+    ``detect_ghost_slots`` decides from entity availability, which only works
+    for devices in the registry; an unmanaged peripheral is conservatively
+    treated as alive there (see :func:`availability.is_device_alive`, which
+    answers "alive" for a device it cannot find). The firmware sees the
+    connection itself, so it can measure the silence directly -- the one way to
+    judge a device Home Assistant knows nothing about.
+
+    ``managed_addresses`` must be the addresses Home Assistant can *judge* --
+    those resolving to a device in the registry -- and not merely the ones it
+    has seen allocated. The coordinator keys its availability map by every
+    allocated address, unmanaged ones included (mapped to "alive" by the rule
+    above); handing that map's keys in here would stand this detector down for
+    exactly the devices it exists to cover.
+
+    Managed addresses are skipped for a harder reason than tidiness: the
+    entity-based verdict is the more semantic signal, and both detectors raise
+    ``GHOST_SLOT`` for the same address from the same proxy, so a slot judged
+    by both would produce two incidents identical under ``Incident.key`` --
+    one fault drawn twice on the card, and one clearance counted as two by the
+    policy layer.
+
+    ``threshold_s`` is a duration, and strictly exceeding it is the incident,
+    as in :func:`detect_stalled_proxies`. It has to sit above the slowest
+    legitimate quiet period on the network: a device that only notifies on
+    change can hold a healthy connection in silence for a long time, and that
+    -- not a stuck slot -- is the false positive this threshold exists to
+    exclude. The caller supplies a validated value; the options schema bounds
+    every other duration BlueSight takes, and this one must be bounded too.
+
+    Addresses are canonicalised on both sides of the ``managed_addresses``
+    test, as everywhere else addresses are correlated. The parser already
+    normalises, so this guards the seam rather than the wire -- but the two
+    sides come from different places (the device registry and the firmware),
+    and reading a managed device as unmanaged would flag a device Home
+    Assistant has judged alive, for every such device at once.
+    """
+    managed = {normalize_address(address) for address in managed_addresses}
+    out: list[Incident] = []
+    for tel in telemetry:
+        if tel.slot_idle_seconds is None:
+            continue
+        name = names.get(tel.source, tel.source)
+        # Merged on the normalised key rather than iterated directly, so two
+        # spellings of one address cannot yield two incidents sharing a key.
+        # The *lowest* reading wins, where `detect_bond_lost` keeps the
+        # highest: an SMP counter only climbs, so the larger reading there is
+        # the later one, but an idle timer resets to zero on traffic, so the
+        # smaller reading here is the fresher observation -- and the one that
+        # says the slot is alive.
+        idle_seconds: dict[str, float] = {}
+        for raw_address, idle in tel.slot_idle_seconds.items():
+            address = normalize_address(raw_address)
+            previous = idle_seconds.get(address)
+            idle_seconds[address] = idle if previous is None else min(previous, idle)
+        for address, idle in sorted(idle_seconds.items()):
+            if address in managed or idle <= threshold_s:
+                continue
+            out.append(Incident(
+                IncidentKind.GHOST_SLOT, address, [tel.source],
+                detail_key="incident.ghost_slot.idle_detail",
+                # int() truncates, as in `detect_stalled_proxies`: the same
+                # kind of reading, reported the same way.
+                detail_params={"proxy": name, "seconds": str(int(idle))},
+                evidence="smp"))
+    return out

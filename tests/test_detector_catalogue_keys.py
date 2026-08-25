@@ -23,6 +23,7 @@ from custom_components.bluesight.detector import (
     detect_bond_lost,
     detect_deadlocks,
     detect_ghost_slots,
+    detect_idle_slots,
     detect_offline_proxies,
     detect_reboot_storm,
     detect_stalled_proxies,
@@ -72,7 +73,7 @@ def _window(window_s: float, threshold: int, address: str, hits: int) -> Failure
 
 
 def _every_detector_incident() -> list[Incident]:
-    """One incident from each of the seven detectors.
+    """One incident from each of the eight detectors.
 
     Kept as a single list rather than a fixture per detector: the point is
     coverage of *all* of them, and a detector added later must be added here or
@@ -85,6 +86,12 @@ def _every_detector_incident() -> list[Incident]:
         ]),
         *detect_ghost_slots(
             [ProxySlots("AA", "Salon", 2, 1, ["11:22"])], {"11:22": False}
+        ),
+        *detect_idle_slots(
+            [ProxyTelemetry("AA", slot_idle_seconds={"11:22": 900.0})],
+            set(),
+            300.0,
+            {"AA": "Salon"},
         ),
         *detect_offline_proxies([], {"BB"}, {"BB": 999.0}, grace_s=90.0),
         *detect_stalled_proxies(
@@ -103,7 +110,14 @@ INCIDENTS = _every_detector_incident()
 
 
 def _ids() -> list[str]:
-    return [inc.kind.value for inc in INCIDENTS]
+    """One ID per incident, taken from the detail key rather than the kind.
+
+    Two detectors now raise ``GHOST_SLOT`` -- the entity-based one and the
+    idle-slot one, which read different evidence about the same kind of fault
+    -- so the kind alone no longer names a row here, and the key is what a
+    failure has to point at anyway.
+    """
+    return [inc.detail_key or inc.kind.value for inc in INCIDENTS]
 
 
 #: Kinds that exist in the model but that no detector raises yet.

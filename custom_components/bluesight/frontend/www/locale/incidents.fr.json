@@ -1,6 +1,7 @@
 {
   "incident.deadlock.detail": "Retenu simultanément sur {count} proxys",
   "incident.ghost_slot.detail": "Slot retenu sur {proxy} alors que l'appareil est indisponible",
+  "incident.ghost_slot.idle_detail": "Slot retenu sur {proxy} sans trafic GATT depuis {seconds}s (appareil non géré par Home Assistant)",
   "incident.storm.detail.one": "{count} échec en {seconds}s",
   "incident.storm.detail.other": "{count} échecs en {seconds}s",
   "incident.bond_lost.detail.one": "{count} échec d'appairage sur {proxy}, qui ne détient aucun bond pour cet appareil — réappairez via {proxy}",
