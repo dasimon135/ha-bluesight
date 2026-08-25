@@ -19,6 +19,7 @@ from homeassistant.loader import async_get_integration
 
 from .const import (
     ATTR_SOURCE,
+    DEFAULT_IDLE_SLOT_THRESHOLD_S,
     DEFAULT_OFFLINE_GRACE_S,
     DEFAULT_POLL_INTERVAL_S,
     DEFAULT_REBOOT_THRESHOLD,
@@ -69,6 +70,9 @@ async def async_setup_entry(
         reboot_window_s=opts.get("reboot_window_s", DEFAULT_REBOOT_WINDOW_S),
         reboot_threshold=opts.get("reboot_threshold", DEFAULT_REBOOT_THRESHOLD),
         offline_grace_s=opts.get("offline_grace_s", DEFAULT_OFFLINE_GRACE_S),
+        idle_threshold_s=opts.get(
+            "idle_threshold_s", DEFAULT_IDLE_SLOT_THRESHOLD_S
+        ),
         catalogue=catalogue,
     )
     await coordinator.async_setup()

@@ -9,7 +9,6 @@ Assistant. Keep it deliberately minimal.
 from __future__ import annotations
 
 import logging
-import re
 import time
 from dataclasses import replace
 from datetime import timedelta
@@ -29,6 +28,7 @@ from .adapter import (
 )
 from .availability import is_device_alive
 from .const import (
+    DEFAULT_IDLE_SLOT_THRESHOLD_S,
     DEFAULT_OFFLINE_GRACE_S,
     DEFAULT_REBOOT_THRESHOLD,
     DEFAULT_REBOOT_WINDOW_S,
@@ -36,9 +36,12 @@ from .const import (
     DOMAIN,
 )
 from .coordinator_data import BlueSightData, build_triage_data
+from .device_index import DeviceIndex, build_device_index, build_proxy_index
 from .model import normalize_address
 from .rendering import Catalogue
 from .storm_signal import ReleaseTracker
+from .telemetry import CounterDeltas
+from .telemetry_reader import read_fleet_telemetry
 from .window import FailureWindow
 
 _LOGGER = logging.getLogger(__name__)
@@ -50,19 +53,17 @@ _LOGGER = logging.getLogger(__name__)
 # is allowed to surface instead of being silently swallowed.
 _AVAILABILITY_ERRORS = (RuntimeError, KeyError, AttributeError, TypeError)
 
-# A canonicalized BLE MAC: six colon-separated hex octets. Used to keep the
-# MAC->device index clean of non-MAC identifiers (integrations put all sorts
-# of strings in the second identifier element).
-_MAC_RE = re.compile(r"^[0-9A-F]{2}(:[0-9A-F]{2}){5}$")
-
-
-def _looks_like_mac(value: str) -> bool:
-    """True if ``value`` is a plausible colon-separated MAC address."""
-    return (
-        isinstance(value, str)
-        and ":" in value
-        and _MAC_RE.match(normalize_address(value)) is not None
-    )
+# Home Assistant's own record of which device provides which Bluetooth scanner.
+# The `bluetooth` integration creates one config entry per external scanner and
+# stores the scanner's `source` string alongside the `source_device_id` of the
+# device providing it. Literals rather than an import: these live in
+# `homeassistant.components.bluetooth.const`, which is that integration's
+# private module, and a missing key here costs nothing -- the proxy simply
+# falls through to MAC correlation. `bluetooth` is already a manifest
+# dependency, so the entries are there to read.
+_BLUETOOTH_DOMAIN = "bluetooth"
+_CONF_SOURCE = "source"
+_CONF_SOURCE_DEVICE_ID = "source_device_id"
 
 
 class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
@@ -90,6 +91,7 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         reboot_window_s: float = DEFAULT_REBOOT_WINDOW_S,
         reboot_threshold: int = DEFAULT_REBOOT_THRESHOLD,
         offline_grace_s: float = DEFAULT_OFFLINE_GRACE_S,
+        idle_threshold_s: float = DEFAULT_IDLE_SLOT_THRESHOLD_S,
         catalogue: Catalogue | None = None,
     ) -> None:
         super().__init__(
@@ -130,6 +132,16 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         # window; see :mod:`.storm_signal` for why a release, not an
         # availability flap, is the observable signal.
         self._release_tracker = ReleaseTracker()
+        # ESPHome proxy telemetry (v1.5). The deltas object is what makes the
+        # firmware's monotonic SMP counters usable: it holds one baseline per
+        # proxy across snapshots, so a counter that restarts reads as a reboot
+        # rather than as a burst of failures. It therefore has to live as long
+        # as the coordinator, and is pruned only by ``forget_proxy``.
+        self._counter_deltas = CounterDeltas()
+        # How long a slot may sit without GATT traffic before the firmware's
+        # reading is treated as a stuck slot. Bounded by the options schema;
+        # ``detect_idle_slots`` deliberately carries no internal guard.
+        self._idle_threshold_s = idle_threshold_s
         # Set once if the availability lookup ever fails, so a broken signal
         # is observable instead of masquerading as "all devices present".
         self._availability_degraded = False
@@ -239,7 +251,8 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         # index and grab the entity registry once per snapshot and reuse them
         # for every allocated address (avoid O(devices) per address).
         ent_reg = er.async_get(self.hass)
-        mac_index = self._build_mac_index()
+        index = self._build_device_index()
+        mac_index = index.peripherals
         # Memoized per snapshot: the release tracker asks about addresses that
         # are no longer allocated, so the answer set is wider than `proxies`.
         verdicts: dict[str, bool] = {}
@@ -258,6 +271,26 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         for address in self._release_tracker.update(allocated, alive):
             self._window.record(address)
 
+        # Proxy telemetry, read off each proxy's own Home Assistant device.
+        # Sources come from the health snapshot first (every registered
+        # scanner, the superset) and then from the allocation snapshot, so a
+        # proxy that somehow reports allocations without a scanner entry is
+        # still read; ``read_fleet_telemetry`` canonicalises and de-duplicates.
+        # Both registry handles are hoisted: ``ent_reg`` and ``index`` are
+        # built once per snapshot above and merely closed over here, so the
+        # per-proxy work is one dict lookup plus one entity-registry query.
+        proxy_index = build_proxy_index(self._scanner_device_records(), index.proxies)
+        telemetry = read_fleet_telemetry(
+            [h.source for h in health] + [p.source for p in proxies],
+            proxy_index.get,
+            lambda device_id: er.async_entries_for_device(
+                ent_reg, device_id, include_disabled_entities=False
+            ),
+            lambda entity_id: (
+                s.state if (s := self.hass.states.get(entity_id)) else None
+            ),
+        )
+
         return build_triage_data(
             proxies,
             availability,
@@ -270,6 +303,23 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
             offline_grace_s=self._offline_grace_s,
             availability_degraded=self._availability_degraded,
             catalogue=self.catalogue,
+            telemetry=telemetry,
+            counter_deltas=self._counter_deltas,
+            idle_threshold_s=self._idle_threshold_s,
+            # A copy: `_names` keeps growing across snapshots and the detectors
+            # must not be handed a mapping that mutates under them.
+            proxy_names=dict(self._names),
+            # Every address Home Assistant can resolve to a device -- NOT the
+            # keys of `availability`, which cover every *allocated* address with
+            # the unmanaged ones biased to "alive"; passing those would stand
+            # `detect_idle_slots` down for exactly the devices it exists to
+            # cover. Nor the allocated subset of the index: the firmware can
+            # report an idle time for an address habluetooth does not list as
+            # allocated (a stale text sensor between publishes is the ordinary
+            # cause), and calling such an address unmanaged on that basis would
+            # flag a device Home Assistant has judged alive. See
+            # `DeviceIndex.managed_addresses`.
+            managed_addresses=index.managed_addresses,
         )
 
     def forget_proxy(self, source: str) -> bool:
@@ -281,6 +331,10 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         """
         norm = normalize_address(source)
         self._names.pop(norm, None)
+        # A retired proxy must not keep a counter baseline. A replacement that
+        # reuses the MAC would otherwise inherit a stranger's counter and
+        # replay the whole difference as a burst of measured failures.
+        self._counter_deltas.forget(norm)
         return self._last_online.pop(norm, None) is not None
 
     def _name_for(self, source: str) -> str:
@@ -294,44 +348,59 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         """
         return self._names.get(normalize_address(source), source)
 
-    def _build_mac_index(self) -> dict[str, str]:
-        """Build a ``normalized-MAC -> device_id`` index from the device
-        registry, scanning both ``connections`` and ``identifiers``.
+    def _build_device_index(self) -> DeviceIndex:
+        """Index the device registry by MAC; see :mod:`.device_index`.
 
-        A BLE device's MAC may live in ``connections`` as
-        ``(CONNECTION_BLUETOOTH, mac)`` (some integrations) or in
-        ``identifiers`` as ``(domain, mac)`` (e.g. daikin_madoka). Only
-        Bluetooth connections whose value is MAC-shaped are indexed: a device's
-        non-Bluetooth connection (e.g. its Wi-Fi ``CONNECTION_NETWORK_MAC``)
-        must never enter the index, or an allocated BLE address could collide
-        with some dead device's network MAC and be falsely flagged. Identifier
-        values are likewise only mapped when MAC-shaped, to avoid polluting the
-        index with the many non-MAC identifiers integrations register.
+        Only the Home Assistant half of the job lives here: fetching the
+        devices and naming the two connection types. The rule itself is pure
+        and unit-tested without Home Assistant, which matters because it is
+        where two subsystems' idea of "the address of a thing" must agree --
+        habluetooth's peripheral addresses AND its scanner sources, the latter
+        being the ESPHome device's *network* MAC.
 
-        Built once per snapshot and reused for every allocated address. On a
-        registry-lookup failure we fail toward an empty index (every device
-        reads as alive) and flag the signal as degraded, matching the rest of
-        the availability path.
+        Built once per snapshot and reused for every allocated address and
+        every proxy. On a registry-lookup failure we fail toward empty indexes
+        -- every device reads as alive, and no proxy resolves, so telemetry is
+        simply absent for that snapshot -- and flag the signal as degraded,
+        matching the rest of the availability path.
         """
         try:
-            index: dict[str, str] = {}
-            devices = list(dr.async_get(self.hass).devices.values())
-            # Two passes, weakest evidence first, so the result never depends on
-            # registry iteration order: a MAC-shaped identifier is a convention,
-            # an explicit CONNECTION_BLUETOOTH connection is a declaration, and
-            # the declaration must win when both name the same address.
-            for device in devices:
-                for ident in device.identifiers:
-                    if _looks_like_mac(ident[1]):
-                        index.setdefault(normalize_address(ident[1]), device.id)
-            for device in devices:
-                for conn in device.connections:
-                    if conn[0] == dr.CONNECTION_BLUETOOTH and _looks_like_mac(conn[1]):
-                        index[normalize_address(conn[1])] = device.id
-            return index
+            return build_device_index(
+                dr.async_get(self.hass).devices.values(),
+                bluetooth_connection=dr.CONNECTION_BLUETOOTH,
+                network_connection=dr.CONNECTION_NETWORK_MAC,
+            )
         except _AVAILABILITY_ERRORS:
             self._flag_degraded("<device index build>")
-            return {}
+            return DeviceIndex(peripherals={}, proxies={})
+
+    def _scanner_device_records(self) -> list[tuple[str | None, str | None]]:
+        """``(source, device_id)`` for every Bluetooth scanner config entry.
+
+        This is how a proxy is resolved to its Home Assistant device: an
+        identity Home Assistant already records, rather than a MAC correlation
+        that a current ESPHome proxy would lose (see
+        :func:`.device_index.build_proxy_index`). Read once per snapshot.
+
+        A failure here is **not** flagged as a degraded availability signal: it
+        costs telemetry, not ghost detection, and the MAC fallback still
+        answers for older proxies. Debug-logged and shrugged off.
+        """
+        try:
+            return [
+                (
+                    entry.data.get(_CONF_SOURCE),
+                    entry.data.get(_CONF_SOURCE_DEVICE_ID),
+                )
+                for entry in self.hass.config_entries.async_entries(_BLUETOOTH_DOMAIN)
+            ]
+        except _AVAILABILITY_ERRORS:
+            _LOGGER.debug(
+                "Could not read the Bluetooth scanner config entries; falling "
+                "back to MAC correlation for proxy telemetry",
+                exc_info=True,
+            )
+            return []
 
     def _device_is_alive(
         self, address: str, mac_index: dict[str, str], ent_reg: er.EntityRegistry

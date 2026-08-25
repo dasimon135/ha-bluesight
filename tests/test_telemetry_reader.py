@@ -13,6 +13,7 @@ from custom_components.bluesight.telemetry_reader import (
     BONDS_NAME,
     SLOTS_NAME,
     SMP_NAME,
+    read_fleet_telemetry,
     read_proxy_telemetry,
 )
 
@@ -244,3 +245,84 @@ def test_a_lower_case_source_still_names_the_proxy_in_an_incident():
     [incident] = detect_bond_lost([tel], {ADDR: "Kitchen proxy"})
     assert incident.detail_params["proxy"] == "Kitchen proxy"
     assert incident.sources == [ADDR]
+
+
+# --------------------------------------------------------------------------
+# The fleet-level read
+# --------------------------------------------------------------------------
+
+PROXY_A = "D8:3B:DA:11:22:33"
+PROXY_B = "D8:3B:DA:44:55:66"
+
+
+def _fleet(entries_by_device, states):
+    """Build the three lookups read_fleet_telemetry takes, over plain dicts."""
+    return (
+        lambda device_id: entries_by_device.get(device_id, []),
+        lambda entity_id: states.get(entity_id),
+    )
+
+
+def test_a_proxy_without_the_component_is_absent_from_the_fleet():
+    """`BlueSightData.telemetry` means "the proxies running the component".
+
+    An all-None entry would make the list say something it does not know, and
+    would hand `CounterDeltas` a reading for a proxy that never reported.
+    """
+    entries, states = _fleet({"dev_a": [_Entry("sensor.uptime", "Uptime")]}, {})
+    assert read_fleet_telemetry([PROXY_A], {PROXY_A: "dev_a"}.get, entries, states) == []
+
+
+def test_a_proxy_with_no_home_assistant_device_is_skipped():
+    """A local adapter, or a scanner whose integration registers no device."""
+    entries, states = _fleet({}, {})
+    assert read_fleet_telemetry([PROXY_A], {}.get, entries, states) == []
+
+
+def test_a_reporting_proxy_comes_back_with_its_reading():
+    entries, states = _fleet(
+        {"dev_a": [_Entry("sensor.smp", SMP_NAME)]}, {"sensor.smp": "d0cf130ec92a:4"}
+    )
+    [tel] = read_fleet_telemetry([PROXY_A], {PROXY_A: "dev_a"}.get, entries, states)
+    assert (tel.source, tel.smp_failures) == (PROXY_A, {ADDR: 4})
+
+
+def test_sources_are_canonicalised_and_de_duplicated_preserving_order():
+    """The caller feeds two overlapping lists (health, then allocations).
+
+    Reading one proxy twice in a snapshot would hand `CounterDeltas` the same
+    counter twice: the second read books a delta of zero over a baseline the
+    first read has just advanced, so a genuine burst is silently halved. Order
+    is preserved because it becomes the incident order.
+    """
+    entries, states = _fleet(
+        {
+            "dev_a": [_Entry("sensor.a", SMP_NAME)],
+            "dev_b": [_Entry("sensor.b", SMP_NAME)],
+        },
+        {"sensor.a": "d0cf130ec92a:1", "sensor.b": "d0cf130ec92a:2"},
+    )
+    index = {PROXY_A: "dev_a", PROXY_B: "dev_b"}
+    fleet = read_fleet_telemetry(
+        # health order, then allocation order, with the case habluetooth is
+        # not guaranteed to be consistent about.
+        [PROXY_B, PROXY_A, PROXY_B.lower(), PROXY_A],
+        index.get,
+        entries,
+        states,
+    )
+    assert [t.source for t in fleet] == [PROXY_B, PROXY_A]
+
+
+def test_a_rebooting_proxy_drops_out_rather_than_reporting_zeroes():
+    """Its ESPHome entities go `unavailable`, which parses to no signal.
+
+    Dropping out is right: `CounterDeltas.update` keeps a baseline it is not
+    told about, so the proxy resumes where it left off instead of replaying
+    its whole counter on return.
+    """
+    entries, states = _fleet(
+        {"dev_a": [_Entry("sensor.smp", SMP_NAME), _Entry("sensor.b", BONDS_NAME)]},
+        {"sensor.smp": "unavailable", "sensor.b": "unavailable"},
+    )
+    assert read_fleet_telemetry([PROXY_A], {PROXY_A: "dev_a"}.get, entries, states) == []

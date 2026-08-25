@@ -119,9 +119,11 @@ def _is_total_rejection(parsed: set | dict, fields: list[str], raw: str | None) 
     if not fields or parsed:
         return False
     # NOTE: the coordinator re-reads every poll, so a permanently mismatched
-    # firmware warns on every cycle. Should that prove noisy in the field,
-    # dedupe in the reader module that owns the polling -- not here, where
-    # per-call state would make a pure parser stateful.
+    # firmware warns on every cycle. Task 8 weighed throttling this and chose
+    # not to; the reasoning is recorded in `telemetry_reader.read_proxy_telemetry`
+    # (short version: the fix is a reported per-signal rejection flag with a
+    # state surface, not a dedupe, and neither this pure parser nor the pure
+    # reader may hold the state a dedupe needs).
     _LOGGER.warning(
         "BlueSight telemetry: discarding a reading whose %d field(s) were all "
         "unreadable (%r). Reporting it as absent rather than empty: an empty "

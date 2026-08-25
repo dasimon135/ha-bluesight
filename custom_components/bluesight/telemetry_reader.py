@@ -15,7 +15,7 @@ query and a state query. There is no write surface here to misuse.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 from .model import normalize_address
@@ -147,23 +147,87 @@ def read_proxy_telemetry(
                 name,
             )
 
-    # NOTE (Task 8): `telemetry._is_total_rejection` warns on every parse, so a
-    # permanently format-mismatched firmware warns once per poll cycle, forever.
-    # It is deliberately not throttled here: this function is pure, and the only
-    # state it could hold is module-level, which would survive a config-entry
-    # reload and would never be pruned when `forget_proxy` retires a proxy. The
-    # coordinator owns exactly that lifecycle (`_names`, `_last_online`, both
-    # popped in `forget_proxy`) and already has the house pattern for this in
-    # `_flag_degraded`: warn once, set a flag, surface the flag as state instead
-    # of repeating it in the log. The missing piece is the signal -- a
+    # DECIDED (Task 8): the per-poll warning from `telemetry._is_total_rejection`
+    # is NOT throttled, here or anywhere, and this is the reasoning rather than
+    # an oversight.
+    #
+    # The house pattern (`coordinator._flag_degraded`) is "warn once, set a
+    # flag, surface the flag as state" -- and the surfacing is the load-bearing
+    # half, not the muting. A warn-once with nowhere to show the flag is a mute
+    # button on a condition that stays broken until someone reflashes, which is
+    # strictly worse than noise. Making the flag visible means a
+    # `ProxyTelemetry` field, a `BlueSightData` field, an entity attribute and
+    # a card row: a new user-facing contract, and one this milestone's later
+    # tasks are not expecting. That is a design decision, not a wiring detail,
+    # and it does not belong smuggled into the coordinator hookup.
+    #
+    # The exposure is bounded meanwhile. Total rejection means the firmware and
+    # `telemetry.py` disagree about the wire format, and the only firmware that
+    # speaks this format is the one in this repository; its hardware
+    # verification exercises exactly this parser. A third-party or
+    # badly-out-of-date build could still spam, and that is the accepted cost:
+    # loud and wrong beats quiet and wrong while the format is this young.
+    #
+    # Whoever picks this up: the missing piece is a signal, not a dedupe. A
     # `ProxyTelemetry` field reads `None` for "sensor absent" and for "sensor
-    # unparseable" alike, and the difference cannot be recovered downstream
-    # without a second copy of `telemetry._NO_SIGNAL`. So the throttle wants
-    # `telemetry.py` to *report* rejection (a per-signal flag, set where the
-    # parse happens) rather than a dedupe bolted onto this function.
+    # unparseable" alike, so neither this module nor the coordinator can tell
+    # them apart without a second copy of `telemetry._NO_SIGNAL`. Have the
+    # parsers report rejection where the parse happens; do not re-derive it out
+    # here, and do not hold module-level state in this pure module to do it.
     return ProxyTelemetry(
         source=source,
         smp_failures=_read(candidates[SMP_NAME], parse_counts),
         bonds=_read(candidates[BONDS_NAME], parse_addresses),
         slot_idle_seconds=_read(candidates[SLOTS_NAME], parse_idle_seconds),
     )
+
+
+def read_fleet_telemetry(
+    sources: Iterable[str],
+    device_id_for: Callable[[str], str | None],
+    entries_for_device: Callable[[str], list[Any]],
+    state_of: Callable[[str], str | None],
+) -> list[ProxyTelemetry]:
+    """Read every proxy's telemetry, keeping only the ones that reported.
+
+    The fleet-level half of :func:`read_proxy_telemetry`, kept here rather than
+    in the coordinator for the same reason the per-proxy half is: it is the
+    knowledge of *how* telemetry reaches Home Assistant, and it is testable
+    with three lambdas.
+
+    ``sources`` are habluetooth scanner sources, which arrive from two places
+    in the caller (the health snapshot and the allocation snapshot) and overlap
+    almost entirely. They are canonicalised and de-duplicated here, preserving
+    first-seen order: the result feeds ``Incident`` construction, and an order
+    that shifted between snapshots would reshuffle the incident list for no
+    reason. De-duplicating matters for more than tidiness -- a source read
+    twice would hand :class:`.CounterDeltas` the same counter twice in one
+    snapshot, and the second read would book a delta of zero over a baseline
+    the first read had just advanced.
+
+    A proxy with no reporting sensor is **left out** rather than included as an
+    all-``None`` entry, so ``BlueSightData.telemetry`` means what it says: the
+    proxies running the component. A rebooting proxy drops out for the same
+    reason (its entities go ``unavailable``), which is exactly right --
+    :meth:`.CounterDeltas.update` keeps a baseline it is not told about, so the
+    proxy resumes where it left off instead of replaying its whole counter.
+    """
+    out: list[ProxyTelemetry] = []
+    seen: set[str] = set()
+    for raw_source in sources:
+        source = normalize_address(raw_source)
+        if source in seen:
+            continue
+        seen.add(source)
+        device_id = device_id_for(source)
+        if device_id is None:
+            # Not a proxy Home Assistant has a device for (a local adapter, or
+            # a scanner from an integration that registers none). Nothing to
+            # read; not an error.
+            continue
+        telemetry = read_proxy_telemetry(
+            source, device_id, entries_for_device, state_of
+        )
+        if telemetry.has_signal:
+            out.append(telemetry)
+    return out
