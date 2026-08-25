@@ -19,6 +19,7 @@ from homeassistant.config_entries import (
 from homeassistant.core import callback
 
 from .const import (
+    DEFAULT_IDLE_SLOT_THRESHOLD_S,
     DEFAULT_OFFLINE_GRACE_S,
     DEFAULT_POLL_INTERVAL_S,
     DEFAULT_REBOOT_THRESHOLD,
@@ -37,6 +38,7 @@ CONF_STALLED_THRESHOLD_S = "stalled_threshold_s"
 CONF_REBOOT_WINDOW_S = "reboot_window_s"
 CONF_REBOOT_THRESHOLD = "reboot_threshold"
 CONF_OFFLINE_GRACE_S = "offline_grace_s"
+CONF_IDLE_THRESHOLD_S = "idle_threshold_s"
 
 
 def build_options_schema(options: dict[str, Any]) -> vol.Schema:
@@ -77,6 +79,23 @@ def build_options_schema(options: dict[str, Any]) -> vol.Schema:
                 CONF_OFFLINE_GRACE_S,
                 default=options.get(CONF_OFFLINE_GRACE_S, DEFAULT_OFFLINE_GRACE_S),
             ): vol.All(vol.Coerce(float), vol.Range(min=0)),
+            # Floored at one minute. `detect_idle_slots` carries no internal
+            # guard by design -- it flags every slot whose idle reading
+            # strictly exceeds this -- so an unbounded 0 would report the whole
+            # connected fleet as ghost slots. The floor sits above the routine
+            # silence of a healthy GATT link: a notify-on-change peripheral
+            # says nothing between changes, and Home Assistant's own Bluetooth
+            # stack does not consider a device stale for 60-90s either. It is
+            # also >= the 30s floor on `stalled_threshold_s`, which is the
+            # right ordering: that one measures advertisement silence, which
+            # every device breaks every few seconds, where this one measures
+            # GATT traffic, which a healthy connection may go minutes without.
+            vol.Required(
+                CONF_IDLE_THRESHOLD_S,
+                default=options.get(
+                    CONF_IDLE_THRESHOLD_S, DEFAULT_IDLE_SLOT_THRESHOLD_S
+                ),
+            ): vol.All(vol.Coerce(float), vol.Range(min=60)),
         }
     )
 
@@ -107,7 +126,13 @@ class BlueSightConfigFlow(ConfigFlow, domain=DOMAIN):
 
 class BlueSightOptionsFlow(OptionsFlow):
     """Expose the tunables: storm window/threshold, poll interval, stalled
-    threshold, reboot window/threshold, and the offline grace period.
+    threshold, reboot window/threshold, the offline grace period, and the
+    idle-slot threshold.
+
+    The SMP-measured storm reuses the storm window and threshold above rather
+    than taking a pair of its own: there is one storm concept in BlueSight,
+    whether the failures were measured by the firmware or inferred by the
+    coordinator, and one pair of knobs for it.
 
     ``config_entry`` is provided by the flow manager in current HA
     (>=2024.11); it must NOT be assigned in ``__init__``.

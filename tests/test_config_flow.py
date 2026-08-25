@@ -17,7 +17,7 @@ pytest.importorskip("pytest_homeassistant_custom_component.plugins")
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.bluesight.const import DOMAIN
+from custom_components.bluesight.const import DEFAULT_IDLE_SLOT_THRESHOLD_S, DOMAIN
 from homeassistant.config_entries import SOURCE_USER
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -77,9 +77,14 @@ async def test_second_instance_aborts(hass: HomeAssistant) -> None:
 async def test_options_flow_round_trips_tunables(hass: HomeAssistant) -> None:
     """Submitting the options form stores the tunables in options.
 
-    Only the three storm/poll fields are supplied; the three proxy-health
-    fields are ``Required`` with defaults, so voluptuous fills them in — the
-    stored options therefore carry every key, not just the submitted ones.
+    Only the storm/poll fields and the idle threshold are supplied; the
+    remaining fields are ``Required`` with defaults, so voluptuous fills them
+    in — the stored options therefore carry every key, not just the submitted
+    ones.
+
+    ``idle_threshold_s`` is submitted with a non-default value on purpose: a
+    field whose default is also its only tested value cannot tell a working
+    round-trip apart from a schema that quietly ignores what the user typed.
 
     The entry is added to hass but deliberately not set up: the round-trip
     into ``entry.options`` is a property of the options flow alone and should
@@ -98,6 +103,7 @@ async def test_options_flow_round_trips_tunables(hass: HomeAssistant) -> None:
             "storm_window_s": 120,
             "storm_threshold": 3,
             "poll_interval_s": 10,
+            "idle_threshold_s": 900,
         },
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -109,4 +115,46 @@ async def test_options_flow_round_trips_tunables(hass: HomeAssistant) -> None:
         "reboot_window_s": 600.0,
         "reboot_threshold": 3,
         "offline_grace_s": 90.0,
+        "idle_threshold_s": 900.0,
+    }
+
+
+async def test_options_flow_prefills_an_entry_predating_the_idle_threshold(
+    hass: HomeAssistant,
+) -> None:
+    """Every entry created before 0.6.0 lacks ``idle_threshold_s``.
+
+    Opening the dialog must pre-fill the new field from ``const`` — the same
+    constant ``__init__.async_setup_entry`` falls back to when the key is
+    absent — and submitting the form untouched must leave every existing
+    tunable exactly as the user had set it. A default that lived only in
+    ``__init__`` would make that Submit a silent behaviour change.
+    """
+    legacy = {
+        "storm_window_s": 120.0,
+        "storm_threshold": 3,
+        "poll_interval_s": 10,
+        "stalled_threshold_s": 240.0,
+        "reboot_window_s": 900.0,
+        "reboot_threshold": 4,
+        "offline_grace_s": 45.0,
+    }
+    entry = MockConfigEntry(domain=DOMAIN, data={}, options=legacy, unique_id=DOMAIN)
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] is FlowResultType.FORM
+    # Calling the form's schema with no input yields exactly the values Home
+    # Assistant renders into the fields.
+    prefilled = result["data_schema"]({})
+    assert prefilled["idle_threshold_s"] == DEFAULT_IDLE_SLOT_THRESHOLD_S
+    assert {key: prefilled[key] for key in legacy} == legacy
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input=prefilled
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options == {
+        **legacy,
+        "idle_threshold_s": DEFAULT_IDLE_SLOT_THRESHOLD_S,
     }
