@@ -1,3 +1,5 @@
+from dataclasses import fields
+
 from custom_components.bluesight.model import (
     Incident,
     IncidentKind,
@@ -79,3 +81,79 @@ def test_incident_identity_ignores_translation_fields():
                  detail_key="incident.something.else",
                  detail_params={"count": "9", "seconds": "300"})
     assert a.key == b.key
+
+
+def test_evidence_defaults_to_heuristic():
+    inc = Incident(IncidentKind.STORM, "AA:BB:CC:DD:EE:FF", [])
+    assert inc.evidence == "heuristic"
+
+
+def test_evidence_is_not_part_of_the_key():
+    """The same fault is the same incident however it was observed.
+
+    A proxy that gains or loses telemetry would otherwise emit a duplicate
+    alert for a storm that never stopped.
+    """
+    heuristic = Incident(IncidentKind.STORM, "AA:BB:CC:DD:EE:FF", ["p1"])
+    measured = Incident(
+        IncidentKind.STORM, "AA:BB:CC:DD:EE:FF", ["p1"], evidence="smp"
+    )
+    assert heuristic.key == measured.key
+
+
+def test_bond_lost_is_an_incident_kind():
+    assert IncidentKind.BOND_LOST.value == "bond_lost"
+
+
+def test_evidence_is_the_last_field():
+    """Field order is a contract: `Incident` is built positionally.
+
+    The plan for this change said to put `evidence` "after `detail`", which was
+    written when `detail` was the final field. Doing that now would shift
+    `detail_key` and `detail_params` one place right and silently mis-assign
+    every positional construction of them. Pinning the order makes that a test
+    failure rather than a rendering bug.
+    """
+    assert [f.name for f in fields(Incident)] == [
+        "kind",
+        "address",
+        "sources",
+        "detail",
+        "detail_key",
+        "detail_params",
+        "evidence",
+    ]
+
+
+def test_full_positional_construction_still_binds_the_translation_fields():
+    """The concrete form of the guard above, as a caller writes it."""
+    inc = Incident(
+        IncidentKind.STORM,
+        "11:22",
+        ["AA"],
+        "5 failures / 300s",
+        "incident.storm.detail",
+        {"count": "5", "seconds": "300"},
+    )
+    assert inc.detail == "5 failures / 300s"
+    assert inc.detail_key == "incident.storm.detail"
+    assert inc.detail_params == {"count": "5", "seconds": "300"}
+    assert inc.evidence == "heuristic"
+
+
+def test_evidence_does_not_leak_between_instances():
+    """A mutable default here would make one detector's evidence global."""
+    a = Incident(IncidentKind.STORM, "11:22", ["AA"], evidence="smp")
+    b = Incident(IncidentKind.STORM, "33:44", ["AA"])
+    assert a.evidence == "smp"
+    assert b.evidence == "heuristic"
+
+
+def test_bond_lost_key_is_shaped_like_every_other_kind():
+    """A new kind must not need special handling downstream.
+
+    `notification_id_for_key` and the notified-key store both treat the key as
+    an opaque slug, so the only requirement is that it is built the same way.
+    """
+    inc = Incident(IncidentKind.BOND_LOST, "11:22", ["BB", "AA"], evidence="smp")
+    assert inc.key == "bond_lost:11:22:AA,BB"

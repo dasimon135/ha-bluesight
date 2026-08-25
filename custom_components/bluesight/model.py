@@ -23,6 +23,7 @@ class IncidentKind(StrEnum):
     DEADLOCK = "deadlock"        # same address allocated on >=2 proxies (#176516)
     GHOST_SLOT = "ghost_slot"    # slot held while entity unavailable
     STORM = "storm"              # burst of connection failures
+    BOND_LOST = "bond_lost"      # pairing failing with no bond on that proxy
     PROXY_OFFLINE = "proxy_offline"
     PROXY_STALLED = "proxy_stalled"
     PROXY_REBOOT_STORM = "proxy_reboot_storm"
@@ -77,6 +78,14 @@ class Incident:
     #: real automations format notifications from it, so it is a contract.
     detail_key: str = ""
     detail_params: dict[str, str] = field(default_factory=dict)
+    #: How this incident was observed: "smp" when the ESPHome telemetry
+    #: component supplied real SMP evidence, "heuristic" when it was
+    #: inferred from slot releases. Placed last so every existing
+    #: positional construction of `detail_key`/`detail_params` keeps its
+    #: meaning. Deliberately absent from `key`: the same physical fault is
+    #: one incident however it was seen, so a proxy switching between the
+    #: two must not raise a second alert for a fault that never stopped.
+    evidence: str = "heuristic"
 
     @property
     def key(self) -> str:
@@ -86,5 +95,9 @@ class Incident:
         whose parameters shift (a rising count, a renamed proxy) is the same
         incident, and folding them in would make it look new every snapshot
         and re-alert forever.
+
+        `evidence` is excluded for the same reason: one physical fault is
+        one incident however it was observed, so a proxy that gains or
+        loses telemetry mid-fault must not re-alert.
         """
         return f"{self.kind.value}:{self.address}:{','.join(sorted(self.sources))}"

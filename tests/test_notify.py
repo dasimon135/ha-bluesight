@@ -166,6 +166,37 @@ def test_reconcile_empty_is_empty():
     assert reconcile(set(), []) == ([], [])
 
 
+def test_reconcile_does_not_re_alert_when_only_the_evidence_changes():
+    """A proxy that gains telemetry mid-storm must not raise a second alert.
+
+    This is the whole reason `Incident.evidence` is excluded from `key`. The
+    model test pins the two keys as equal; this pins what that buys, which is
+    that the notification layer sees no new incident.
+    """
+    heuristic = _storm("11:22")
+    measured = replace(heuristic, evidence="smp")
+    to_create, to_dismiss = reconcile({heuristic.key}, [measured])
+    assert to_create == []
+    assert to_dismiss == []
+
+
+def test_a_kind_with_no_wording_yet_degrades_instead_of_raising():
+    """`BOND_LOST` exists in the model before its detector and its wording.
+
+    Nothing can raise it yet, but `notification_content` runs inside the
+    coordinator's update callback, so "no catalogue entry" must stay a dull
+    generic notification rather than an exception that takes the snapshot
+    down. When the detector lands, this becomes the real wording's test.
+    """
+    title, message = notification_content(
+        Incident(kind=IncidentKind.BOND_LOST, address="11:22", sources=["AA"],
+                 evidence="smp"),
+        EN,
+    )
+    assert title == "BlueSight: incident"
+    assert "11:22" in message
+
+
 # --- notification_content -------------------------------------------------
 
 def test_content_storm_is_actionable():

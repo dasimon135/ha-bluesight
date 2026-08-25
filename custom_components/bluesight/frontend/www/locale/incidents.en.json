@@ -44,6 +44,7 @@
   "card.kind.deadlock": "Deadlock",
   "card.kind.ghost_slot": "Ghost slot",
   "card.kind.storm": "Storm",
+  "card.kind.bond_lost": "Bond lost",
   "card.kind.proxy_offline": "Proxy offline",
   "card.kind.proxy_stalled": "Proxy stalled",
   "card.kind.proxy_reboot_storm": "Proxy reboot storm",

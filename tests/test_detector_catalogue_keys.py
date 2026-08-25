@@ -100,11 +100,31 @@ def _ids() -> list[str]:
     return [inc.kind.value for inc in INCIDENTS]
 
 
+#: Kinds that exist in the model but that no detector raises yet.
+#:
+#: ``BOND_LOST`` landed with the ESPHome telemetry data model, ahead of the
+#: detector that will raise it from real SMP evidence. Exempting it is not a
+#: way to skip the catalogue work: the assertion below is an equality, so the
+#: moment a detector does emit the kind this test fails until the entry is
+#: removed -- which is exactly when its strings must be written.
+PENDING_DETECTOR = {"bond_lost"}
+
+
 def test_every_incident_kind_is_covered():
     """A new detector must be wired into this module, not silently skipped."""
     from custom_components.bluesight.model import IncidentKind
 
-    assert {inc.kind for inc in INCIDENTS} == set(IncidentKind)
+    expected = {kind for kind in IncidentKind if kind.value not in PENDING_DETECTOR}
+    assert {inc.kind for inc in INCIDENTS} == expected
+
+
+def test_the_pending_list_names_real_kinds():
+    """A typo or a renamed kind would silently exempt nothing -- or, worse,
+    leave a real kind permanently unguarded under a name nobody greps for."""
+    from custom_components.bluesight.model import IncidentKind
+
+    unknown = PENDING_DETECTOR - {kind.value for kind in IncidentKind}
+    assert not unknown, f"pending kinds that do not exist: {sorted(unknown)}"
 
 
 @pytest.mark.parametrize("incident", INCIDENTS, ids=_ids())

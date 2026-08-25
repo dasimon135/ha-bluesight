@@ -44,6 +44,7 @@
   "card.kind.deadlock": "Blocage de slot",
   "card.kind.ghost_slot": "Slot fantôme",
   "card.kind.storm": "Tempête",
+  "card.kind.bond_lost": "Appairage perdu",
   "card.kind.proxy_offline": "Proxy hors ligne",
   "card.kind.proxy_stalled": "Proxy figé",
   "card.kind.proxy_reboot_storm": "Redémarrages du proxy",
