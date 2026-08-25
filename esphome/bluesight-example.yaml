@@ -1,0 +1,118 @@
+# BlueSight ESPHome telemetry -- an ADDITION to a proxy you already have.
+#
+# This file is not a device configuration. It is the three blocks to paste into
+# the config of a Bluetooth proxy that is already flashed and working, because
+# anyone who wants this already has such a proxy and does not want to rebuild
+# it. Nothing here changes the radio, the connection count or the proxy's
+# behaviour: the component is a passive observer on the BLE event stream.
+#
+# You do not need it. BlueSight works without any firmware change; this only
+# replaces two of its heuristics with measurements:
+#
+#   * SMP (pairing) failures, which Home Assistant cannot see at all -- the
+#     reason a pairing failed is raised as a `BleakError` to whichever
+#     integration owns the connection and is never surfaced as state.
+#   * The proxy's NVS bond store, which nothing outside the firmware can read.
+#   * Per-connection idle time, which lets a ghost slot be judged for a device
+#     Home Assistant does not manage.
+#
+# ---------------------------------------------------------------------------
+# 1. Pull the component in.
+# ---------------------------------------------------------------------------
+# Pin the tag that matches your installed BlueSight version. The firmware and
+# the integration share one wire format and ship from one repository so that
+# the two cannot drift; `@main` will track the newest format instead.
+
+external_components:
+  - source: github://dasimon135/ha-bluesight@v0.6.0
+    components: [bluesight]
+
+# While developing against a branch, this is the form the rest of your configs
+# already use:
+#
+# external_components:
+#   - source: github://dasimon135/ha-bluesight@main
+#     components: [bluesight]
+#     refresh: always
+
+# ---------------------------------------------------------------------------
+# 2. Turn it on.
+# ---------------------------------------------------------------------------
+# One line. The three text sensors are named in codegen, because the Home
+# Assistant integration discovers them by name -- rename one and this proxy
+# goes dark. `bluesight:` is refused with an explanation if you try.
+#
+#   BlueSight SMP failures   "aabbccddeeff:3,001122334455:1"  (or "")
+#   BlueSight bonds          "aabbccddeeff,001122334455"      (or "")
+#   BlueSight slots          "aabbccddeeff:240.0"             (or "")
+#
+# An empty state means "reporting, nothing to report". `unknown` means the
+# proxy is not reporting -- a rebooting proxy, or a bond store that could not
+# be read. The integration treats those two very differently and never reads
+# one as the other.
+
+bluesight:
+
+# `update_interval` is a floor on staleness, not a sampling rate: an SMP
+# failure and a slot opening or closing publish the moment they happen. The
+# tick exists so an idle time keeps advancing while nothing happens. 60s is
+# the default and is almost always right.
+#
+# bluesight:
+#   update_interval: 60s
+
+# ---------------------------------------------------------------------------
+# 3. What must already be present (and almost certainly is).
+# ---------------------------------------------------------------------------
+# `esp32_ble:` is a hard requirement -- it is where the GAP and GATTC event
+# streams are fanned out from. Every Bluetooth proxy has it, usually created
+# for you by the `esphome.bluetooth-proxy` package. Do not add a second one.
+#
+# The GATT connection slots sensor additionally needs the BLE *client* stack
+# (`esp32_ble_tracker`, which `bluetooth_proxy` always pulls in). On a
+# scan-only node that sensor is not created at all, and BlueSight reads its
+# absence as "not observable" rather than as "zero connections". SMP failures
+# and bonds still work there.
+
+# ---------------------------------------------------------------------------
+# A worked example: this is `atomesalon`, unchanged except for the two blocks
+# above. Reproduced for orientation only -- do not paste this part.
+# ---------------------------------------------------------------------------
+#
+# esphome:
+#   name: atomesalon
+#   friendly_name: AtomeSalon
+#   name_add_mac_suffix: false
+#
+# packages:
+#   esphome.bluetooth-proxy: github://esphome/bluetooth-proxies/m5stack/m5stack-atom-s3.yaml@main
+#
+# external_components:                       # <-- added
+#   - source: github://dasimon135/ha-bluesight@v0.6.0
+#     components: [bluesight]
+#
+# bluesight:                                 # <-- added
+#
+# esp32_ble:
+#   io_capability: display_yes_no
+#   max_connections: 7
+#
+# ble_client:
+#   - mac_address: "1C:54:9E:90:E3:0E"       # Madoka BRC1H pairing responders
+#     ...
+#
+# On `max_connections: 7` versus the 3 slots BlueSight reports for this proxy:
+# they are different quantities and both numbers are right.
+#
+#   * `esp32_ble.max_connections` sizes the Bluedroid/controller ACL pool for
+#     the whole node -- every BLE link it can hold at once, whoever owns it.
+#     Here that is 3 proxy slots + 4 `ble_client` pairing responders = 7.
+#   * The 3 BlueSight reports is `bluetooth_proxy.connection_slots`, which
+#     defaults to 3 and is what the proxy advertises to Home Assistant as the
+#     number of devices it will connect on HA's behalf. It does not scale with
+#     `max_connections`.
+#
+# So this is not a reporting bug. To give Home Assistant more slots on this
+# proxy you would raise `bluetooth_proxy: connection_slots:` *and* raise
+# `max_connections` to cover it plus the four responders; raising
+# `max_connections` alone only enlarges the pool the responders draw from.
