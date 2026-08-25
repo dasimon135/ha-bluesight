@@ -74,3 +74,41 @@ def test_addresses_evicts_stale_and_does_not_leak():
     # A fully-expired address must not be reported and must not linger.
     assert w.addresses() == []
     assert "AA" not in w._events
+
+
+# --- provenance: which proxy measured each event ---------------------------
+
+def test_sources_names_every_proxy_that_measured_an_event():
+    w = FailureWindow(window_s=300, threshold=5, clock=lambda: 0.0)
+    w.record("11:22", "p2")
+    w.record("11:22", "p1")
+    w.record("11:22")          # inferred: no proxy can be named
+    # Sorted and de-duplicated: this list reaches `Incident.sources`, which
+    # `Incident.key` folds in, so it must not depend on record order.
+    assert w.sources("11:22") == ["p1", "p2"]
+    assert w.count("11:22") == 3
+
+
+def test_sources_is_empty_when_every_event_was_inferred():
+    w = FailureWindow(window_s=300, threshold=5, clock=lambda: 0.0)
+    w.record("11:22")
+    assert w.sources("11:22") == []
+
+
+def test_sources_expire_with_the_events_they_describe():
+    now = [0.0]
+    w = FailureWindow(window_s=300, threshold=5, clock=lambda: now[0])
+    w.record("11:22", "p1")
+    now[0] += 400
+    w.record("11:22")
+    # The measured event has aged out, so the attribution goes with it: an
+    # incident must not keep naming a proxy on evidence the window no longer
+    # holds.
+    assert w.sources("11:22") == []
+    assert w.count("11:22") == 1
+
+
+def test_sources_of_an_unknown_address_does_not_create_a_key():
+    w = FailureWindow(window_s=300, threshold=5, clock=lambda: 0.0)
+    assert w.sources("AA") == []
+    assert len(w._events) == 0

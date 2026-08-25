@@ -14,11 +14,50 @@ class FailureWindow:
         self.window_s = window_s
         self.threshold = threshold
         self._clock = clock
-        self._events: dict[str, deque[float]] = defaultdict(deque)
+        # (timestamp, source) per event. ``source`` is who *observed* it, and
+        # is None for an inferred event -- see ``record``.
+        self._events: dict[str, deque[tuple[float, str | None]]] = defaultdict(
+            deque
+        )
 
-    def record(self, address: str) -> None:
-        self._events[address].append(self._clock())
+    def record(self, address: str, source: str | None = None) -> None:
+        """Book one event, optionally naming the proxy that measured it.
+
+        ``source`` carries provenance *with the event* rather than beside it,
+        and that placement is the point. A caller holding provenance in its
+        own dict would have to rebuild that dict every snapshot from whatever
+        it learned in that snapshot -- but a burst of failures is over in
+        seconds while this window keeps it for minutes, so the attribution
+        would evaporate one snapshot after the events it describes, while the
+        incident they raise is still open. Stored here, provenance expires
+        exactly when the evidence does.
+
+        It also removes a correlation seam: the alternative is a side lookup
+        keyed by address, and the measured and inferred addresses arrive by
+        different routes, so a spelling disagreement between them would
+        silently drop the attribution rather than fail.
+
+        ``None`` means "inferred, not measured" (the release heuristic in
+        :mod:`.storm_signal`, which cannot say which proxy dropped the slot).
+        """
+        self._events[address].append((self._clock(), source))
         self._evict(address)
+
+    def sources(self, address: str) -> list[str]:
+        """Proxies that measured a still-live event for ``address``, sorted.
+
+        Empty when every live event was inferred. Sorted, and therefore
+        independent of the order proxies were polled in: this list lands in
+        ``Incident.sources``, which ``Incident.key`` folds in, so an
+        order-dependent answer would re-key the incident from snapshot to
+        snapshot and re-alert on a fault that never changed.
+        """
+        if address not in self._events:
+            return []
+        self._evict(address)
+        return sorted(
+            {src for _ts, src in self._events.get(address, ()) if src is not None}
+        )
 
     def count(self, address: str) -> int:
         # Do not auto-create a key for a never-seen address on read.
@@ -43,7 +82,7 @@ class FailureWindow:
         if q is None:
             return
         cutoff = self._clock() - self.window_s
-        while q and q[0] < cutoff:
+        while q and q[0][0] < cutoff:
             q.popleft()
         # Self-clean: drop the address entirely once its window is empty so the
         # store does not accumulate stale deques in the 24/7 coordinator loop.
