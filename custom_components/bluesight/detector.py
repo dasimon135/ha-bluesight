@@ -10,6 +10,11 @@ from .model import Incident, IncidentKind, ProxyHealth, ProxySlots, normalize_ad
 from .telemetry import ProxyTelemetry
 from .window import FailureWindow
 
+#: The allocated set of a proxy habluetooth reports nothing for. A shared
+#: frozen empty set, so the lookup default allocates nothing per snapshot and
+#: cannot be mutated by accident.
+_NO_SLOTS: frozenset[str] = frozenset()
+
 
 def detect_deadlocks(proxies: list[ProxySlots]) -> list[Incident]:
     """A single BLE peripheral can be connected to one central at a time.
@@ -178,6 +183,7 @@ def detect_bond_lost(
 
 def detect_idle_slots(
     telemetry: list[ProxyTelemetry],
+    proxies: list[ProxySlots],
     managed_addresses: set[str],
     threshold_s: float,
     names: dict[str, str],
@@ -190,6 +196,37 @@ def detect_idle_slots(
     answers "alive" for a device it cannot find). The firmware sees the
     connection itself, so it can measure the silence directly -- the one way to
     judge a device Home Assistant knows nothing about.
+
+    ``proxies`` bounds the whole verdict to Home Assistant's own slots, and it
+    is not a refinement: the firmware's slots sensor reports **every GATT
+    client connection on the node**, because it watches the controller's event
+    stream rather than ``bluetooth_proxy``'s connection table. A node that also
+    runs ``ble_client:`` links of its own therefore reports connections Home
+    Assistant never asked for, which draw on ``esp32_ble.max_connections`` and
+    not on the slots the proxy advertises. Flagging one would be a true
+    measurement under a false frame -- ``GHOST_SLOT`` says a *slot* is stuck and
+    its remedy says to restart the proxy to free it, and that restart would free
+    no slot Home Assistant was waiting on, for a link that is doing its job.
+
+    Nothing of the intended case is lost to the filter. habluetooth tracks an
+    allocation per *address*, with no notion of Home Assistant's device
+    registry (:attr:`HaBluetoothSlotAllocations.allocated` is literally
+    "addresses of connected devices"), so a connection Home Assistant opened
+    through a proxy for a device its registry cannot account for is in
+    ``allocated`` all the same -- which is exactly this detector's target case.
+    What the filter removes is the set of connections that were never Home
+    Assistant's slots to begin with.
+
+    The reverse mismatch -- habluetooth has released the allocation while the
+    firmware still reports the connection -- resolves to **silence**, which is
+    what falling outside ``allocated`` already does. Its ordinary cause is
+    staleness, not a leak: the two readings are taken from different places at
+    different instants, and a slots sensor between publishes lags a disconnect
+    Home Assistant has already booked. Even where the link really is stuck on
+    the node, the slot is one Home Assistant considers free and will hand to
+    the next device, so the ``GHOST_SLOT`` frame misdescribes it in the same way
+    a ``ble_client:`` link does. One snapshot cannot tell those two apart, and
+    the common one is routine, so the quiet answer is the honest one.
 
     ``managed_addresses`` must be the addresses Home Assistant can *judge* --
     those resolving to a device in the registry -- and not merely the ones it
@@ -213,18 +250,40 @@ def detect_idle_slots(
     exclude. The caller supplies a validated value; the options schema bounds
     every other duration BlueSight takes, and this one must be bounded too.
 
-    Addresses are canonicalised on both sides of the ``managed_addresses``
-    test, as everywhere else addresses are correlated. The parser already
-    normalises, so this guards the seam rather than the wire -- but the two
-    sides come from different places (the device registry and the firmware),
-    and reading a managed device as unmanaged would flag a device Home
-    Assistant has judged alive, for every such device at once.
+    Addresses are canonicalised on every side of both membership tests, as
+    everywhere else addresses are correlated -- and here the wire, not merely
+    the seam, depends on it. ``managed_addresses`` comes from the device
+    registry and the idle readings come from the firmware, so reading a managed
+    device as unmanaged would flag a device Home Assistant has judged alive, for
+    every such device at once. ``ProxySlots.allocated`` is worse still: it
+    carries habluetooth's **raw** spelling, because
+    :func:`adapter.current_proxy_slots` normalises ``source`` and hands the
+    address list through verbatim. Compared raw against a telemetry address that
+    :func:`telemetry.expand_compact_mac` has already canonicalised, a
+    lower-case habluetooth would put *every* address outside ``allocated`` and
+    silence this detector completely, with nothing to see but an absence.
+
+    The proxy sides are canonicalised for the same reason and not because
+    either is known to be raw: ``ProxySlots.source`` is normalised by
+    :mod:`.adapter` and ``ProxyTelemetry.source`` by :mod:`.telemetry_reader`,
+    which is two modules agreeing rather than one rule, and a mismatch there
+    would empty the allocated set for the proxy rather than for one address.
     """
     managed = {normalize_address(address) for address in managed_addresses}
+    # Union rather than last-wins, so a snapshot listing one source twice
+    # cannot drop the slots of the first entry.
+    allocated_by_source: dict[str, set[str]] = {}
+    for proxy in proxies:
+        allocated_by_source.setdefault(normalize_address(proxy.source), set()).update(
+            normalize_address(address) for address in proxy.allocated
+        )
     out: list[Incident] = []
     for tel in telemetry:
         if tel.slot_idle_seconds is None:
             continue
+        # A proxy habluetooth reports no allocations for holds no Home
+        # Assistant slots, so nothing it reports can be a stuck one.
+        allocated = allocated_by_source.get(normalize_address(tel.source), _NO_SLOTS)
         name = names.get(tel.source, tel.source)
         # Merged on the normalised key rather than iterated directly, so two
         # spellings of one address cannot yield two incidents sharing a key.
@@ -239,7 +298,7 @@ def detect_idle_slots(
             previous = idle_seconds.get(address)
             idle_seconds[address] = idle if previous is None else min(previous, idle)
         for address, idle in sorted(idle_seconds.items()):
-            if address in managed or idle <= threshold_s:
+            if address not in allocated or address in managed or idle <= threshold_s:
                 continue
             out.append(Incident(
                 IncidentKind.GHOST_SLOT, address, [tel.source],

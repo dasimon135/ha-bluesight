@@ -86,6 +86,11 @@ def build_triage_data(
     with unknown ones biased to "alive". Passing the latter would stand
     :func:`detect_idle_slots` down for exactly the unmanaged devices it exists
     to cover, and nothing would look wrong.
+
+    That detector reads ``proxies`` as well, and needs both: the firmware
+    reports every GATT connection on its node, so an idle reading is judged
+    only where habluetooth says Home Assistant holds a slot for it *and* the
+    registry cannot judge the device itself.
     """
     proxies_health = proxies_health or []
     known_sources = known_sources or set()
@@ -140,8 +145,17 @@ def build_triage_data(
             inc = replace(inc, sources=sources, evidence="smp")
         incidents.append(inc)
     incidents += detect_bond_lost(telemetry, proxy_names)
+    # `proxies` is handed in whole rather than as a pre-built per-source
+    # allocated map: it is the same plain snapshot `detect_deadlocks` and
+    # `detect_ghost_slots` already take, there is exactly one thing a caller
+    # could pass, and the canonicalisation of habluetooth's raw address list
+    # stays inside the detector where its own tests reach it. A derived map
+    # would put that step here, in the one place no detector test covers, and
+    # would be a second set-shaped argument next to `managed_addresses` --
+    # which is precisely the pair this call site has already been mixed up
+    # once for.
     incidents += detect_idle_slots(
-        telemetry, managed_addresses or set(), idle_threshold_s, proxy_names
+        telemetry, proxies, managed_addresses or set(), idle_threshold_s, proxy_names
     )
     # Proxy-health incidents
     incidents += detect_offline_proxies(

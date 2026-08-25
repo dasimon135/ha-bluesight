@@ -23,7 +23,7 @@ from custom_components.bluesight.incident_policy import (
     reconcile,
 )
 from custom_components.bluesight.locale import read_catalogues
-from custom_components.bluesight.model import Incident, IncidentKind
+from custom_components.bluesight.model import Incident, IncidentKind, ProxySlots
 from custom_components.bluesight.rendering import Catalogue
 from custom_components.bluesight.telemetry import ProxyTelemetry
 
@@ -473,6 +473,9 @@ def test_the_idle_ghost_wording_is_reached_from_the_real_detector():
     """
     [incident] = detect_idle_slots(
         [ProxyTelemetry("AA:BB:CC:DD:EE:FF", slot_idle_seconds={"11:22": 900.0})],
+        # Only a slot habluetooth allocated is judged here; the firmware also
+        # reports the node's own connections, which are not Home Assistant's.
+        [ProxySlots("AA:BB:CC:DD:EE:FF", "Salon", 3, 2, ["11:22"])],
         set(),
         300.0,
         {"AA:BB:CC:DD:EE:FF": "Salon"},

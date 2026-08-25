@@ -115,7 +115,7 @@ options change and not a reflash. Two diagnoses become possible:
 | Incident | Fires when |
 | --- | --- |
 | **Bond lost** | a device's pairing keeps failing on a proxy whose own bond store holds no entry for it. The remedy is exact, and is the whole reason this diagnosis is worth firmware: **re-pair through that specific proxy**. Bonds are stored per proxy, so pairing through whichever proxy Home Assistant happens to pick next will not fix it. |
-| **Ghost slot, by idle time** | a slot is held with no GATT traffic for longer than the idle threshold, for a device Home Assistant does not manage. The entity-based ghost detector cannot judge such a device and treats it as alive; measured silence is the only way to see it at all. It raises an ordinary `ghost_slot` incident — a new source of evidence, not a new kind. |
+| **Ghost slot, by idle time** | a slot **Home Assistant holds on that proxy** goes without GATT traffic for longer than the idle threshold, for a device Home Assistant does not manage. The entity-based ghost detector cannot judge such a device and treats it as alive; measured silence is the only way to see it at all. Only addresses habluetooth reports as allocated are judged, so a connection the node opened for itself — an ESPHome `ble_client:` link — is reported by the sensor and never mistaken for a stuck slot. It raises an ordinary `ghost_slot` incident — a new source of evidence, not a new kind. |
 
 It also upgrades storm detection from the heuristic to counted SMP failures —
 **per proxy, never globally**. A real fleet is mixed, so it degrades proxy by
@@ -321,7 +321,8 @@ BlueSight is honest about its edges:
   false-positives every healthy persistent connection. The optional
   [ESPHome component](docs/esphome-component.md) removes that blind spot on the
   proxies that run it, because it sees the connection itself and can measure how
-  long it has been silent; on a proxy without it, an unmanaged device is still
+  long it has been silent — for the slots Home Assistant holds there, which is
+  the subset it judges; on a proxy without it, an unmanaged device is still
   never flagged. Measured silence is not proof either — a legitimately quiet link
   looks identical to a stuck one — which is why the idle threshold is a tunable
   with a floor rather than a constant. See

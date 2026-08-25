@@ -146,6 +146,9 @@ def test_detail_renders_for_every_kind_a_snapshot_can_produce():
         [
             ProxySlots("AA", "proxy-a", 3, 2, ["33:44"]),
             ProxySlots("FF", "proxy-f", 3, 2, ["33:44"]),
+            # The idle reading below is judged only where habluetooth says the
+            # proxy holds a slot for it, so `EE` has to hold one.
+            ProxySlots("EE", "Cuisine", 3, 2, ["77:88"]),
         ],
         {"33:44": False},
         storm,
@@ -207,6 +210,7 @@ def test_an_unknown_key_degrades_to_the_key_not_a_blank_detail():
 # --- measured SMP evidence, per proxy -------------------------------------
 
 ADDR = "D0:CF:13:0E:C9:2A"
+OTHER = "AA:BB:CC:DD:EE:FF"
 
 
 def test_telemetry_proxies_feed_the_storm_window_with_measured_failures():
@@ -267,17 +271,60 @@ def test_one_snapshot_never_yields_two_incidents_with_the_same_key():
                           slot_idle_seconds={ADDR: 9999.0})]
     deltas = CounterDeltas()
     deltas.update("p1", {ADDR: 0})
-    data = build_triage_data([], {}, window, telemetry=tel, counter_deltas=deltas)
+    # The slot has to be one habluetooth allocated, or the idle-slot detector
+    # stands down and the collision this guards against cannot occur.
+    proxies = [ProxySlots("p1", "Salon", 3, 2, [ADDR])]
+    data = build_triage_data(
+        proxies, {}, window, telemetry=tel, counter_deltas=deltas
+    )
     keys = [i.key for i in data.incidents]
     assert len(keys) == len(set(keys)), f"duplicate incident keys: {keys}"
 
 
 def test_an_unmanaged_idle_address_is_still_reported():
-    """The managed set is registry-resolved addresses, not every allocated one."""
+    """The managed set is registry-resolved addresses, not every allocated one.
+
+    The load-bearing half of the allocated-slot filter: habluetooth tracks an
+    allocation per address and knows nothing of Home Assistant's device
+    registry, so a slot Home Assistant opened for a device it cannot name is
+    in `allocated` all the same -- and that is the case this detector exists
+    for. The filter removes the connections that were never slots, not this.
+    """
     window = FailureWindow(300.0, 99, clock=lambda: 0.0)
     tel = [ProxyTelemetry("p1", slot_idle_seconds={ADDR: 9999.0})]
     data = build_triage_data(
-        [], {ADDR: True}, window, telemetry=tel, managed_addresses=set()
+        [ProxySlots("p1", "Salon", 3, 2, [ADDR])],
+        {ADDR: True},
+        window,
+        telemetry=tel,
+        managed_addresses=set(),
+    )
+    ghosts = [i for i in data.incidents if i.kind is IncidentKind.GHOST_SLOT]
+    assert [i.address for i in ghosts] == [ADDR]
+
+
+def test_a_connection_that_is_not_a_home_assistant_slot_is_not_a_ghost_slot():
+    """The firmware reports every GATT client connection on the node.
+
+    A node that also runs `ble_client:` links of its own holds connections
+    `bluetooth_proxy` never opened. Those draw on the controller's
+    `max_connections` pool, not on the slots the proxy advertises to Home
+    Assistant, and habluetooth allocates nothing for them. Judging one as a
+    ghost *slot* would be a true measurement under a false frame: the remedy
+    reads "restart that proxy to free the slot", and the restart would free no
+    slot Home Assistant was waiting on, for a link that is doing its job.
+
+    The address is registry-unknown and silent for hours -- every other
+    condition of the incident is met -- so `allocated` is the only thing that
+    separates it from the case this detector exists for.
+    """
+    window = FailureWindow(300.0, 99, clock=lambda: 0.0)
+    # habluetooth lists one allocated slot; the firmware reports two
+    # connections, the second being the node's own `ble_client:` link.
+    proxies = [ProxySlots("p1", "Salon", 3, 2, [ADDR])]
+    tel = [ProxyTelemetry("p1", slot_idle_seconds={ADDR: 9999.0, OTHER: 9999.0})]
+    data = build_triage_data(
+        proxies, {}, window, telemetry=tel, managed_addresses=set()
     )
     ghosts = [i for i in data.incidents if i.kind is IncidentKind.GHOST_SLOT]
     assert [i.address for i in ghosts] == [ADDR]

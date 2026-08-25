@@ -700,6 +700,21 @@ def test_an_unmanaged_idle_slot_is_still_flagged(monkeypatch):
     assert (ghost.address, ghost.sources, ghost.evidence) == (PERIPHERAL, [PROXY], "smp")
 
 
+def test_a_connection_that_is_not_a_home_assistant_slot_is_not_flagged(monkeypatch):
+    """The `ble_client:` case, end to end, on the shape of the user's own node.
+
+    `allocated=()` with no registry device: the firmware reports a connection
+    idle for 600 s whose peer Home Assistant has never heard of, and
+    habluetooth holds no slot for it. That is an ESPHome `ble_client:` link --
+    a Madoka pairing responder on `atomesalon`, say -- doing exactly its job.
+    It draws on the node's `max_connections` pool, not on the slots the proxy
+    advertises, so `GHOST_SLOT` would be a true measurement under a false
+    frame: its remedy says restart the proxy to free the slot, and the restart
+    would free no slot Home Assistant was waiting on.
+    """
+    assert _ghosts(_idle_slot_data(monkeypatch, allocated=())) == []
+
+
 def test_a_managed_idle_slot_is_reported_once_not_twice(monkeypatch):
     """Both detectors raise GHOST_SLOT for this address from this proxy, so a
     slot judged by both would produce two incidents identical under

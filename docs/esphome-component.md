@@ -124,8 +124,11 @@ Note that **`BlueSight slots` lists every GATT client connection on the node**,
 not only the ones Home Assistant asked for. If the same node also runs
 `ble_client:` entries of its own, their connections appear here too. That is
 faithful reporting — those links are real and they do consume the controller's
-budget — but see [Limitations](#limitations) for what it means for idle-slot
-detection.
+budget. It is not what gets judged: the integration reads an idle time only for
+an address habluetooth reports as an allocated slot on that proxy, so a
+`ble_client:` link shows up in the sensor state and can never be mistaken for a
+stuck Home Assistant slot. See
+[Ghost slots judged by idle time](#ghost-slots-judged-by-idle-time).
 
 ### Empty is not `unknown`, and that survives the trip
 
@@ -184,8 +187,9 @@ slot. It is a device that cannot connect, which is bad, and differently bad.
 
 ### Ghost slots judged by idle time
 
-**Fires when** a slot is held with no GATT traffic for longer than
-`idle_threshold_s`, for a device Home Assistant does not manage.
+**Fires when** a slot **Home Assistant holds on that proxy** goes without GATT
+traffic for longer than `idle_threshold_s`, for a device Home Assistant does not
+manage.
 
 `detect_ghost_slots` decides from entity availability, which only works for
 devices in the registry. An unmanaged peripheral is conservatively treated as
@@ -197,9 +201,23 @@ still alive.
 
 The firmware sees the connection itself, so it can measure the silence directly.
 This raises an ordinary `ghost_slot` incident with different wording — a new
-source of evidence, not a new kind. Devices Home Assistant *can* judge are
-deliberately skipped, because the entity-based verdict is the more semantic
-signal and letting both detectors judge one slot would draw one fault twice.
+source of evidence, not a new kind.
+
+Two conditions bound it, and both matter:
+
+- **The address must be an allocated slot on that proxy.** The sensor reports
+  every GATT client connection on the node, and only some of them are Home
+  Assistant's. A `ble_client:` link the node opened for itself draws on
+  `esp32_ble.max_connections`, not on the slots the proxy advertises, so calling
+  it a stuck *slot* would be a true measurement under a false frame — the remedy
+  would tell you to restart a proxy to free something the restart would not free.
+  Nothing is lost by the restriction: habluetooth tracks an allocation per
+  address and knows nothing of the device registry, so a slot Home Assistant
+  opened for a device it cannot name is allocated all the same — which is exactly
+  the case this detector exists for.
+- **The device must be one Home Assistant cannot judge.** Devices in the registry
+  are left to the entity-based verdict, which is the more semantic signal;
+  letting both detectors judge one slot would draw one fault twice.
 
 #### Choosing `idle_threshold_s`
 
@@ -301,13 +319,23 @@ device. The sensors themselves are the check.
   false accusation where unreported is merely silence. Only reachable with a
   non-default `CONFIG_BT_SMP_MAX_BONDS`, and the firmware logs a warning when it
   happens.
-- **The slots sensor covers the whole node, not just Home Assistant's slots.**
-  Any `ble_client:` connection the same node holds appears in it. If such a
-  connection's peer is not in Home Assistant's device registry and it goes quiet
-  for longer than `idle_threshold_s`, it is reported as an idle ghost slot. The
-  measurement is not wrong — the link really is silent — but it is a connection
-  Home Assistant does not own and cannot be expected to know about. Raise the
-  threshold, or expect that entry.
+- **Connections the node holds for itself are reported but never diagnosed.**
+  The slots sensor covers the whole node, so any `ble_client:` connection appears
+  in its state, but idle-slot detection judges only the addresses habluetooth
+  reports as allocated on that proxy — which those are not. They are visible and
+  not diagnosed: BlueSight will not tell you a `ble_client:` link has gone stale,
+  and it will not call one a ghost slot either. Note they still consume
+  `max_connections`, so a node that runs out of link pool starves
+  `bluetooth_proxy` of the slots it advertises; the `max_connections` bullet
+  below is how those two numbers relate.
+- **A slot Home Assistant has already released is not judged, even while the node
+  still holds the link.** The two readings come from different places at
+  different instants, and the ordinary cause of a disagreement is staleness — the
+  slots sensor publishes on change plus a tick, so it lags a disconnect Home
+  Assistant has already booked. One snapshot cannot tell that apart from a link
+  genuinely stuck on the node, and the common case is routine, so BlueSight stays
+  quiet. The cost is a narrow false negative in the direction that does not cry
+  wolf: the slot in question is one Home Assistant already counts as free.
 - **`max_connections` is not the slot count, and both numbers are right.**
   `esp32_ble.max_connections` sizes the controller's link pool for the entire
   node: every BLE link it can hold at once, whoever owns it. The number BlueSight

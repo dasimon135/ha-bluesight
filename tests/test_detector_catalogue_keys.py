@@ -89,6 +89,8 @@ def _every_detector_incident() -> list[Incident]:
         ),
         *detect_idle_slots(
             [ProxyTelemetry("AA", slot_idle_seconds={"11:22": 900.0})],
+            # Judged only where habluetooth says Home Assistant holds the slot.
+            [ProxySlots("AA", "Salon", 2, 1, ["11:22"])],
             set(),
             300.0,
             {"AA": "Salon"},

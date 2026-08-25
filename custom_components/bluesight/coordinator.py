@@ -337,11 +337,14 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
             # keys of `availability`, which cover every *allocated* address with
             # the unmanaged ones biased to "alive"; passing those would stand
             # `detect_idle_slots` down for exactly the devices it exists to
-            # cover. Nor the allocated subset of the index: the firmware can
-            # report an idle time for an address habluetooth does not list as
-            # allocated (a stale text sensor between publishes is the ordinary
-            # cause), and calling such an address unmanaged on that basis would
-            # flag a device Home Assistant has judged alive. See
+            # cover. Nor the allocated subset of the index: allocation is a
+            # separate question that `detect_idle_slots` asks separately, per
+            # proxy, from `proxies` above -- an address habluetooth does not
+            # list as allocated is not thereby *unmanaged*, and narrowing this
+            # set by allocation would call a registry device unmanaged the
+            # moment its slot went missing from a snapshot (a stale text sensor
+            # between publishes is the ordinary cause) and hand it to the
+            # detector that judges devices Home Assistant cannot judge. See
             # `DeviceIndex.managed_addresses`.
             managed_addresses=index.managed_addresses,
         )
