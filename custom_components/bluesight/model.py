@@ -29,6 +29,35 @@ class IncidentKind(StrEnum):
     PROXY_REBOOT_STORM = "proxy_reboot_storm"
 
 
+#: Kinds whose ``sources`` say who *observed* the fault rather than *which*
+#: fault it is, and which :attr:`Incident.key` therefore ignores.
+#:
+#: The criterion for a new kind is identity versus evidence: ask whether the
+#: same address reported by two proxies is one fault or two.
+#:
+#: * Two -> ``sources`` are identity and belong in the key. ``GHOST_SLOT`` is a
+#:   slot stuck *on a proxy* and ``BOND_LOST`` a missing entry in *a proxy's*
+#:   own bond store, so each proxy is its own fault with its own remedy, and
+#:   each must alert separately.
+#: * One -> ``sources`` are evidence and belong here. A ``STORM`` is "this
+#:   device keeps failing to connect"; which proxy measured that is how we know,
+#:   not what broke -- the same argument that keeps ``evidence`` out of the key.
+#:
+#: The test is not "could two proxies appear?" but "would the user act twice?".
+#: Getting it wrong in either direction is a real defect: a kind wrongly listed
+#: here collapses two faults into one alert and hides the second, while a kind
+#: wrongly left out re-alerts whenever its attribution shifts under a fault that
+#: never stopped -- which is exactly what a storm does, because attribution
+#: expires with the failure events that carry it while inferred failures keep
+#: the incident open.
+#:
+#: The ``PROXY_*`` kinds carry ``sources == [address]``, so the question does
+#: not arise for them and membership here would make no difference.
+KINDS_WHOSE_SOURCES_ARE_EVIDENCE: frozenset[IncidentKind] = frozenset(
+    {IncidentKind.STORM}
+)
+
+
 @dataclass(frozen=True, slots=True)
 class ProxySlots:
     source: str            # proxy/adapter MAC
@@ -99,5 +128,15 @@ class Incident:
         `evidence` is excluded for the same reason: one physical fault is
         one incident however it was observed, so a proxy that gains or
         loses telemetry mid-fault must not re-alert.
+
+        `sources` is folded in for every kind that does not appear in
+        :data:`KINDS_WHOSE_SOURCES_ARE_EVIDENCE`, which states the rule and
+        the criterion behind it. The excluded kinds keep carrying `sources`
+        on the incident -- only its identity ignores them.
         """
-        return f"{self.kind.value}:{self.address}:{','.join(sorted(self.sources))}"
+        sources = (
+            ""
+            if self.kind in KINDS_WHOSE_SOURCES_ARE_EVIDENCE
+            else ",".join(sorted(self.sources))
+        )
+        return f"{self.kind.value}:{self.address}:{sources}"

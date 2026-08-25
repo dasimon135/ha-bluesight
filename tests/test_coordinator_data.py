@@ -11,6 +11,7 @@ from custom_components.bluesight.coordinator_data import (
     BlueSightData,
     build_triage_data,
 )
+from custom_components.bluesight.incident_policy import reconcile
 from custom_components.bluesight.locale import read_catalogues
 from custom_components.bluesight.model import (
     Incident,
@@ -319,11 +320,16 @@ def test_a_measured_storm_stays_measured_while_the_window_holds_it():
     """The counter stops climbing long before the window drains.
 
     An SMP burst is over in seconds; the storm window holds it for minutes.
-    Attribution read from this snapshot's *delta* would therefore be right
-    for exactly one snapshot and then flip to `heuristic` with no sources --
-    which is not merely a wrong label: `Incident.key` folds in `sources`, so
-    the flip dismisses the notification and raises a fresh one for a fault
-    that never stopped.
+    Attribution read from this snapshot's *delta* would therefore be right for
+    exactly one snapshot and then flip to `heuristic` with no sources, telling
+    the user the firmware had stopped reporting a device it is still measuring
+    -- and dropping the proxy name from the card and from diagnostics while the
+    incident it belongs to is still open.
+
+    The key is asserted too, but it no longer carries this test's weight:
+    `Incident.key` ignores `sources` for `STORM`, so a storm's key is stable
+    whatever happens to its attribution. What is pinned here is that the
+    attribution itself survives as long as the evidence does.
     """
     window = FailureWindow(300.0, 2, clock=lambda: 0.0)
     deltas = CounterDeltas()
@@ -342,6 +348,42 @@ def test_a_measured_storm_stays_measured_while_the_window_holds_it():
     assert storm_b.key == storm_a.key
 
 
+def test_a_storm_does_not_re_alert_when_its_attribution_ages_out():
+    """A storm that never stops must never notify twice.
+
+    Attribution expires with the events it describes (that is the point of
+    storing it in the window), but the storm itself does not: inferred
+    failures can hold an address above threshold long after the measured ones
+    that named a proxy have aged out. `sources` therefore empties underneath a
+    standing incident -- so if `key` folded it in, the notification layer would
+    see the fault resolve and a brand new one appear, for a device that has
+    been failing continuously the whole time.
+    """
+    now = [0.0]
+    window = FailureWindow(300.0, 2, clock=lambda: now[0])
+    window.record(ADDR, source="p1")
+    window.record(ADDR, source="p1")
+    now[0] = 299.0
+    window.record(ADDR)
+    window.record(ADDR)
+
+    measured = next(
+        i
+        for i in build_triage_data([], {}, window).incidents
+        if i.kind is IncidentKind.STORM
+    )
+    now[0] = 301.0  # the measured events expire; the inferred ones do not
+    inferred = next(
+        i
+        for i in build_triage_data([], {}, window).incidents
+        if i.kind is IncidentKind.STORM
+    )
+
+    assert (measured.evidence, measured.sources) == ("smp", ["p1"])
+    assert (inferred.evidence, inferred.sources) == ("heuristic", [])
+    assert reconcile({measured.key}, [inferred]) == ([], [])
+
+
 def test_one_address_failing_on_two_proxies_names_both():
     """Two proxies failing the same device is worse news, not a tie to break."""
     window = FailureWindow(300.0, 2, clock=lambda: 0.0)
@@ -357,9 +399,16 @@ def test_one_address_failing_on_two_proxies_names_both():
     assert storm.sources == ["p1", "p2"]
 
 
-def test_the_incident_key_does_not_depend_on_the_order_proxies_are_polled():
-    """`key` folds in `sources`; an order-dependent key re-alerts forever."""
-    def _key(order):
+def test_a_storms_attribution_does_not_depend_on_the_order_proxies_are_polled():
+    """`sources` is published, so an order-dependent answer churns.
+
+    It reaches the `incidents` attribute of `binary_sensor.bluesight_incident`
+    and the card renders it ("on {sources}") and folds it into the signature it
+    redraws from, so two pollings of one unchanged fault must produce the same
+    list. The key is compared as well for the kinds that still fold `sources`
+    in -- a storm's does not, but the same window feeds them.
+    """
+    def _storm(order):
         window = FailureWindow(300.0, 2, clock=lambda: 0.0)
         deltas = CounterDeltas()
         deltas.update("p1", {ADDR: 0})
@@ -369,10 +418,12 @@ def test_the_incident_key_does_not_depend_on_the_order_proxies_are_polled():
             [], {}, window, telemetry=tel, counter_deltas=deltas
         )
         return next(
-            i.key for i in data.incidents if i.kind is IncidentKind.STORM
+            i for i in data.incidents if i.kind is IncidentKind.STORM
         )
 
-    assert _key(["p1", "p2"]) == _key(["p2", "p1"])
+    first, second = _storm(["p1", "p2"]), _storm(["p2", "p1"])
+    assert first.sources == second.sources == ["p1", "p2"]
+    assert first.key == second.key
 
 
 def test_the_snapshot_carries_the_telemetry_it_was_given():

@@ -157,3 +157,44 @@ def test_bond_lost_key_is_shaped_like_every_other_kind():
     """
     inc = Incident(IncidentKind.BOND_LOST, "11:22", ["BB", "AA"], evidence="smp")
     assert inc.key == "bond_lost:11:22:AA,BB"
+
+
+# --- sources: identity for some kinds, evidence for others ------------------
+
+def test_a_storms_key_ignores_which_proxy_measured_it():
+    """For a storm, `sources` is evidence, not identity.
+
+    The fault is "this device keeps failing to connect". Which proxy measured
+    it is how we know, not what broke -- the same argument that already keeps
+    `evidence` out of the key. Folding it in re-keys a storm that never
+    stopped: the measured events age out of the failure window while inferred
+    ones keep it above threshold, `sources` empties, and the user gets a
+    second notification for one continuous fault.
+
+    The literal is pinned because it is the pre-0.6.0 storm key, which
+    `detect_storm` produced for every storm when it always built `sources=[]`.
+    Excluding `sources` restores it exactly.
+    """
+    unattributed = Incident(IncidentKind.STORM, "11:22")
+    measured = Incident(IncidentKind.STORM, "11:22", ["p1"], evidence="smp")
+    assert measured.key == unattributed.key == "storm:11:22:"
+    # The attribution is still carried -- only `key` ignores it. The card
+    # renders it ("on {sources}") and diagnostics publish it.
+    assert measured.sources == ["p1"]
+
+
+def test_only_a_storms_key_ignores_its_sources():
+    """The other half of the rule, pinned for every kind at once.
+
+    A ghost slot is a slot stuck *on a proxy* and a lost bond is a missing
+    entry in *a proxy's* own bond store, so one address on two proxies is two
+    distinct faults that must notify separately -- `sources` is identity there
+    and stays in the key. The `PROXY_*` kinds carry `sources == [address]`, so
+    the question never arises for them and either answer is correct; they are
+    swept in here only so that adding a kind forces a deliberate choice rather
+    than inheriting one.
+    """
+    for kind in IncidentKind:
+        one = Incident(kind, "11:22", ["p1"])
+        other = Incident(kind, "11:22", ["p2"])
+        assert (one.key == other.key) is (kind is IncidentKind.STORM), kind

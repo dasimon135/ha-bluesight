@@ -83,8 +83,9 @@ def test_sources_names_every_proxy_that_measured_an_event():
     w.record("11:22", "p2")
     w.record("11:22", "p1")
     w.record("11:22")          # inferred: no proxy can be named
-    # Sorted and de-duplicated: this list reaches `Incident.sources`, which
-    # `Incident.key` folds in, so it must not depend on record order.
+    # Sorted and de-duplicated: this list reaches `Incident.sources`, which is
+    # published in the incident attribute and rendered on the card, so it must
+    # not depend on the order proxies were polled in.
     assert w.sources("11:22") == ["p1", "p2"]
     assert w.count("11:22") == 3
 

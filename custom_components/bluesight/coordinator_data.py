@@ -128,6 +128,13 @@ def build_triage_data(
         # released slot does not say which proxy dropped it -- so there is no
         # fuller answer to give, and the measured half is the stronger claim
         # and the actionable one.
+        #
+        # This attribution can vanish under a storm that is still open: the
+        # measured events age out of the window while inferred ones hold the
+        # count above threshold, and the incident drops back to "heuristic"
+        # with no sources. That is honest -- the evidence really is gone -- and
+        # it does not re-alert, because `Incident.key` excludes `sources` for
+        # `STORM` (see `KINDS_WHOSE_SOURCES_ARE_EVIDENCE` in `model`).
         sources = storm_window.sources(addr)
         if sources:
             inc = replace(inc, sources=sources, evidence="smp")

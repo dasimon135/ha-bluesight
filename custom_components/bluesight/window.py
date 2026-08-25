@@ -48,9 +48,15 @@ class FailureWindow:
 
         Empty when every live event was inferred. Sorted, and therefore
         independent of the order proxies were polled in: this list lands in
-        ``Incident.sources``, which ``Incident.key`` folds in, so an
-        order-dependent answer would re-key the incident from snapshot to
-        snapshot and re-alert on a fault that never changed.
+        ``Incident.sources``, which is published in the incident attribute and
+        rendered on the card, so an order-dependent answer would churn the
+        published attribute and redraw the card on a fault that never changed.
+
+        It no longer re-*alerts*: ``Incident.key`` ignores ``sources`` for
+        ``STORM`` precisely because this attribution expires with the events it
+        describes, while inferred failures can keep the incident open past
+        them. Sorting stays a requirement all the same -- the card and
+        diagnostics read this list directly.
         """
         if address not in self._events:
             return []
