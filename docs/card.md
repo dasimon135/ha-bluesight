@@ -16,7 +16,8 @@ entities the integration creates:
 - `binary_sensor.bluesight_incident` — `on` when incidents exist; attributes
   `incident_count` (int), `availability_degraded` (bool), and `incidents` (list
   of `{kind, address, sources, detail}`, `kind` ∈ `deadlock` / `ghost_slot` /
-  `storm` / `proxy_offline` / `proxy_stalled` / `proxy_reboot_storm`).
+  `storm` / `bond_lost` / `proxy_offline` / `proxy_stalled` /
+  `proxy_reboot_storm`).
 
 ---
 
@@ -54,9 +55,19 @@ The custom card auto-discovers every proxy from `hass` (any
   reports with zero slots and which therefore has no rack — English wording
   shown here; the card is translated, see [Languages](#languages).
 
+The rack costs one row per slot, so a saturated 3-slot proxy is four rows tall
+and a large fleet makes a tall card. That is a deliberate trade: free slots keep
+their row so the rack reads as a gauge at a glance, and a rack that collapsed its
+empty rows would lose exactly the thing you look at it for.
+
 Below that it draws a **coloured incident feed**: red for `deadlock` and
-`ghost_slot`, amber for everything else, each badge carrying the incident kind,
-the device address, the detail, and the proxies involved.
+`ghost_slot`, amber for everything else — including `bond_lost` — each badge
+carrying the incident kind, the device address, the detail, and the proxies
+involved. The rule behind the colours, rather than the list: red is for an
+incident that **wastes a scarce resource**, a connection slot held for nothing. A
+lost bond holds no slot; it is a device that cannot connect, which is bad and
+differently bad. A pairing problem also tends to hit several devices at once, and
+a card that turns entirely red stops meaning anything.
 
 It is a single vanilla-JS file — no build step, no dependencies.
 
