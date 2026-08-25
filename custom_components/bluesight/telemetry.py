@@ -1,6 +1,8 @@
 """Pure parser for the telemetry the BlueSight ESPHome component publishes.
 
-No Home Assistant dependency; fully unit-testable with plain pytest.
+No Home Assistant dependency; fully unit-testable with plain pytest. (The
+stdlib ``logging`` import is not a Home Assistant dependency: HA configures the
+root logger, and a module-level logger costs this module none of its purity.)
 
 The firmware publishes facts, never verdicts, in three bounded strings (see
 ``docs/plans/2026-08-24-v1.5-esphome-component-design.md``). This module turns
@@ -13,21 +15,38 @@ an entity state at 255 characters and dropping the colons is what keeps a full
 bond list inside that cap. They are expanded here so they correlate with the
 habluetooth addresses the rest of BlueSight speaks.
 
-Every field is validated rather than merely converted. This is the one place in
+Two rules govern everything below.
+
+**Every field is validated, not merely converted.** This is the one place in
 BlueSight where the input is a string from a microcontroller instead of an
 object from habluetooth, and Python's built-in conversions are far more
 permissive than that input deserves: ``float("nan")``, ``int("3_0")`` and
 ``int("-5")`` all succeed and would each hand a detector a number nobody
-measured. A rejected field is dropped, which reads downstream as "no data for
-this address" -- the conservative answer, and the only honest one.
+measured. NaN is the worst of them, comparing False against every threshold so
+that a genuinely stuck slot is silently missed.
+
+**Absence and emptiness are different answers, and total rejection is
+absence.** A dropped field is one BlueSight cannot see; if *every* field is
+dropped, the honest report is ``None`` -- "no telemetry" -- and never an empty
+container. The difference is load-bearing rather than academic:
+``esphome::format_hex_pretty()`` renders a MAC as ``D0.CF.13.0E.C9.2A`` and is
+the obvious helper for firmware to reach for. If that mismatch yielded an empty
+bond *set*, a proxy holding a full bond list would report "I have no bonds", and
+BOND_LOST would fire across an entire fleet over nothing worse than a formatting
+disagreement -- the module would not merely lose the reading, it would assert the
+opposite of it. An empty input string, by contrast, is a proxy legitimately
+reporting zero entries, and still parses to an empty container.
 """
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
 from .model import normalize_address
+
+_LOGGER = logging.getLogger(__name__)
 
 #: States that mean "this proxy is not talking to us right now". They must map
 #: to None rather than an empty reading: a rebooting proxy drops its ESPHome
@@ -80,6 +99,41 @@ def _split(raw: str | None) -> list[str] | None:
     return [stripped for field in text.split(",") if (stripped := field.strip())]
 
 
+def _drop(field: str, reason: object) -> None:
+    """Record one dropped field.
+
+    Silent disappearance is the failure mode this module is most exposed to,
+    and the firmware is the one part of the contract CI cannot test, so the
+    drop path is never wordless: without this line nothing distinguishes "the
+    proxy reported nothing for that address" from "we threw it away".
+    """
+    _LOGGER.debug("BlueSight telemetry: dropped field %r (%s)", field, reason)
+
+
+def _is_total_rejection(parsed: set | dict, fields: list[str], raw: str | None) -> bool:
+    """True when the payload carried fields and not one of them survived.
+
+    Warns rather than debugs: total rejection means the firmware and this parser
+    disagree about the wire format, which is a bug in one of the two.
+    """
+    if not fields or parsed:
+        return False
+    # NOTE: the coordinator re-reads every poll, so a permanently mismatched
+    # firmware warns on every cycle. Should that prove noisy in the field,
+    # dedupe in the reader module that owns the polling -- not here, where
+    # per-call state would make a pure parser stateful.
+    _LOGGER.warning(
+        "BlueSight telemetry: discarding a reading whose %d field(s) were all "
+        "unreadable (%r). Reporting it as absent rather than empty: an empty "
+        "reading would assert that the proxy has nothing to report, which is "
+        "the opposite of what is known. The firmware and telemetry.py disagree "
+        "about the wire format.",
+        len(fields),
+        raw,
+    )
+    return True
+
+
 def parse_addresses(raw: str | None) -> set[str] | None:
     """Parse a plain address list (the bond list)."""
     fields = _split(raw)
@@ -89,8 +143,11 @@ def parse_addresses(raw: str | None) -> set[str] | None:
     for field in fields:
         try:
             out.add(expand_compact_mac(field))
-        except ValueError:
-            continue  # firmware is the least trustworthy input; skip, never crash
+        except ValueError as err:
+            # Firmware is the least trustworthy input we have: drop, never crash.
+            _drop(field, err)
+    if _is_total_rejection(out, fields, raw):
+        return None
     return out
 
 
@@ -107,7 +164,7 @@ def _parse_seconds(text: str) -> float:
 
 
 def _parse_mapping[T](raw: str | None, cast: Callable[[str], T]) -> dict[str, T] | None:
-    """Parse ``address:value`` fields, skipping any the firmware mangled.
+    """Parse ``address:value`` fields, dropping any the firmware mangled.
 
     Splits on the *last* colon so that an already-expanded address parses as
     one address rather than as ``D0`` plus an unreadable value; a compact
@@ -120,11 +177,14 @@ def _parse_mapping[T](raw: str | None, cast: Callable[[str], T]) -> dict[str, T]
     for field in fields:
         address, separator, value = field.rpartition(":")
         if not separator or not value:
+            _drop(field, "no 'address:value' separator")
             continue
         try:
             out[expand_compact_mac(address)] = cast(value.strip())
-        except ValueError:
-            continue
+        except ValueError as err:
+            _drop(field, err)
+    if _is_total_rejection(out, fields, raw):
+        return None
     return out
 
 
@@ -140,7 +200,19 @@ def parse_idle_seconds(raw: str | None) -> dict[str, float] | None:
 
 @dataclass(frozen=True, slots=True)
 class ProxyTelemetry:
-    """One proxy's telemetry snapshot. ``None`` means the signal is absent."""
+    """One proxy's telemetry snapshot. ``None`` means the signal is absent.
+
+    Frozen, and therefore **not hashable**: ``frozen=True`` asks the dataclass
+    machinery for a ``__hash__`` built from the fields, and two of those fields
+    are a dict and a set, so ``hash()`` raises ``TypeError``. Key on ``source``
+    when a set member or a dict key is wanted.
+
+    ``eq`` is deliberately left on. Turning it off would restore hashability,
+    but only by falling back to identity semantics -- two snapshots with
+    identical contents would then compare unequal, and any "has anything
+    changed since the last poll?" check would answer "yes" forever. A loud
+    ``TypeError`` from ``hash()`` beats a silent wrong answer from ``==``.
+    """
 
     source: str
     smp_failures: dict[str, int] | None = None
