@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from .model import Incident, IncidentKind, ProxyHealth, ProxySlots, normalize_address
+from .telemetry import ProxyTelemetry
 from .window import FailureWindow
 
 
@@ -121,3 +122,54 @@ def detect_reboot_storm(source: str, window: FailureWindow) -> Incident | None:
             },
         )
     return None
+
+
+def detect_bond_lost(
+    telemetry: list[ProxyTelemetry], names: dict[str, str]
+) -> list[Incident]:
+    """A device whose pairing keeps failing on a proxy that holds no bond for it.
+
+    This is the one diagnosis that needs the firmware: Home Assistant can see
+    neither SMP failures nor the proxy's NVS bond store. Both halves are
+    required, and both must be *reported* -- an absent bond list cannot
+    distinguish "no bond" from "not told", so it yields nothing rather than a
+    confident wrong answer.
+
+    Bonds are per-central: every proxy keeps its own store, so a device paired
+    through one proxy genuinely has no bond on the next, and Home Assistant
+    will still route connections there. The verdict is therefore per proxy --
+    a bond held elsewhere neither excuses nor suppresses the proxy that is
+    failing. Which is why the remedy is exact and worth stating: re-pair
+    through this specific proxy, not whichever one Home Assistant picks next.
+
+    Both sides of the comparison are canonicalised, as everywhere else
+    addresses are correlated. The parser already normalises, so this guards
+    the seam rather than the wire -- but the failure it guards against is the
+    worst one available here: a bond read as absent purely because it arrived
+    in the other case would assert the opposite of what the proxy reported and
+    fire BOND_LOST across a whole fleet.
+    """
+    out: list[Incident] = []
+    for tel in telemetry:
+        if tel.smp_failures is None or tel.bonds is None:
+            continue
+        name = names.get(tel.source, tel.source)
+        bonds = {normalize_address(address) for address in tel.bonds}
+        # Merged on the normalised key rather than iterated directly, so two
+        # spellings of one address cannot yield two incidents sharing a key
+        # (which would render as a duplicate row and re-alert as one). The
+        # higher count wins: they are readings of the same counter, so summing
+        # would invent failures that never happened.
+        failures: dict[str, int] = {}
+        for raw_address, count in tel.smp_failures.items():
+            address = normalize_address(raw_address)
+            failures[address] = max(failures.get(address, count), count)
+        for address, count in sorted(failures.items()):
+            if count <= 0 or address in bonds:
+                continue
+            out.append(Incident(
+                IncidentKind.BOND_LOST, address, [tel.source],
+                detail_key="incident.bond_lost.detail",
+                detail_params={"count": str(count), "proxy": name},
+                evidence="smp"))
+    return out

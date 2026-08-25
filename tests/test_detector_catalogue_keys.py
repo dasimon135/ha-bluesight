@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from custom_components.bluesight.detector import (
+    detect_bond_lost,
     detect_deadlocks,
     detect_ghost_slots,
     detect_offline_proxies,
@@ -28,6 +29,7 @@ from custom_components.bluesight.detector import (
     detect_storm,
 )
 from custom_components.bluesight.model import Incident, ProxyHealth, ProxySlots
+from custom_components.bluesight.telemetry import ProxyTelemetry
 from custom_components.bluesight.window import FailureWindow
 
 LOCALE_DIR = (
@@ -70,7 +72,7 @@ def _window(window_s: float, threshold: int, address: str, hits: int) -> Failure
 
 
 def _every_detector_incident() -> list[Incident]:
-    """One incident from each of the six detectors.
+    """One incident from each of the seven detectors.
 
     Kept as a single list rather than a fixture per detector: the point is
     coverage of *all* of them, and a detector added later must be added here or
@@ -90,6 +92,10 @@ def _every_detector_incident() -> list[Incident]:
         ),
         detect_storm("11:22", _window(300, 5, "11:22", 5)),
         detect_reboot_storm("PX", _window(600, 3, "PX", 3)),
+        *detect_bond_lost(
+            [ProxyTelemetry("AA", smp_failures={"11:22": 3}, bonds=set())],
+            {"AA": "Salon"},
+        ),
     ]
 
 
@@ -102,12 +108,14 @@ def _ids() -> list[str]:
 
 #: Kinds that exist in the model but that no detector raises yet.
 #:
-#: ``BOND_LOST`` landed with the ESPHome telemetry data model, ahead of the
-#: detector that will raise it from real SMP evidence. Exempting it is not a
-#: way to skip the catalogue work: the assertion below is an equality, so the
-#: moment a detector does emit the kind this test fails until the entry is
-#: removed -- which is exactly when its strings must be written.
-PENDING_DETECTOR = {"bond_lost"}
+#: Empty, and the machinery is kept for the next kind that lands ahead of its
+#: detector. ``BOND_LOST`` was the last one: it arrived with the ESPHome
+#: telemetry data model and was exempted until :func:`detect_bond_lost` could
+#: raise it from real SMP evidence. That exemption was never a way to skip the
+#: catalogue work -- the assertion below is an equality, so the moment a
+#: detector does emit the kind this test fails until the entry is removed,
+#: which is exactly when its strings must be written.
+PENDING_DETECTOR: set[str] = set()
 
 
 def test_every_incident_kind_is_covered():

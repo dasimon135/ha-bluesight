@@ -3,6 +3,8 @@
   "incident.ghost_slot.detail": "Slot held on {proxy} while device unavailable",
   "incident.storm.detail.one": "{count} failure in {seconds}s",
   "incident.storm.detail.other": "{count} failures in {seconds}s",
+  "incident.bond_lost.detail.one": "{count} pairing failure on {proxy}, which holds no bond for this device — re-pair through {proxy}",
+  "incident.bond_lost.detail.other": "{count} pairing failures on {proxy}, which holds no bond for this device — re-pair through {proxy}",
   "incident.proxy_offline.detail": "Proxy offline (no longer a registered scanner)",
   "incident.proxy_stalled.detail": "Online but no BLE advertisement seen for {seconds}s",
   "incident.proxy_reboot_storm.detail.one": "{count} proxy reboot in {seconds}s",
