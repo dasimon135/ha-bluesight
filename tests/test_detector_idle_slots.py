@@ -10,6 +10,7 @@ to judge a device Home Assistant knows nothing about.
 """
 from __future__ import annotations
 
+from custom_components.bluesight.const import DEFAULT_IDLE_SLOT_THRESHOLD_S
 from custom_components.bluesight.detector import detect_ghost_slots, detect_idle_slots
 from custom_components.bluesight.model import IncidentKind, ProxySlots
 from custom_components.bluesight.rendering import plural_count
@@ -357,3 +358,26 @@ def test_both_filters_apply_and_neither_substitutes_for_the_other():
     proxies = _allocated(ADDR, OTHER)
     incidents = detect_idle_slots(telemetry, proxies, {ADDR}, THRESHOLD, {})
     assert [i.address for i in incidents] == [OTHER]
+
+
+def test_the_shipped_default_does_not_flag_a_measured_healthy_device():
+    """The one reading that set `DEFAULT_IDLE_SLOT_THRESHOLD_S`, kept executable.
+
+    A Daikin Madoka BRC1H thermostat, working normally on a live proxy,
+    reported 430.7s of GATT silence. It went unflagged only because it is in
+    Home Assistant's device registry, so this detector stands down for it --
+    the same device *absent* from the registry, which is the whole population
+    judged here, would have been a ghost slot at the 300s default this
+    replaced, while perfectly healthy.
+
+    So this asserts the default against the measurement, not against a number.
+    Lowering the constant back under 430 fails here with the reason attached,
+    which a bare `== 1800.0` could never say. It deliberately does not use this
+    module's `THRESHOLD`: that one is a fixture for the boundary tests and has
+    nothing to do with what ships.
+    """
+    telemetry = [_tel({ADDR: 430.7})]
+    incidents = detect_idle_slots(
+        telemetry, _allocated(ADDR), set(), DEFAULT_IDLE_SLOT_THRESHOLD_S, {}
+    )
+    assert incidents == []

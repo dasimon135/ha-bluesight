@@ -164,7 +164,7 @@ Open the integration's **Configure** dialog to tune:
 | Reboot window | 600 s | sliding window over which proxy register/unregister cycles are counted. |
 | Reboot threshold | 3 | reboots within the window that trip a reboot-storm incident. |
 | Offline grace | 90 s | how long a proxy may be missing before it is reported offline. A proxy drops off the bus for ~20-30 s on every OTA update; 0 reports the first missing snapshot. |
-| Idle-slot threshold | 300 s | how long a held GATT connection may go without traffic before the slot is reported stuck (min 60 s). Needs the [BlueSight ESPHome component](docs/esphome-component.md) on the proxy. Raise it above your quietest device: a notify-on-change sensor holds a healthy connection in silence for minutes. |
+| Idle-slot threshold | 1800 s | how long a held GATT connection may go without traffic before the slot is reported stuck (min 60 s). Needs the [BlueSight ESPHome component](docs/esphome-component.md) on the proxy. Set it above your quietest device: a working Daikin BRC1H thermostat here measured 430 s of GATT silence, and a lighting mesh nobody touches overnight is silent for hours. No one value fits every network — see [choosing a value](docs/esphome-component.md#choosing-idle_threshold_s). |
 
 ### Actions
 

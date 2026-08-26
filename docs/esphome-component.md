@@ -221,7 +221,8 @@ Two conditions bound it, and both matter:
 
 #### Choosing `idle_threshold_s`
 
-Default 300 s, floor 60 s, in the integration's **Configure** dialog.
+Default 1800 s (30 minutes), floor 60 s, in the integration's **Configure**
+dialog.
 
 Measured silence is not proof of a stuck slot. A legitimately quiet link looks
 identical to a dead one, which is why this is a tunable rather than a constant,
@@ -238,6 +239,30 @@ there is not even a manufacturer to look up. It is precisely the shape of device
 idle-slot detection was built for — and it is perfectly healthy. A mesh proxy
 link carries GATT traffic only when something on the mesh changes, so it can sit
 silent for hours between one light being switched and the next.
+
+That example is easy to dismiss as exotic. The second one is not, and it is what
+set the default. A **Daikin Madoka BRC1H thermostat** — an ordinary device on
+ordinary hardware, connected and working normally — reported `430.7` s of GATT
+silence on a live proxy here:
+
+```json
+"slot_idle_seconds": {"1C:54:9E:90:E3:0E": 430.7}
+```
+
+Nothing was flagged, for one reason only: that thermostat is in Home Assistant's
+device registry, so this detector stands down for it and leaves the verdict to
+`detect_ghost_slots`. An equivalent device *absent* from the registry — which is
+the entire population this detector judges — would have been reported as a ghost
+slot at the 300 s this originally defaulted to, while perfectly healthy. That is
+why the default is 1800 s: not an argument, a measurement.
+
+The asymmetry decides which way to err. A genuinely stuck slot is stuck
+indefinitely, so hearing about it 25 minutes later costs nothing you can act on.
+A false positive on the first day teaches you to ignore a diagnostic
+integration, and that is not recovered. 1800 s is still not a universal answer —
+the mesh node above beats it comfortably — which is exactly why this is a
+tunable and not a constant. The default only has to avoid crying wolf on a
+typical install.
 
 So the threshold is not a detection sensitivity to be turned up. It is an
 assertion about your quietest device, and getting it wrong reports healthy
