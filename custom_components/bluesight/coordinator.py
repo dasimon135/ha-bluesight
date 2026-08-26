@@ -36,7 +36,12 @@ from .const import (
     DOMAIN,
 )
 from .coordinator_data import BlueSightData, build_triage_data
-from .device_index import DeviceIndex, build_device_index, build_proxy_index
+from .device_index import (
+    DeviceIndex,
+    build_device_index,
+    build_proxy_index,
+    resolve_proxy_names,
+)
 from .model import DeviceRef, normalize_address
 from .rendering import Catalogue
 from .storm_signal import ReleaseTracker
@@ -285,7 +290,15 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
                 return None
             return DeviceRef(name=index.names.get(device_id, ""), device_id=device_id)
 
+        # `_name_for` and NOT the resolved display name: `ProxySlots.name` is
+        # what the proxy's Home Assistant device is created with, and feeding
+        # a registry-derived name back into device creation would write the
+        # user's rename into the device's `name` field -- after which clearing
+        # the rename would restore the rename. See `_display_names_for`.
         proxies = current_proxy_slots(self._manager, self._name_for, device_for)
+        # What to *say* about each proxy, resolved once for every detector
+        # that names one.
+        display_names = self._display_names_for(index)
         # Memoized per snapshot: the release tracker asks about addresses that
         # are no longer allocated, so the answer set is wider than `proxies`.
         verdicts: dict[str, bool] = {}
@@ -339,9 +352,10 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
             telemetry=telemetry,
             counter_deltas=self._counter_deltas,
             idle_threshold_s=self._idle_threshold_s,
-            # A copy: `_names` keeps growing across snapshots and the detectors
-            # must not be handed a mapping that mutates under them.
-            proxy_names=dict(self._names),
+            # A fresh dict per snapshot: `_names` keeps growing across
+            # snapshots and the detectors must not be handed a mapping that
+            # mutates under them. `resolve_proxy_names` builds one.
+            proxy_names=display_names,
             # Every address Home Assistant can resolve to a device -- NOT the
             # keys of `availability`, which cover every *allocated* address with
             # the unmanaged ones biased to "alive"; passing those would stand
@@ -384,6 +398,43 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         """
         return self._names.get(normalize_address(source), source)
 
+    def _display_names_for(self, index: DeviceIndex) -> dict[str, str]:
+        """What to *call* each proxy in incident text, per snapshot.
+
+        habluetooth's scanner name for a current ESPHome proxy is a node name
+        with its MAC glued on -- "atomebuanderie (D0:CF:13:0F:05:5A)". It is a
+        reasonable device name, seen once; it is unreadable inside a
+        ``bond_lost`` detail, which names the proxy twice on purpose (where it
+        failed, and where to re-pair, because Home Assistant picks the route
+        and "re-pair the device" would not be advice). When the user has
+        renamed the proxy's BlueSight device, that name is what the card, the
+        proxy's sensors and everything else in Home Assistant already show, so
+        it is what the sentence must say.
+
+        Resolved at *render* time and never fed back into device creation.
+        ``_name_for`` -- the resolver `current_proxy_slots` fills
+        ``ProxySlots.name`` from, which `sensor` and `binary_sensor` pass to
+        ``DeviceInfo`` -- deliberately still answers the habluetooth name. Two
+        reasons, and either alone would settle it:
+
+        * Home Assistant never writes ``name_by_user``; an integration writes
+          ``name``. Naming the device from its own ``name_by_user`` would copy
+          the rename into ``name``, and a user who then cleared the rename
+          would get the rename back. The way out of the loop is not to enter
+          it: the field an integration owns keeps the value that integration
+          knows.
+        * Every entity on a proxy device must report the SAME device name (see
+          ``_name_for``). Entities are constructed at different times, and a
+          rename landing between two constructions would give the registry two
+          different answers to store. The habluetooth name is one answer for
+          all of them.
+
+        Names for proxies no scanner currently reports are carried through
+        rather than dropped: a retired proxy's incident stays readable, and
+        the detectors only look up sources they hold.
+        """
+        return resolve_proxy_names(self._names, index.proxy_user_names)
+
     def _build_device_index(self) -> DeviceIndex:
         """Index the device registry by MAC; see :mod:`.device_index`.
 
@@ -405,6 +456,10 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
                 dr.async_get(self.hass).devices.values(),
                 bluetooth_connection=dr.CONNECTION_BLUETOOTH,
                 network_connection=dr.CONNECTION_NETWORK_MAC,
+                # Also read back what the user renamed *our own* per-proxy
+                # devices to, so incident text calls a proxy what the card
+                # and its sensors call it. See `_display_names_for`.
+                own_domain=DOMAIN,
             )
         except _AVAILABILITY_ERRORS:
             self._flag_degraded("<device index build>")

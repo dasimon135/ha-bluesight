@@ -108,7 +108,7 @@ def build_triage_data(
     incidents: list[Incident] = []
     # Slot-layer incidents
     incidents += detect_deadlocks(proxies)
-    incidents += detect_ghost_slots(proxies, availability)
+    incidents += detect_ghost_slots(proxies, availability, proxy_names)
     # Measured SMP failures, fed into the same rolling window the heuristic
     # uses. Feeding one window keeps a single storm threshold and a single
     # storm concept: only the evidence label differs. The proxy that measured

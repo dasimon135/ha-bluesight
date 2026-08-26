@@ -61,21 +61,39 @@ def looks_like_mac(value: object) -> bool:
     )
 
 
+def user_given_name(device: Any) -> str:
+    """The name the *user* chose for ``device``, or ``""`` if they chose none.
+
+    Strictly ``name_by_user``: the registry's other ``name`` is what the
+    integration suggested, which is a different claim. Callers that only want
+    to override a name they already hold need the two kept apart -- see
+    :func:`resolve_proxy_names`.
+
+    Whitespace is stripped and a blank result reads as no name at all. A
+    ``name_by_user`` of spaces is not a name the user chose to see, and
+    Home Assistant will happily store one.
+
+    Read with ``getattr`` for the same reason the rest of this module reads
+    registry entries duck-typed, and because the tests build registry
+    stand-ins that carry only what they are about.
+    """
+    name = getattr(device, "name_by_user", None)
+    return str(name).strip() if name else ""
+
+
 def display_name(device: Any) -> str:
     """The name Home Assistant shows for ``device``, or ``""`` if it has none.
 
     ``name_by_user`` is what the user renamed the device to and is what they
     see everywhere else in Home Assistant, so it wins over the integration's
-    own ``name``. Read with ``getattr`` for the same reason the rest of this
-    module reads registry entries duck-typed, and because the tests build
-    registry stand-ins that carry only what they are about.
+    own ``name``.
 
     A device really can have no name; that is not the same fact as an address
     the registry cannot account for at all, and the two must stay
     distinguishable downstream (see :class:`.model.DeviceRef`).
     """
-    name = getattr(device, "name_by_user", None) or getattr(device, "name", None)
-    return str(name).strip() if name else ""
+    name = getattr(device, "name", None)
+    return user_given_name(device) or (str(name).strip() if name else "")
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +118,20 @@ class DeviceIndex:
     #: which device holds a slot, and answering it from a Wi-Fi MAC would put a
     #: confident wrong name on a BLE address -- worse than the raw MAC.
     names: dict[str, str] = field(default_factory=dict)
+    #: Proxy source -> the name the *user* gave that proxy, for the proxies
+    #: they have actually renamed and no others. Populated only when
+    #: :func:`build_device_index` is told which identifier domain is the
+    #: caller's own; empty otherwise.
+    #:
+    #: A third question, and the reason it cannot be answered from
+    #: :attr:`proxies` above: that index answers "which device *is* this
+    #: proxy?", and for a proxy it resolves to the ESPHome device -- the one
+    #: whose telemetry entities we read. The rename the user made is on the
+    #: caller's *own* device for the same proxy, which is what the card and
+    #: the proxy's sensors are named from, so it is the one the incident text
+    #: has to agree with. Keyed by address rather than by device id because
+    #: unlike :attr:`names` there is exactly one such device per address.
+    proxy_user_names: dict[str, str] = field(default_factory=dict)
 
     @property
     def managed_addresses(self) -> set[str]:
@@ -119,6 +151,7 @@ def build_device_index(
     *,
     bluetooth_connection: str,
     network_connection: str,
+    own_domain: str = "",
 ) -> DeviceIndex:
     """Index the device registry by MAC, scanning connections and identifiers.
 
@@ -136,6 +169,15 @@ def build_device_index(
     literally the string habluetooth hands back as a remote scanner's
     ``source``.
 
+    ``own_domain`` is the caller's own integration domain. Given one, the
+    first pass also records what the user renamed the caller's own per-proxy
+    devices to (:attr:`DeviceIndex.proxy_user_names`), which is a *third*
+    question and deliberately answered from the identifier domain rather than
+    from the proxy index -- see that attribute. It is opt-in so that a caller
+    that owns no devices reads no other integration's identifiers, and only
+    MAC-shaped identifier values are taken, which is what keeps a
+    ``(domain, "service")`` hub device out.
+
     Three passes rather than one loop with three tests, and one loop rather
     than three calls: this runs on every snapshot, so the registry is walked
     once and both answers come back together. A fourth pass then names the
@@ -145,12 +187,23 @@ def build_device_index(
     devices = list(devices)
     peripherals: dict[str, str] = {}
     proxies: dict[str, str] = {}
+    proxy_user_names: dict[str, str] = {}
     for device in devices:
         for ident in device.identifiers:
             if looks_like_mac(ident[1]):
                 address = normalize_address(ident[1])
                 peripherals.setdefault(address, device.id)
                 proxies.setdefault(address, device.id)
+                # Only a rename is recorded. The absence of one is the signal
+                # that the caller should keep the name it already holds, which
+                # is live rather than whatever the registry kept from the last
+                # time the entities were created.
+                if (
+                    own_domain
+                    and ident[0] == own_domain
+                    and (renamed := user_given_name(device))
+                ):
+                    proxy_user_names[address] = renamed
     for device in devices:
         for conn in device.connections:
             if conn[0] == bluetooth_connection and looks_like_mac(conn[1]):
@@ -173,7 +226,46 @@ def build_device_index(
         for device in devices
         if device.id in indexed
     }
-    return DeviceIndex(peripherals=peripherals, proxies=proxies, names=names)
+    return DeviceIndex(
+        peripherals=peripherals,
+        proxies=proxies,
+        names=names,
+        proxy_user_names=proxy_user_names,
+    )
+
+
+def resolve_proxy_names(
+    scanner_names: dict[str, str], user_names: dict[str, str]
+) -> dict[str, str]:
+    """What to call each proxy, the user's own name winning.
+
+    ``scanner_names`` is what habluetooth reports a scanner as -- on a current
+    ESPHome proxy something like ``"atomebuanderie (D0:CF:13:0F:05:5A)"``,
+    which is a node name with a MAC glued to it. That string is fine as a
+    device name, where it appears once, and unreadable inside an incident
+    detail that has to name the proxy twice (``bond_lost`` says where the
+    pairing failed *and* where to re-pair, because Home Assistant, not the
+    user, picks the route). ``user_names`` is what the user renamed the
+    proxy's BlueSight device to, and it is already what every entity on that
+    device reports and what the card draws.
+
+    A proxy in neither map simply is not here, and the detectors fall back to
+    the raw source address, exactly as before. Blank names on either side are
+    dropped rather than carried: an empty ``{proxy}`` is worse than a MAC, and
+    a blank rename must not displace a real scanner name.
+
+    Deliberately a resolution and not a rename of anything: the caller keeps
+    ``scanner_names`` as the name it creates proxy *devices* with, so the
+    registry's ``name`` stays the integration's own suggestion and clearing a
+    rename in Home Assistant restores it. Feeding this result back into device
+    creation would write the user's name into that field and make the rename
+    impossible to undo.
+    """
+    resolved = {k: v.strip() for k, v in scanner_names.items() if v and v.strip()}
+    resolved.update(
+        {k: v.strip() for k, v in user_names.items() if v and v.strip()}
+    )
+    return resolved
 
 
 def build_proxy_index(

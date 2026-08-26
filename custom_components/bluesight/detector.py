@@ -37,19 +37,38 @@ def detect_deadlocks(proxies: list[ProxySlots]) -> list[Incident]:
 
 
 def detect_ghost_slots(
-    proxies: list[ProxySlots], availability: dict[str, bool]
+    proxies: list[ProxySlots],
+    availability: dict[str, bool],
+    names: dict[str, str] | None = None,
 ) -> list[Incident]:
-    """A slot held for a device whose entity is unavailable is likely stale."""
+    """A slot held for a device whose entity is unavailable is likely stale.
+
+    ``names`` maps a canonical proxy source to what the user calls that proxy,
+    the same map :func:`detect_bond_lost` and :func:`detect_idle_slots` take.
+    It is what fills ``{proxy}``, so every detector that names a proxy names
+    it the same way -- the detail and the notification built beside it sit in
+    one output and must not call one proxy two things.
+
+    ``ProxySlots.name`` is the fallback and not the source, because it is
+    habluetooth's scanner name: correct for creating the proxy's Home
+    Assistant *device*, which is exactly what it is used for, but not what the
+    user renamed that device to. Falling back to it rather than to the raw
+    source keeps this identical to the pre-rename behaviour for a proxy the
+    map does not cover, and keeps ``{proxy}`` always present -- the notifier's
+    "an unspecified proxy" last resort stays as unreachable as it was.
+    """
     avail = {normalize_address(k): v for k, v in availability.items()}
+    names = names or {}
     out: list[Incident] = []
     for p in proxies:
+        name = names.get(normalize_address(p.source), p.name)
         for addr in p.allocated:
             norm = normalize_address(addr)
             if avail.get(norm, True) is False:
                 out.append(Incident(
                     IncidentKind.GHOST_SLOT, norm, [p.source],
                     detail_key="incident.ghost_slot.detail",
-                    detail_params={"proxy": p.name},
+                    detail_params={"proxy": name},
                 ))
     return out
 

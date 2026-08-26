@@ -913,3 +913,69 @@ def test_a_broken_registry_costs_the_names_and_nothing_else(monkeypatch):
     assert proxy.used == 2
     assert proxy.allocated == [UNKNOWN, SALON]
     assert [e["name"] for e in proxy.allocated_devices] == ["", ""]
+
+
+# --- naming a proxy the way its user named it -------------------------------
+#
+# CI-only, because it is exactly the Home-Assistant-shaped half: reading the
+# device registry through `dr.async_get(hass)`. The rule itself is pure and
+# covered by `test_device_index` and `test_proxy_display_name`.
+
+
+def test_a_renamed_proxy_device_is_read_back_off_the_registry(monkeypatch):
+    """BlueSight registers its own device per proxy, `(DOMAIN, source)`, and
+    that is the device the user renames -- the proxy's sensors and the card
+    take their friendly name from it."""
+    c = _bare_coordinator()
+    c.hass = _wire_registries(
+        monkeypatch,
+        devices=[
+            _FakeDevice(
+                "dev_bs_proxy",
+                identifiers={(coordinator_module.DOMAIN, "D0:CF:13:0F:05:5A")},
+                name="atomebuanderie (D0:CF:13:0F:05:5A)",
+                name_by_user="Proxy Buanderie",
+            )
+        ],
+        entries_by_device={},
+        states={},
+    )
+    index = c._build_device_index()
+    assert index.proxy_user_names == {"D0:CF:13:0F:05:5A": "Proxy Buanderie"}
+
+
+def test_display_names_prefer_the_rename_but_device_creation_does_not(monkeypatch):
+    """The whole design in one assertion pair. `_display_names_for` feeds
+    incident text; `_name_for` feeds `DeviceInfo`, and must keep answering
+    habluetooth's name or the rename would be written into the device's own
+    `name` field and could never be cleared."""
+    c = _bare_coordinator()
+    c._names = {"D0:CF:13:0F:05:5A": "atomebuanderie (D0:CF:13:0F:05:5A)"}
+    index = DeviceIndex({}, {}, {}, {"D0:CF:13:0F:05:5A": "Proxy Buanderie"})
+    assert c._display_names_for(index) == {"D0:CF:13:0F:05:5A": "Proxy Buanderie"}
+    assert c._name_for("D0:CF:13:0F:05:5A") == "atomebuanderie (D0:CF:13:0F:05:5A)"
+
+
+def test_display_names_fall_back_to_the_scanner_name(monkeypatch):
+    c = _bare_coordinator()
+    c._names = {"AA:BB:CC:DD:EE:FF": "Kitchen proxy"}
+    assert c._display_names_for(DeviceIndex({}, {})) == {
+        "AA:BB:CC:DD:EE:FF": "Kitchen proxy"
+    }
+
+
+def test_a_broken_registry_costs_the_rename_and_nothing_else(monkeypatch):
+    """`_build_device_index` fails toward empty indexes; the proxy then reads
+    under the name habluetooth gave it, which is where it started."""
+    c = _bare_coordinator()
+    c._names = {"AA:BB:CC:DD:EE:FF": "Kitchen proxy"}
+
+    def _boom(_hass):
+        raise RuntimeError("registry not loaded")
+
+    monkeypatch.setattr(coordinator_module.dr, "async_get", _boom)
+    c.hass = object()
+    c._availability_degraded = False
+    assert c._display_names_for(c._build_device_index()) == {
+        "AA:BB:CC:DD:EE:FF": "Kitchen proxy"
+    }
