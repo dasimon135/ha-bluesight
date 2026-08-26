@@ -33,7 +33,7 @@
           "reboot_window_s": "Sliding window over which proxy reboots are counted.",
           "reboot_threshold": "Number of reboots within the window that raises a flapping-proxy incident.",
           "offline_grace_s": "How long a proxy may be missing before it is reported offline. A proxy drops off the bus for a while on every OTA update; set to 0 to report the very first missing snapshot.",
-          "idle_threshold_s": "How long a held GATT connection may go without traffic before the slot is reported as stuck. Only proxies running the BlueSight ESPHome component measure this, and only devices Home Assistant does not otherwise know are judged by it. Set it above the quietest legitimate device you own: a sensor that only notifies on change can hold a perfectly healthy connection in silence for minutes, and a lower value reports it as a ghost slot. A higher value leaves a genuinely stuck slot unreported for longer."
+          "idle_threshold_s": "How long a held GATT connection may go without traffic before the slot is reported as stuck. Only proxies running the BlueSight ESPHome component measure this, and only devices Home Assistant does not otherwise know are judged by it. Set it above the quietest legitimate device you own: a Daikin BRC1H thermostat was measured at 430s of GATT silence while working normally, and a lighting mesh nobody touches overnight stays silent for hours, so a lower value reports a healthy connection as a ghost slot. A higher value only delays a genuinely stuck slot, which stays stuck."
         }
       }
     }

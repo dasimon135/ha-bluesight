@@ -55,7 +55,16 @@ def build_triage_data(
     catalogue: Catalogue | None = None,
     telemetry: list[ProxyTelemetry] | None = None,
     counter_deltas: CounterDeltas | None = None,
-    idle_threshold_s: float = 300.0,
+    # Mirrors `const.DEFAULT_IDLE_SLOT_THRESHOLD_S` by value and deliberately
+    # not by import: this module is pure assembly, owns no configuration, and
+    # its one production caller always passes the option explicitly. The
+    # mirror is not left to memory either -- `test_coordinator_data` pins this
+    # default to the constant -- because the alternative is a suite quietly
+    # exercising a threshold no install runs at. `stalled_threshold_s` above
+    # mirrors its constant the same way; `offline_grace_s` does not mirror
+    # anything, its 0.0 being the neutral "no grace period" value rather than
+    # a copy of the shipped default.
+    idle_threshold_s: float = 1800.0,
     proxy_names: dict[str, str] | None = None,
     managed_addresses: set[str] | None = None,
 ) -> BlueSightData:

@@ -7,6 +7,12 @@ automations format their push notifications from it, so what matters is that
 the strings users actually receive are non-empty and translated -- not that an
 inline fake catalogue round-trips.
 """
+import inspect
+
+from custom_components.bluesight.const import (
+    DEFAULT_IDLE_SLOT_THRESHOLD_S,
+    DEFAULT_STALLED_THRESHOLD_S,
+)
 from custom_components.bluesight.coordinator_data import (
     BlueSightData,
     build_triage_data,
@@ -478,3 +484,23 @@ def test_the_snapshot_carries_the_telemetry_it_was_given():
     tel = [ProxyTelemetry("p1", bonds={ADDR})]
     data = build_triage_data([], {}, _empty_window(), telemetry=tel)
     assert data.telemetry == tel
+
+
+def test_the_assembly_defaults_mirror_the_shipped_constants():
+    """`build_triage_data` imports no `.const` on purpose -- it is a pure
+    function that owns no configuration, and its one production caller passes
+    every option explicitly. That freedom is exactly what lets the two numbers
+    drift apart, and a drifted default here is invisible: every test above that
+    omits `idle_threshold_s` would go on judging at a threshold no install runs
+    at, and pass. The mirror is therefore pinned here, in the one place allowed
+    to know both values.
+
+    `offline_grace_s` is left out deliberately. Its 0.0 is the neutral "no
+    grace period" value rather than a copy of `DEFAULT_OFFLINE_GRACE_S` (90.0),
+    which exists only because a real ESPHome proxy drops off the bus during an
+    OTA update -- a fact about deployments, which a pure function has no
+    business assuming.
+    """
+    parameters = inspect.signature(build_triage_data).parameters
+    assert parameters["idle_threshold_s"].default == DEFAULT_IDLE_SLOT_THRESHOLD_S
+    assert parameters["stalled_threshold_s"].default == DEFAULT_STALLED_THRESHOLD_S
