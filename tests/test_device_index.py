@@ -256,6 +256,20 @@ def test_a_whitespace_only_name_reads_as_no_name():
     assert index.names["dev_blank"] == ""
 
 
+def test_a_whitespace_only_rename_falls_through_to_the_integrations_name():
+    """A `name_by_user` of spaces is not a name the user chose, so it must not
+    blank out a device that does have one. Home Assistant will store one."""
+    index = _index(
+        _NamedDevice(
+            "dev_madoka",
+            name="Madoka BRC1H",
+            name_by_user="   ",
+            identifiers={("daikin_madoka", PERIPHERAL_MAC)},
+        )
+    )
+    assert index.names["dev_madoka"] == "Madoka BRC1H"
+
+
 def test_a_registry_entry_without_name_attributes_is_tolerated():
     """The entries are read duck-typed, exactly as the module docstring says;
     a registry object that lacks the attribute must not abort the snapshot."""
@@ -278,3 +292,159 @@ def test_names_default_empty_so_a_hand_built_index_still_works():
     from custom_components.bluesight.device_index import DeviceIndex
 
     assert DeviceIndex({}, {}).names == {}
+
+
+# --- the name the user gave a proxy -----------------------------------------
+#
+# BlueSight registers its own device per proxy, identified `(bluesight,
+# <source>)`, and that is the device the user renames: the card and the proxy's
+# sensors read their friendly name from it. habluetooth's scanner name -- e.g.
+# "atomebuanderie (D0:CF:13:0F:05:5A)" -- is what the integration *suggested*,
+# not what the user chose, and it is unreadable inside a sentence that has to
+# name the proxy twice. So the registry is asked, in the same pass, what the
+# user called each proxy.
+#
+# Strictly `name_by_user` and never `name`: the fallback is the live
+# habluetooth name the coordinator already holds, which is fresher than the
+# copy the registry kept from whenever the entities were last created.
+
+BLUESIGHT = "bluesight"
+
+
+def _own(*devices):
+    return build_device_index(
+        devices,
+        bluetooth_connection=BLUETOOTH,
+        network_connection=NETWORK,
+        own_domain=BLUESIGHT,
+    ).proxy_user_names
+
+
+def test_a_renamed_bluesight_proxy_device_yields_the_users_name():
+    assert _own(
+        _NamedDevice(
+            "dev_bs_proxy",
+            name="atomebuanderie (D8:3B:DA:11:22:33)",
+            name_by_user="Proxy Buanderie",
+            identifiers={(BLUESIGHT, PROXY_MAC)},
+        )
+    ) == {PROXY_MAC: "Proxy Buanderie"}
+
+
+def test_an_unrenamed_proxy_device_yields_nothing_rather_than_its_scanner_name():
+    """No entry, not an entry holding the integration's own name: absence is
+    what makes the caller fall through to the live habluetooth name."""
+    assert _own(
+        _NamedDevice(
+            "dev_bs_proxy",
+            name="atomebuanderie (D8:3B:DA:11:22:33)",
+            identifiers={(BLUESIGHT, PROXY_MAC)},
+        )
+    ) == {}
+
+
+def test_a_blank_rename_is_not_a_rename():
+    """A `name_by_user` of spaces is not a name the user chose to see."""
+    assert _own(
+        _NamedDevice(
+            "dev_bs_proxy",
+            name="atomebuanderie",
+            name_by_user="   ",
+            identifiers={(BLUESIGHT, PROXY_MAC)},
+        )
+    ) == {}
+
+
+def test_only_our_own_devices_are_read_for_a_proxy_rename():
+    """The ESPHome device for the same proxy carries its own rename, and the
+    card does not show it. Naming the proxy from it would put one name in the
+    incident text and a different one on the entity beside it."""
+    assert _own(
+        _NamedDevice(
+            "dev_esphome",
+            name="atomebuanderie",
+            name_by_user="Buanderie ESP",
+            connections={(NETWORK, PROXY_MAC)},
+            identifiers={("esphome", "atomebuanderie")},
+        )
+    ) == {}
+
+
+def test_the_bluesight_service_device_is_not_a_proxy():
+    """`(bluesight, "service")` is the hub device the incident sensor lives on.
+    Its identifier is not MAC-shaped and it names no proxy."""
+    assert _own(
+        _NamedDevice(
+            "dev_service",
+            name="BlueSight",
+            name_by_user="Bluetooth doctor",
+            identifiers={(BLUESIGHT, "service")},
+        )
+    ) == {}
+
+
+def test_a_proxy_rename_is_keyed_by_canonical_address():
+    assert _own(
+        _NamedDevice(
+            "dev_bs_proxy",
+            name_by_user="Proxy Buanderie",
+            identifiers={(BLUESIGHT, "d8:3b:da:11:22:33")},
+        )
+    ) == {PROXY_MAC: "Proxy Buanderie"}
+
+
+def test_renames_are_not_collected_unless_a_domain_is_named():
+    """The rule is opt-in, so a caller that does not own devices in the
+    registry pays nothing and no other integration's identifiers are read."""
+    assert _index(
+        _NamedDevice(
+            "dev_bs_proxy",
+            name_by_user="Proxy Buanderie",
+            identifiers={(BLUESIGHT, PROXY_MAC)},
+        )
+    ).proxy_user_names == {}
+
+
+def test_proxy_user_names_default_empty_so_a_hand_built_index_still_works():
+    from custom_components.bluesight.device_index import DeviceIndex
+
+    assert DeviceIndex({}, {}).proxy_user_names == {}
+
+
+# --- precedence -------------------------------------------------------------
+
+
+def test_the_users_rename_wins_over_the_live_scanner_name():
+    from custom_components.bluesight.device_index import resolve_proxy_names
+
+    assert resolve_proxy_names(
+        {PROXY_MAC: "atomebuanderie (D8:3B:DA:11:22:33)"},
+        {PROXY_MAC: "Proxy Buanderie"},
+    ) == {PROXY_MAC: "Proxy Buanderie"}
+
+
+def test_a_proxy_with_no_registry_device_at_all_keeps_its_scanner_name():
+    from custom_components.bluesight.device_index import resolve_proxy_names
+
+    assert resolve_proxy_names({PROXY_MAC: "atomebuanderie"}, {}) == {
+        PROXY_MAC: "atomebuanderie"
+    }
+
+
+def test_a_rename_for_a_proxy_no_scanner_reports_is_still_carried():
+    """A retired proxy's BlueSight device outlives its scanner. Carrying the
+    name costs one entry and keeps a still-open incident readable."""
+    from custom_components.bluesight.device_index import resolve_proxy_names
+
+    assert resolve_proxy_names({}, {PROXY_MAC: "Proxy Buanderie"}) == {
+        PROXY_MAC: "Proxy Buanderie"
+    }
+
+
+def test_a_blank_name_on_either_side_never_displaces_a_real_one():
+    from custom_components.bluesight.device_index import resolve_proxy_names
+
+    assert resolve_proxy_names({PROXY_MAC: "atomebuanderie"}, {PROXY_MAC: "  "}) == {
+        PROXY_MAC: "atomebuanderie"
+    }
+    assert resolve_proxy_names({PROXY_MAC: ""}, {}) == {}

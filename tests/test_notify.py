@@ -769,3 +769,49 @@ def test_manager_shutdown_is_idempotent(monkeypatch):
     fake.dismissed.clear()
     manager.async_shutdown()   # nothing active now
     assert fake.dismissed == []
+
+
+# --- naming the proxy in a notification -------------------------------------
+#
+# The detail and the notification are read side by side, so both take
+# `{proxy}` from `detail_params` and neither may call one proxy two things.
+# `_ghost_proxy`'s two fallbacks are unchanged by that parameter now carrying
+# the user's own name: they turn on the parameter being *absent*, which no
+# detector makes it.
+
+
+def test_a_notification_names_the_proxy_the_way_the_user_named_it():
+    incident = replace(
+        _ghost("11:22", sources=["D0:CF:13:0F:05:5A"]),
+        detail_key="incident.ghost_slot.detail",
+        detail_params={"proxy": "Proxy Buanderie"},
+    )
+    _, message = notification_content(incident, FR)
+    assert "Proxy Buanderie" in message
+    assert "D0:CF:13:0F:05:5A" not in message.split(" est retenu")[0]
+
+
+def test_a_ghost_slot_with_no_proxy_parameter_still_falls_back_to_its_source():
+    _, message = notification_content(_ghost("11:22", sources=["AA:BB:CC"]), EN)
+    assert "AA:BB:CC" in message
+
+
+def test_the_unspecified_proxy_last_resort_is_still_reachable():
+    """It is the fallback for an incident carrying neither a name nor a
+    source. No detector emits one, and this change does not make one -- but
+    the phrase must stay reachable, and translated, if any ever does."""
+    _, message = notification_content(_ghost("11:22", sources=[]), FR)
+    assert "un proxy non identifié" in message
+
+
+def test_a_blank_proxy_name_does_not_swallow_the_source():
+    """`_ghost_proxy` chains on truthiness, so an empty `{proxy}` -- what a
+    scanner with no name at all yields -- still reaches the address rather
+    than rendering "a slot on  is held"."""
+    incident = replace(
+        _ghost("11:22", sources=["AA:BB:CC"]),
+        detail_key="incident.ghost_slot.detail",
+        detail_params={"proxy": ""},
+    )
+    _, message = notification_content(incident, EN)
+    assert "AA:BB:CC" in message
