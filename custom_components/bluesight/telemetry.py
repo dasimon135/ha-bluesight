@@ -269,6 +269,22 @@ class CounterDeltas:
     def __init__(self) -> None:
         self._baseline: dict[str, dict[str, int]] = {}
 
+    @property
+    def baselines(self) -> dict[str, dict[str, int]]:
+        """A copy of every baseline, for diagnostics. Read-only by copy.
+
+        Copied one level down rather than handed out: this is reached from a
+        diagnostics download, and a caller holding the live inner dicts could
+        rearm a counter -- which would replay a proxy's whole history as fresh
+        failures, i.e. turn a read-only report into a fabricated storm.
+
+        Worth exposing at all because the baseline is what decides whether a
+        rising counter becomes an incident, and it is invisible everywhere
+        else: too high and it silently swallows real failures, with nothing in
+        the entity surface to show for it.
+        """
+        return {source: dict(counts) for source, counts in self._baseline.items()}
+
     def update(
         self, source: str, counts: dict[str, int] | None
     ) -> dict[str, int]:

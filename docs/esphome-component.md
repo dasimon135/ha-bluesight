@@ -287,13 +287,27 @@ It does appear in the diagnostics dump.
    stack, so connections cannot be observed, and ESPHome says so in a warning at
    compile time. SMP failures and bonds are unaffected.
 4. **The integration is consuming it.** Download the integration's diagnostics
-   (**⋮ → Download diagnostics**). Every incident carries an `evidence` field;
-   on a `storm`, `"smp"` means a measurement was used and `"heuristic"` means it
-   was inferred. This is the only place the distinction is visible, and it is the
-   quickest confirmation that discovery matched the sensors to the right proxy.
-5. **Nothing matched?** Discovery joins the telemetry to a proxy by the ESPHome
-   device's network MAC, which is also how habluetooth identifies the scanner. If
-   a proxy's telemetry never appears, check that the three sensors sit on the same
+   (**⋮ → Download diagnostics**) and read the `telemetry` section. Your proxy
+   should appear under `reporting`, with its own `source` MAC and the reading it
+   sent. Each of the three signals is labelled in `signals`: `reporting` means
+   the sensor was read (even if the value is empty — an empty bond list is a
+   real answer), `absent` means nothing was read for it. This answers the
+   question directly, without waiting for an incident to happen.
+
+   `counter_baselines` is the SMP counter value BlueSight is measuring from.
+   Failures are only counted *above* the baseline, which is why a proxy that has
+   been failing since before Home Assistant started reports nothing until the
+   next failure.
+
+   Separately, every incident carries an `evidence` field; on a `storm`, `"smp"`
+   means a measurement was used and `"heuristic"` means it was inferred. That is
+   the only place *that* distinction is visible.
+5. **Nothing matched?** A proxy that reported nothing is listed under
+   `silent_sources` in the same section — it is named there rather than left
+   out, so "my proxy is missing" and "my proxy has nothing to say" do not look
+   alike. Discovery joins the telemetry to a proxy by the ESPHome device's
+   network MAC, which is also how habluetooth identifies the scanner. If a
+   proxy's telemetry never appears, check that the three sensors sit on the same
    Home Assistant device as the rest of that node's entities, and that you have
    not renamed them in ESPHome.
 

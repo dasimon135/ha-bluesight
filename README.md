@@ -180,6 +180,12 @@ the storm and reboot windows. Attach it to a bug report. BLE addresses are *not*
 redacted — they are the subject of the report, and a redacted dump cannot show
 that the same address is held on two proxies.
 
+If you run the [ESPHome component](docs/esphome-component.md), the dump's
+`telemetry` section is where you check that it is actually being read:
+`reporting` holds each proxy's raw reading (`absent` and `reporting` are stated
+per signal, so "no telemetry" never looks like "nothing to report"), and
+`silent_sources` names the proxies that sent nothing at all.
+
 ## Entities
 
 | Entity | Type | State | Key attributes |

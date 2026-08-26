@@ -160,6 +160,15 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         return self._reboot_window
 
     @property
+    def counter_baselines(self) -> dict[str, dict[str, int]]:
+        """SMP counter baselines per proxy (read-only copy, for diagnostics).
+
+        The copy is made by :attr:`.CounterDeltas.baselines`; nothing reached
+        through this property can rearm a counter.
+        """
+        return self._counter_deltas.baselines
+
+    @property
     def tracked_sources(self) -> set[str]:
         """Proxy sources seen online at least once since setup."""
         return set(self._last_online)

@@ -2,7 +2,9 @@
 
 For a triage integration this is the single most useful thing to attach to a
 bug report: the exact slot allocations, the scanner health, the rolling failure
-windows, and every incident the detectors currently raise.
+windows, every incident the detectors currently raise, and what -- if anything
+-- each proxy's ESPHome telemetry reported (see :mod:`.diagnostics_data`, which
+holds the shaping so it can be tested without Home Assistant).
 
 Addresses are NOT redacted. They are local BLE/adapter MACs and they are the
 whole subject of the report — a redacted dump cannot show that the same address
@@ -17,6 +19,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 
 from . import BlueSightConfigEntry
+from .diagnostics_data import telemetry_report
 from .incident_policy import dedupe_incidents
 from .window import FailureWindow
 
@@ -48,6 +51,23 @@ async def async_get_config_entry_diagnostics(
         "notified_incidents": [
             incident.key for incident in dedupe_incidents(data.incidents)
         ],
+        # Whether the ESPHome telemetry is actually being read, and what it
+        # said. Every way that reading can fail is silent, so without this
+        # section "no telemetry incidents" is indistinguishable from "the
+        # reader has never seen anything".
+        #
+        # The silence baseline is the health + allocation snapshots, exactly
+        # what the coordinator feeds ``read_fleet_telemetry`` -- NOT
+        # ``tracked_sources``, which is every proxy seen online since setup.
+        # A proxy that has since gone offline is absent from telemetry because
+        # nobody asked it, and listing it as silent would point the reader at
+        # the telemetry chain for a proxy whose real problem is already
+        # reported as PROXY_OFFLINE.
+        "telemetry": telemetry_report(
+            data.telemetry,
+            [p.source for p in data.proxies_health] + [p.source for p in data.proxies],
+            coordinator.counter_baselines,
+        ),
         "storm_window": _window_state(coordinator.storm_window),
         "reboot_window": _window_state(coordinator.reboot_window),
         "tracked_sources": sorted(coordinator.tracked_sources),
