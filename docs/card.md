@@ -60,6 +60,38 @@ and a large fleet makes a tall card. That is a deliberate trade: free slots keep
 their row so the rack reads as a gauge at a glance, and a rack that collapsed its
 empty rows would lose exactly the thing you look at it for.
 
+#### `show_devices: false` — the squares, on one line
+
+If the fixed row per slot is the wrong trade for your fleet, `show_devices:
+false` puts the pips back on a single horizontal line and draws no names at
+all:
+
+```
+Proxy Buanderie              2/3
+▣ ▣ □
+```
+
+Everything else is unchanged — the count, the health line, `offline`, `scan
+only — no connection slots`, the incident feed. What you lose is exactly the
+names: the tile still says *how many* slots are spent, never *who* is spending
+them, so a saturated proxy tells you to go look rather than telling you where.
+
+Worth turning off when the height is the problem and not the answer: eight
+proxies of eight slots is 64 rack rows and a card taller than the screen, while
+the same fleet is eight lines of squares. In that layout a proxy's tile is a
+fixed height whatever its slot count, and the card's masonry size shrinks with
+it.
+
+One thing survives on purpose. A proxy reporting **more occupants than it has
+slots** — the two numbers reach the sensor from the same habluetooth snapshot
+but not from the same field, so they can briefly disagree — draws the extra
+squares anyway, in amber, past the end of the row. Dropping them would make the
+card silently under-report how many devices hold a connection, which is the one
+thing it exists not to do; and with the names off, the amber square is the only
+thing left on screen saying the two numbers disagree.
+
+Default: `true` (the rack).
+
 Below that it draws a **coloured incident feed**: red for `deadlock` and
 `ghost_slot`, amber for everything else — including `bond_lost` — each badge
 carrying the incident kind, the device address, the detail, and the proxies
@@ -133,6 +165,8 @@ Override form (all keys optional):
 type: custom:bluesight-card
 title: BlueSight                                  # card header text
 incident_entity: binary_sensor.bluesight_incident # default shown
+show_devices: true                                # false = one row of pips,
+                                                  # no names (see above)
 proxies:                                            # skip auto-discovery
   - sensor.living_room_proxy_slots_used
   - sensor.garage_proxy_slots_used

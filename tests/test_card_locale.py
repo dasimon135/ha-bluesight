@@ -236,10 +236,16 @@ def test_the_rack_does_not_truncate_the_occupant_list(card_source):
     momentarily disagree. A device holding a connection that the card silently
     refused to draw is the one failure this feature cannot have; an extra row,
     marked, merely says the two numbers disagree.
+
+    The arithmetic moved into ``_slotCounts`` when ``show_devices: false``
+    gained a second layout that must reach the same conclusion; this asserts it
+    where it now lives, and that both layouts read it rather than each other.
     """
-    body = _method_body(card_source, "_renderSlotRack")
+    body = _method_body(card_source, "_slotCounts")
     assert "Math.max(slots, allocated.length)" in body
     assert "pip.filled.overflow" in _method_body(card_source, "_css")
+    for layout in ("_renderSlotRack", "_renderSlotRow"):
+        assert "this._slotCounts(" in _method_body(card_source, layout)
 
 
 def test_an_offline_proxy_and_the_card_sizer_agree_it_draws_no_rack(card_source):
@@ -272,6 +278,62 @@ def test_the_card_size_counts_slots_rather_than_proxies(card_source):
     body = _method_body(card_source, "getCardSize")
     assert "this._slotRowCount(" in body
     assert "1 + Math.max(1, proxies.length) + 1" not in card_source
+
+
+# --- show_devices ------------------------------------------------------------
+
+
+def test_the_layout_option_defaults_to_the_rack(card_source):
+    """A dashboard whose stored config predates ``show_devices`` must not
+    change appearance on upgrade, so the default is the rack -- and the
+    default has to survive being asked before ``setConfig``, which
+    ``getCardSize`` can do.
+    """
+    body = _method_body(card_source, "_showDevices")
+    assert "this._config.show_devices" in body
+    assert "return true;" in body
+    assert "this._config = {};" in _code_only(card_source)
+
+
+def test_the_names_are_off_in_the_horizontal_layout(card_source):
+    """``show_devices: false`` is squares only.
+
+    The layout it restores also drew a list of names under the pips; that is
+    what the rack replaced, and reviving it would revive the defect -- a
+    pip-to-name correspondence carried by list order alone.
+    """
+    body = _method_body(card_source, "_renderSlotRow")
+    assert "_renderConnectedDevice" not in body
+    assert "slot-label" not in body
+    assert 'strip.className = "pips"' in body
+    assert ".pips {" in _method_body(card_source, "_css")
+
+
+def test_the_horizontal_layout_needs_no_new_catalogue_key(card_source):
+    """It draws no text at all: every string on that tile already existed."""
+    assert "_t(" not in _method_body(card_source, "_renderSlotRow")
+
+
+def test_both_layouts_are_in_the_render_signature(card_source):
+    """``setConfig`` nulls the signature, so a config edit repaints without
+    this. That is a promise made by a different method; the signature's own
+    job is to describe what is drawn, and two layouts sharing one signature is
+    exactly the defect the rule exists to prevent.
+    """
+    assert "this._showDevices()" in _method_body(card_source, "_computeSignature")
+
+
+def test_the_card_size_knows_which_layout_it_is_measuring(card_source):
+    """The rack grows a fixed row per slot; the pip row does not grow at all.
+
+    A sizer that measured only the rack would over-report every tile on a
+    dashboard that turned the names off, which is the dashboard that chose the
+    option to be shorter in the first place.
+    """
+    body = _method_body(card_source, "_proxyUnits")
+    assert "this._showDevices()" in body
+    assert "Math.ceil(rows / 2)" in body
+    assert "this._proxyUnits(" in _method_body(card_source, "getCardSize")
 
 
 def test_the_connected_devices_are_part_of_the_render_signature(card_source):
