@@ -206,6 +206,11 @@ you can paste with no custom JavaScript. Both read the entities above. Full
 setup — resource registration, the `custom:bluesight-card` config, and the
 native fallback YAML — is in **[docs/card.md](docs/card.md)**.
 
+> The card draws one row per connection slot, naming the device that holds it.
+> On a large fleet that gets tall: `show_devices: false` puts the pips back on
+> a single line and drops the names. See
+> [docs/card.md](docs/card.md#show_devices-false--the-squares-on-one-line).
+
 > Since 0.4.0 the card ships **inside the integration**, so HACS delivers it
 > along with everything else and the integration serves and registers it
 > itself — no copying, no resource to declare. YAML-mode dashboards still

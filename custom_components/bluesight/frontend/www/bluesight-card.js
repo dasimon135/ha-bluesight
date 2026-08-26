@@ -8,7 +8,9 @@
  *     vertical rack of slots -- one row per slot, a "pip" on the left (filled
  *     = used, empty = free) and, beside it, the device holding that slot.
  *     Auto-discovered from any `sensor.*_slots_used` entity that carries a
- *     `total` attribute.
+ *     `total` attribute. With `show_devices: false` the same pips are drawn
+ *     as a single horizontal row and nobody is named: a denser tile for a
+ *     fleet the rack would make too tall.
  *   - A global incident banner driven by `binary_sensor.bluesight_incident`.
  *     Each incident is rendered as a coloured badge (red for deadlock/ghost
  *     slot, amber for storm) with its kind, address and detail.
@@ -21,6 +23,7 @@
  *   proxies: [sensor.foo_slots_used, ...]   # override auto-discovery
  *   incident_entity: binary_sensor.bluesight_incident
  *   title: BlueSight                        # card header text
+ *   show_devices: true                      # false = one row of pips, no names
  */
 
 // Kept equal to `manifest.json`'s version by tests/test_card_locale.py. The
@@ -209,6 +212,33 @@ class BlueSightCard extends HTMLElement {
   setConfig(config) {
     this._config = config || {};
     this._lastSignature = null; // force a re-render on next hass tick
+  }
+
+  /**
+   * Draw a rack with a name per slot (`true`, the default), or a single
+   * horizontal row of bare pips (`false`)?
+   *
+   * Defaults to `true` because that is what the card did before the option
+   * existed: a dashboard whose stored config predates it must not change
+   * appearance on upgrade. `this._config` is `{}` from the constructor, so
+   * this is also safe on any path that reads it before `setConfig` --
+   * `getCardSize` can be one, and answering "rack" there matches what the
+   * first paint will draw.
+   *
+   * Only an explicit false turns it off. A YAML author who quotes the value
+   * (`show_devices: "false"`) means the same thing and would otherwise get a
+   * truthy string, which is the one way this option could silently do the
+   * opposite of what was written.
+   */
+  _showDevices() {
+    const value = this._config.show_devices;
+    if (value === undefined || value === null) {
+      return true;
+    }
+    if (typeof value === "string") {
+      return value.trim().toLowerCase() !== "false";
+    }
+    return Boolean(value);
   }
 
   /**
@@ -468,7 +498,18 @@ class BlueSightCard extends HTMLElement {
   _computeSignature(proxyEntities, hass, incidentEntity, incidentState, title) {
     // The language belongs in the signature: every drawn string depends on it,
     // and a viewer who changes their profile language moves nothing else.
-    const parts = [title, incidentEntity, this._language()];
+    //
+    // So does the layout. `setConfig` nulls `_lastSignature`, so a config edit
+    // repaints without this -- but that is a promise made by a different
+    // method, and this one's job is that the signature describes what is
+    // drawn. Two layouts with the same signature is exactly the defect that
+    // rule exists to prevent.
+    const parts = [
+      title,
+      incidentEntity,
+      this._language(),
+      `rack:${this._showDevices() ? 1 : 0}`,
+    ];
     for (const id of proxyEntities) {
       const s = hass.states ? hass.states[id] : undefined;
       if (!s) {
@@ -620,9 +661,11 @@ class BlueSightCard extends HTMLElement {
       }
     }
 
-    // The slot rack: one row per slot, the pip on the left, whoever holds that
-    // slot beside it. An offline or unavailable proxy draws none of it -- its
-    // last known occupants are exactly the thing you must not believe.
+    // The slot area: a rack (one row per slot, the pip on the left, whoever
+    // holds that slot beside it) or, under `show_devices: false`, one
+    // horizontal row of the same pips and no names at all. An offline or
+    // unavailable proxy draws neither -- its last known occupants are exactly
+    // the thing you must not believe.
     //
     // The names arrive resolved from the backend. Re-deriving them here from
     // `hass.devices` would mean reimplementing `build_device_index`'s rule in
@@ -646,10 +689,13 @@ class BlueSightCard extends HTMLElement {
       }
       // Not an `else`: a scanner reporting zero slots AND an allocated address
       // is a contradiction, and the occupant is the half of it worth seeing.
-      // It draws under the sentence, as an overflow row.
-      const rack = this._renderSlotRack(used, total, allocated);
-      if (rack) {
-        tile.appendChild(rack);
+      // It draws under the sentence, as an overflow row (or, with the names
+      // off, as an amber pip on its own).
+      const slots = this._showDevices()
+        ? this._renderSlotRack(used, total, allocated)
+        : this._renderSlotRow(used, total, allocated);
+      if (slots) {
+        tile.appendChild(slots);
       }
     }
 
@@ -681,14 +727,7 @@ class BlueSightCard extends HTMLElement {
    *     left alone -- it reports what the sensor says, not what we drew.
    */
   _renderSlotRack(used, total, allocated) {
-    const slots = Math.max(0, total);
-    // Clamp used into [0, slots] so a stale value can't over/under-draw, then
-    // let the occupants extend it: a named device always gets a filled pip.
-    const filled = Math.max(
-      Math.max(0, Math.min(used, slots)),
-      allocated.length
-    );
-    const rows = Math.max(slots, allocated.length);
+    const { slots, filled, rows } = this._slotCounts(used, total, allocated);
     if (rows <= 0) {
       return null;
     }
@@ -700,11 +739,58 @@ class BlueSightCard extends HTMLElement {
     return rack;
   }
 
-  /** One rack row: the pip, then whatever holds it (if anything). */
-  _renderSlot(occupied, overflow, device) {
-    const row = document.createElement("div");
-    row.className = "slot";
+  /**
+   * The same pips, side by side, with nothing named -- `show_devices: false`.
+   *
+   * This is the layout the card had before the rack, and it exists for the
+   * fleet the rack is wrong for: the rack spends a fixed row per slot, so
+   * thirty slots is thirty rows, while one wrapped line of squares still
+   * answers "is anything saturated?" at a glance. What it cannot answer is
+   * "who is holding it", which is the whole of the trade.
+   *
+   * Geometry is `_slotCounts`, byte for byte the rack's, so the two layouts
+   * cannot come to different conclusions about the same proxy. In particular
+   * an overflow pip is still drawn, still amber: dropping it here would be
+   * the one thing the rack refuses to do -- silently under-report how many
+   * devices hold a connection -- and it is worse without names, because the
+   * amber square is then the only thing on screen saying the two numbers
+   * disagree.
+   */
+  _renderSlotRow(used, total, allocated) {
+    const { slots, filled, rows } = this._slotCounts(used, total, allocated);
+    if (rows <= 0) {
+      return null;
+    }
+    const strip = document.createElement("div");
+    strip.className = "pips";
+    for (let i = 0; i < rows; i += 1) {
+      strip.appendChild(this._renderPip(i < filled, i >= slots));
+    }
+    return strip;
+  }
 
+  /**
+   * How many pips to draw (`rows`), how many of them are held (`filled`), and
+   * where the proxy says its slots stop (`slots`) -- past which a pip is an
+   * overflow.
+   *
+   * One place, because three readers need the same answer: the rack, the
+   * horizontal row, and `_slotRowCount` (which sizes the card without
+   * rendering). The rules it encodes are argued in `_renderSlotRack`.
+   */
+  _slotCounts(used, total, allocated) {
+    const slots = Math.max(0, total);
+    // Clamp used into [0, slots] so a stale value can't over/under-draw, then
+    // let the occupants extend it: a named device always gets a filled pip.
+    const filled = Math.max(
+      Math.max(0, Math.min(used, slots)),
+      allocated.length
+    );
+    return { slots, filled, rows: Math.max(slots, allocated.length) };
+  }
+
+  /** One square. Filled = held; overflow = past the end of the rack, amber. */
+  _renderPip(occupied, overflow) {
     const pip = document.createElement("span");
     pip.className = "pip";
     if (occupied) {
@@ -713,7 +799,14 @@ class BlueSightCard extends HTMLElement {
     if (overflow) {
       pip.classList.add("overflow");
     }
-    row.appendChild(pip);
+    return pip;
+  }
+
+  /** One rack row: the pip, then whatever holds it (if anything). */
+  _renderSlot(occupied, overflow, device) {
+    const row = document.createElement("div");
+    row.className = "slot";
+    row.appendChild(this._renderPip(occupied, overflow));
 
     const label = this._renderConnectedDevice(device);
     if (label) {
@@ -946,6 +1039,19 @@ class BlueSightCard extends HTMLElement {
         gap: 4px;
         margin-top: 8px;
       }
+      .pips {
+        /* \`show_devices: false\`: the rack's pips on one line. Wraps, so a
+           proxy with more slots than fit stays inside the tile. */
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+        margin-top: 8px;
+      }
+      .pips .pip {
+        /* The rack nudges each pip down to sit on its label's first line;
+           there is no label here, so the nudge would only be a tilt. */
+        margin-top: 0;
+      }
       .slot {
         display: flex;
         align-items: flex-start;
@@ -1082,7 +1188,40 @@ class BlueSightCard extends HTMLElement {
     const allocated = Array.isArray(attrs.allocated_devices)
       ? attrs.allocated_devices
       : [];
-    return Math.max(Math.max(0, this._toInt(attrs.total, 0)), allocated.length);
+    return this._slotCounts(
+      this._toInt(stateObj.state, 0),
+      this._toInt(attrs.total, 0),
+      allocated
+    ).rows;
+  }
+
+  /**
+   * The masonry units one proxy tile costs, from its slot count and the
+   * layout, in pixels of the CSS this file ships over the 50px Lovelace
+   * assumes:
+   *
+   *   - the tile's fixed part -- borders, padding, the name line, the health
+   *     line, the gap to the next tile: ~64px, one unit;
+   *   - with the rack, each row is 20px plus a 4px gap: two rows to a unit;
+   *   - without it, the whole slot area is one 14px line of pips plus its 8px
+   *     margin -- 22px, the same as a pair of rack rows, so one unit, and the
+   *     same one whether the proxy has two slots or eight. That fixed height
+   *     is the point of the option.
+   *
+   * A proxy that draws no pips at all (offline, missing, a passive scanner)
+   * has no slot area in either layout and costs only the fixed part.
+   *
+   * The one thing this cannot see is `.pips` wrapping: a proxy with more slots
+   * than fit the card's width takes a second line, and how many fit depends on
+   * a width `getCardSize` is called without. Counted as one line deliberately
+   * -- the alternative is a hardcoded guess at the viewer's column width, and
+   * masonry re-asks on every state change anyway.
+   */
+  _proxyUnits(rows) {
+    if (!this._showDevices()) {
+      return 1 + (rows > 0 ? 1 : 0);
+    }
+    return 1 + Math.ceil(rows / 2);
   }
 
   /**
@@ -1095,24 +1234,25 @@ class BlueSightCard extends HTMLElement {
    * 50px Lovelace assumes:
    *
    *   - the card header, ~39px, plus the card's own padding: one unit;
-   *   - each proxy tile's fixed part -- borders, padding, the name line, the
-   *     health line, the gap to the next tile: ~64px, one unit;
-   *   - each rack row: 20px plus a 4px gap, so two rows to a unit;
    *   - the incident area: one unit, which is the "no incidents" line or a
    *     badge or two. A long incident feed still under-reports, but that is a
-   *     transient state and masonry re-asks on every state change.
+   *     transient state and masonry re-asks on every state change;
+   *   - each proxy tile: `_proxyUnits`, which is where the per-layout pixels
+   *     are counted -- the tile is a fixed height under `show_devices: false`
+   *     and grows with the slot count under the rack.
    */
   getCardSize() {
     const hass = this._hass;
     const states = (hass && hass.states) || {};
     const proxies = this._discoverProxyEntities(hass || {});
     if (!proxies.length) {
-      // The empty-state paragraph is three lines of small text.
+      // The empty-state paragraph is three lines of small text, in either
+      // layout: there is no proxy to lay out.
       return 3;
     }
     let size = 2; // card header + incident area
     for (const entityId of proxies) {
-      size += 1 + Math.ceil(this._slotRowCount(entityId, states) / 2);
+      size += this._proxyUnits(this._slotRowCount(entityId, states));
     }
     return size;
   }
