@@ -64,13 +64,17 @@ def test_on_when_incidents_present() -> None:
         {
             "kind": "deadlock",
             "address": "11:22",
+            "device_name": "",
             "sources": ["AA:BB", "CC:DD"],
+            "source_names": ["AA:BB", "CC:DD"],
             "detail": "on 2 proxies",
         },
         {
             "kind": "storm",
             "address": "33:44",
+            "device_name": "",
             "sources": [],
+            "source_names": [],
             "detail": "5 failures / 300s",
         },
     ]
@@ -107,3 +111,67 @@ def test_proxy_online_unavailable_when_absent() -> None:
     sensor = ProxyOnlineBinarySensor(_coord_health(), "AA:BB")
     assert sensor.available is False
     assert sensor.is_on is None
+
+
+# --- naming the device an incident is about ---------------------------------
+#
+# The card showed a bare MAC where it already knew how to name the proxy, so a
+# user reading "9C:AC:6D:D4:F9:FC" had to translate it themselves to know which
+# thermostat was involved. The address stays in the payload -- it is the
+# correlation key and the only thing present for a device Home Assistant does
+# not know -- and the name rides beside it.
+
+
+def _named(*incidents: Incident, **names: str) -> _FakeCoordinator:
+    return _FakeCoordinator(
+        BlueSightData(
+            incidents=list(incidents),
+            device_names={k.replace("_", ":").upper(): v for k, v in names.items()},
+        )
+    )
+
+
+def test_incident_carries_the_home_assistant_name_of_its_device() -> None:
+    incident = Incident(IncidentKind.BOND_LOST, "9C:AC:6D:D4:F9:FC", ["AA:BB"])
+    coordinator = _named(incident, **{"9c_ac_6d_d4_f9_fc": "Madoka Manon"})
+    published = IncidentBinarySensor(coordinator).extra_state_attributes["incidents"]
+    assert published[0]["address"] == "9C:AC:6D:D4:F9:FC"
+    assert published[0]["device_name"] == "Madoka Manon"
+
+
+def test_an_address_home_assistant_cannot_name_publishes_an_empty_name() -> None:
+    """Absent, not guessed: an unmanaged peripheral holding a slot is itself a
+    diagnostic, and a blank name lets the card fall back to the address rather
+    than print something confident and wrong."""
+    incident = Incident(IncidentKind.GHOST_SLOT, "C3:EB:49:65:67:55", ["AA:BB"])
+    published = IncidentBinarySensor(_named(incident)).extra_state_attributes[
+        "incidents"
+    ]
+    assert published[0]["device_name"] == ""
+
+
+def test_the_name_lookup_is_case_insensitive() -> None:
+    """Addresses are correlated on the canonical form everywhere else; a name
+    map keyed in the other case must not silently miss."""
+    incident = Incident(IncidentKind.BOND_LOST, "9c:ac:6d:d4:f9:fc", ["AA:BB"])
+    coordinator = _named(incident, **{"9c_ac_6d_d4_f9_fc": "Madoka Manon"})
+    published = IncidentBinarySensor(coordinator).extra_state_attributes["incidents"]
+    assert published[0]["device_name"] == "Madoka Manon"
+
+
+def test_a_proxy_the_names_map_knows_is_labelled_not_addressed() -> None:
+    """The badge footer said "sur D0:CF:13:0F:05:5A" beside a sentence that
+    already said "Proxy Buanderie" -- one proxy, named two ways, one of them
+    unreadable."""
+    incident = Incident(IncidentKind.BOND_LOST, "11:22", ["D0:CF:13:0F:05:5A"])
+    coordinator = _FakeCoordinator(
+        BlueSightData(
+            incidents=[incident],
+            proxy_display_names={"D0:CF:13:0F:05:5A": "Proxy Buanderie"},
+        )
+    )
+    published = IncidentBinarySensor(coordinator).extra_state_attributes["incidents"]
+    assert published[0]["source_names"] == ["Proxy Buanderie"]
+    # The address is kept: it is what correlates this badge with the proxy's
+    # own entities, and the card still needs it when no name is known.
+    assert published[0]["sources"] == ["D0:CF:13:0F:05:5A"]

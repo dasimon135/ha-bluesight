@@ -29,7 +29,7 @@
 // Kept equal to `manifest.json`'s version by tests/test_card_locale.py. The
 // card has no build step, so there is nowhere to inject the real version at
 // package time; a checked constant is the cheap way to make the drift loud.
-const CARD_VERSION = "0.6.1";
+const CARD_VERSION = "0.6.2";
 
 // eslint-disable-next-line no-console
 console.info(
@@ -116,7 +116,7 @@ const EMBEDDED_EN = {
   "card.kind.deadlock": "Deadlock",
   "card.kind.ghost_slot": "Ghost slot",
   "card.kind.storm": "Storm",
-  "card.kind.bond_lost": "Bond lost",
+  "card.kind.bond_lost": "Missing pairing key",
   "card.kind.proxy_offline": "Proxy offline",
   "card.kind.proxy_stalled": "Proxy stalled",
   "card.kind.proxy_reboot_storm": "Proxy reboot storm",
@@ -550,7 +550,16 @@ class BlueSightCard extends HTMLElement {
         // `sources` is rendered for deadlocks, so a change of the proxy set
         // must invalidate the signature too.
         const sources = Array.isArray(inc.sources) ? inc.sources.join(",") : "";
-        parts.push(`${inc.kind}|${inc.address}|${inc.detail}|${sources}`);
+        // Names are part of what is drawn, so a rename with everything else
+        // unchanged has to invalidate the signature or the badge keeps the
+        // old label until some other attribute happens to move.
+        const names = Array.isArray(inc.source_names)
+          ? inc.source_names.join(",")
+          : "";
+        parts.push(
+          `${inc.kind}|${inc.address}|${inc.device_name || ""}|${inc.detail}` +
+            `|${sources}|${names}`
+        );
       }
     } else {
       parts.push("inc:missing");
@@ -937,9 +946,22 @@ class BlueSightCard extends HTMLElement {
         : this._t("card.kind.unknown");
     badge.appendChild(label);
 
+    // What Home Assistant calls the device, when it can name it at all. The
+    // address stays on the badge either way: it is what correlates this row
+    // with the proxy's own entities and with the logs, and for a peripheral
+    // the registry cannot account for it is the only identity there is --
+    // which is itself the diagnostic. So the name leads and the address
+    // follows it, demoted; an unnamed device simply keeps the address alone.
+    const deviceName = inc && inc.device_name ? String(inc.device_name) : "";
+    if (deviceName) {
+      const named = document.createElement("span");
+      named.className = "incident-device";
+      named.textContent = deviceName;
+      badge.appendChild(named);
+    }
     if (address) {
       const addr = document.createElement("span");
-      addr.className = "incident-addr";
+      addr.className = deviceName ? "incident-addr subtle" : "incident-addr";
       addr.textContent = address;
       badge.appendChild(addr);
     }
@@ -957,12 +979,22 @@ class BlueSightCard extends HTMLElement {
     }
 
     // Which proxies are involved — the actionable part of a deadlock.
+    //
+    // Prefer the names the backend resolved: they are the same ones the detail
+    // sentence above already used, so a badge cannot call one proxy two things
+    // (it used to read "on Proxy Buanderie" and then "on D0:CF:13:0F:05:5A").
+    // A backend too old to publish them, seen by a newer cached card, still
+    // has `sources`.
     const sources = inc && Array.isArray(inc.sources) ? inc.sources : [];
-    if (sources.length) {
+    const sourceNames =
+      inc && Array.isArray(inc.source_names) && inc.source_names.length
+        ? inc.source_names
+        : sources;
+    if (sourceNames.length) {
       const src = document.createElement("span");
       src.className = "incident-addr";
       src.textContent = this._t("card.incident.sources", {
-        sources: sources.join(", "),
+        sources: sourceNames.join(", "),
       });
       badge.appendChild(src);
     }
@@ -1145,10 +1177,19 @@ class BlueSightCard extends HTMLElement {
       .incident-kind {
         font-weight: 700;
       }
+      .incident-device {
+        font-weight: 600;
+      }
       .incident-addr {
         font-family: var(--code-font-family, monospace);
         font-size: 0.9rem;
         opacity: 0.95;
+      }
+      /* An address shown beside a name it agrees with: still readable, but no
+         longer competing with the name for the eye. */
+      .incident-addr.subtle {
+        font-size: 0.8rem;
+        opacity: 0.75;
       }
       .incident-detail {
         font-size: 0.9rem;

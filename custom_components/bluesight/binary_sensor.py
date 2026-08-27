@@ -19,7 +19,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from . import BlueSightConfigEntry
 from .const import DOMAIN
 from .coordinator import BlueSightCoordinator
-from .model import ProxyHealth
+from .model import ProxyHealth, normalize_address
 
 
 async def async_setup_entry(
@@ -81,6 +81,8 @@ class IncidentBinarySensor(
     @property
     def extra_state_attributes(self) -> dict[str, object]:
         incidents = self.coordinator.data.incidents
+        names = self.coordinator.data.device_names
+        proxy_names = self.coordinator.data.proxy_display_names
         return {
             "incident_count": len(incidents),
             # Ghost-slot verdicts are biased toward "alive" when the availability
@@ -91,7 +93,23 @@ class IncidentBinarySensor(
                 {
                     "kind": incident.kind.value,
                     "address": incident.address,
+                    # What Home Assistant calls this device, published *beside*
+                    # the address and never instead of it. The address is the
+                    # correlation key, and it is all there is for a peripheral
+                    # the registry cannot account for -- which is itself a
+                    # diagnostic, so an unknown device gets "" and lets the
+                    # reader fall back to the address rather than be shown a
+                    # confident wrong name.
+                    "device_name": names.get(normalize_address(incident.address), ""),
                     "sources": incident.sources,
+                    # The same names the detail sentence uses, so the card
+                    # cannot label one proxy two ways in a single badge. Falls
+                    # back to the source address per entry, never to a blank:
+                    # this list is what identifies *where*.
+                    "source_names": [
+                        proxy_names.get(source, source)
+                        for source in incident.sources
+                    ],
                     "detail": incident.detail,
                 }
                 for incident in incidents

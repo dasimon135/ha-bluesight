@@ -396,7 +396,7 @@ def test_content_bond_lost_names_the_proxy_and_the_remedy():
     title, message = notification_content(
         _bond_lost("11:22", proxy="Proxy Cuisine", count="4"), EN
     )
-    assert title == "BlueSight: bond lost"
+    assert title == "BlueSight: missing pairing key"
     assert "11:22" in message
     assert "Proxy Cuisine" in message
     assert "4" in message
@@ -407,10 +407,10 @@ def test_content_bond_lost_in_french_names_the_proxy_and_the_remedy():
     title, message = notification_content(
         _bond_lost("11:22", proxy="Proxy Cuisine", count="4"), FR
     )
-    assert title == "BlueSight : appairage perdu"
+    assert title == "BlueSight : clé d'appairage manquante"
     assert "11:22" in message
     assert "Proxy Cuisine" in message
-    assert "4 échecs d'appairage" in message
+    assert "4 connexions refusées" in message
     assert "réappairez" in message.lower()
 
 

@@ -370,6 +370,15 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
             # detector that judges devices Home Assistant cannot judge. See
             # `DeviceIndex.managed_addresses`.
             managed_addresses=index.managed_addresses,
+            # Deliberately the *peripheral* index, for the same reason
+            # `device_for` uses it: a name is a claim about which device is on
+            # the other end of a BLE link, and a Wi-Fi MAC is not evidence for
+            # that. Addresses it cannot account for are simply absent, and the
+            # incident sensor publishes "" for them.
+            device_names={
+                address: index.names.get(device_id, "")
+                for address, device_id in index.peripherals.items()
+            },
         )
 
     def forget_proxy(self, source: str) -> bool:

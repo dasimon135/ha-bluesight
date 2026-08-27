@@ -45,10 +45,12 @@ COUNTED = [
     (
         "incident.bond_lost.detail",
         {"count": "1", "proxy": "Salon"},
-        "1 pairing failure on Salon, which holds no bond for this device "
-        "— re-pair through Salon",
-        "1 échec d'appairage sur Salon, qui ne détient aucun bond pour cet "
-        "appareil — réappairez via Salon",
+        "1 connection refused through Salon, which has no pairing key for "
+        "this device. On its own this is harmless; if the count climbs, "
+        "re-pair the device through Salon.",
+        "1 connexion refusée via Salon, qui n'a pas la clé d'appairage de "
+        "cet appareil. Isolé, c'est bénin ; si le nombre monte, réappairez "
+        "l'appareil en passant par Salon.",
     ),
     (
         "card.proxy.last_advert_with_devices",
@@ -118,9 +120,9 @@ def test_bond_lost_notification_agrees_with_a_single_failure():
         evidence="smp",
     )
     _, english = notification_content(incident, EN)
-    assert english.startswith("1 pairing failure for")
+    assert english.startswith("1 connection refused for")
     _, french = notification_content(incident, FR)
-    assert french.startswith("1 échec d'appairage pour")
+    assert french.startswith("1 connexion refusée pour")
 
 
 def test_reboot_storm_notification_agrees_with_a_single_reboot():

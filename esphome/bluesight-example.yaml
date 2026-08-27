@@ -24,7 +24,7 @@
 # the two cannot drift; `@main` will track the newest format instead.
 
 external_components:
-  - source: github://dasimon135/ha-bluesight@v0.6.1
+  - source: github://dasimon135/ha-bluesight@v0.6.2
     components: [bluesight]
 
 # While developing against a branch, this is the form the rest of your configs
@@ -88,7 +88,7 @@ bluesight:
 #   esphome.bluetooth-proxy: github://esphome/bluetooth-proxies/m5stack/m5stack-atom-s3.yaml@main
 #
 # external_components:                       # <-- added
-#   - source: github://dasimon135/ha-bluesight@v0.6.1
+#   - source: github://dasimon135/ha-bluesight@v0.6.2
 #     components: [bluesight]
 #
 # bluesight:                                 # <-- added
