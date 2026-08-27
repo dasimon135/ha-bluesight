@@ -18,6 +18,7 @@ from .detector import (
     detect_stalled_proxies,
     detect_storm,
 )
+from .incident_policy import dedupe_incidents
 from .model import Incident, ProxyHealth, ProxySlots
 from .rendering import Catalogue, plural_count, render
 from .telemetry import CounterDeltas, ProxyTelemetry
@@ -190,6 +191,23 @@ def build_triage_data(
             inc = detect_reboot_storm(src, reboot_window)
             if inc is not None:
                 incidents.append(inc)
+    # Precedence, applied HERE and not only by whoever consumes the list.
+    #
+    # `dedupe_incidents` decides which of two overlapping verdicts is the one
+    # worth raising -- a missing pairing key over the storm it causes, a
+    # deadlock over the ghost slot that is what a deadlock looks like. It used
+    # to be applied by `notify` and by `diagnostics` and by nothing else, so
+    # the rules governed push notifications while `binary_sensor` published the
+    # raw list: the card drew two rows for one fault, `incident_count` counted
+    # it twice, and every automation keyed on that count inherited the error.
+    # A real fleet found it -- one thermostat rendered as both a storm and a
+    # bond_lost, side by side, naming the same proxy.
+    #
+    # Before rendering, so no prose is composed for an incident about to be
+    # dropped. The two remaining call sites now operate on an already-deduped
+    # list and are left in place: the function is idempotent, and each has
+    # tests that pin the precedence at its own layer.
+    incidents = dedupe_incidents(incidents)
     # `detail` is a published contract: it lands in the `incidents` attribute
     # of `binary_sensor.bluesight_incident`, and user automations format push
     # notifications from it. Rendering it here -- once, where the incident
