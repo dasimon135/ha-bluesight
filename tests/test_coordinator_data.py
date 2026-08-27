@@ -504,3 +504,68 @@ def test_the_assembly_defaults_mirror_the_shipped_constants():
     parameters = inspect.signature(build_triage_data).parameters
     assert parameters["idle_threshold_s"].default == DEFAULT_IDLE_SLOT_THRESHOLD_S
     assert parameters["stalled_threshold_s"].default == DEFAULT_STALLED_THRESHOLD_S
+
+
+# --- precedence is not a notification-only concern ---------------------------
+#
+# `dedupe_incidents` encodes which of two overlapping verdicts is the one worth
+# raising. It was applied by `notify` and by `diagnostics` and NOT here, so the
+# rules held for push notifications while the incident sensor -- and therefore
+# the card, `incident_count`, and every automation keyed on it -- published the
+# unfiltered list. A real fleet showed it: one thermostat with a missing
+# pairing key rendered as both a storm and a bond_lost, two rows for one fault,
+# and counted as two.
+
+
+def _bond_lost_telemetry(address="11:22:33:44:55:66", source="AA", count=7):
+    return [
+        ProxyTelemetry(
+            source=source, smp_failures={address: count}, bonds=set()
+        )
+    ]
+
+
+def test_bond_lost_supersedes_a_storm_for_the_same_address():
+    address = "11:22:33:44:55:66"
+    now = [0.0]
+    window = FailureWindow(window_s=300, threshold=5, clock=lambda: now[0])
+    for _ in range(5):
+        now[0] += 10
+        window.record(address)
+
+    data = build_triage_data(
+        [], {}, window, telemetry=_bond_lost_telemetry(address), proxy_names={}
+    )
+
+    kinds = [i.kind for i in data.incidents]
+    assert IncidentKind.BOND_LOST in kinds
+    assert IncidentKind.STORM not in kinds, (
+        "the storm is the symptom; the missing key is the fault, and the only "
+        "one of the two that names a remedy"
+    )
+
+
+def test_a_storm_with_no_bond_evidence_still_stands():
+    """The rule must not silence the heuristic wherever the firmware is mute --
+    a proxy without the ESPHome component reports no bonds at all."""
+    now = [0.0]
+    window = FailureWindow(window_s=300, threshold=5, clock=lambda: now[0])
+    for _ in range(5):
+        now[0] += 10
+        window.record("11:22")
+
+    data = build_triage_data([], {}, window)
+
+    assert [i.kind for i in data.incidents].count(IncidentKind.STORM) == 1
+
+
+def test_deadlock_supersedes_a_ghost_slot_for_the_same_address():
+    """The other address-layer rule, on the same path, for the same reason."""
+    proxies = [
+        ProxySlots("AA", "proxy-a", 3, 2, ["11:22"]),
+        ProxySlots("BB", "proxy-b", 3, 2, ["11:22"]),
+    ]
+    data = build_triage_data(proxies, {"11:22": False}, _empty_window())
+    kinds = [i.kind for i in data.incidents]
+    assert IncidentKind.DEADLOCK in kinds
+    assert IncidentKind.GHOST_SLOT not in kinds

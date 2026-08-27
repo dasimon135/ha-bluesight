@@ -1,7 +1,7 @@
 {
   "incident.deadlock.detail": "Held on {count} proxies simultaneously",
   "incident.ghost_slot.detail": "Slot held on {proxy} while device unavailable",
-  "incident.ghost_slot.idle_detail": "Slot held on {proxy} with no GATT traffic for {seconds}s (device not managed by Home Assistant)",
+  "incident.ghost_slot.idle_detail": "Slot held on {proxy} with nothing exchanged with the device for {seconds}s (device not managed by Home Assistant)",
   "incident.storm.detail.one": "{count} failure in {seconds}s",
   "incident.storm.detail.other": "{count} failures in {seconds}s",
   "incident.bond_lost.detail.one": "{count} connection refused through {proxy}, which has no pairing key for this device. On its own this is harmless; if the count climbs, re-pair the device through {proxy}.",
@@ -20,7 +20,7 @@
   "notify.ghost_slot.message": "A slot on {proxy} is held for {address} but the device is unavailable. If it stays stuck, restart that proxy to free the slot.",
   "notify.ghost_slot.proxy_unknown": "an unspecified proxy",
   "notify.ghost_slot_idle.title": "BlueSight: idle slot",
-  "notify.ghost_slot_idle.message": "A slot on {proxy} is held for {address} with no GATT traffic for {seconds}s. This address is not a Home Assistant device, so nothing else can tell whether the link is alive. If the slot stays held, restart that proxy to free it.",
+  "notify.ghost_slot_idle.message": "A slot on {proxy} is held for {address} with nothing exchanged with the device for {seconds}s. This address is not a Home Assistant device, so nothing else can tell whether the link is alive. If the slot stays held, restart that proxy to free it.",
   "notify.bond_lost.title": "BlueSight: missing pairing key",
   "notify.bond_lost.message.one": "{count} connection refused for {address} through {proxy}: this proxy has no pairing key for the device. On its own this is harmless; if the count climbs, re-pair the device through {proxy} — each proxy keeps its own keys.",
   "notify.bond_lost.message.other": "{count} connections refused for {address} through {proxy}: this proxy has no pairing key for the device. Re-pair the device through {proxy} — each proxy keeps its own keys, so pairing through another one will not help.",

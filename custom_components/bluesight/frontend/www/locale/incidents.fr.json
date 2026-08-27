@@ -1,7 +1,7 @@
 {
   "incident.deadlock.detail": "Retenu simultanément sur {count} proxys",
   "incident.ghost_slot.detail": "Slot retenu sur {proxy} alors que l'appareil est indisponible",
-  "incident.ghost_slot.idle_detail": "Slot retenu sur {proxy} sans trafic GATT depuis {seconds}s (appareil non géré par Home Assistant)",
+  "incident.ghost_slot.idle_detail": "Slot retenu sur {proxy} sans aucun échange avec l'appareil depuis {seconds}s (appareil non géré par Home Assistant)",
   "incident.storm.detail.one": "{count} échec en {seconds}s",
   "incident.storm.detail.other": "{count} échecs en {seconds}s",
   "incident.bond_lost.detail.one": "{count} connexion refusée via {proxy}, qui n'a pas la clé d'appairage de cet appareil. Isolé, c'est bénin ; si le nombre monte, réappairez l'appareil en passant par {proxy}.",
@@ -20,7 +20,7 @@
   "notify.ghost_slot.message": "Un slot sur {proxy} est retenu pour {address} alors que l'appareil est indisponible. S'il reste bloqué, redémarrez ce proxy pour libérer le slot.",
   "notify.ghost_slot.proxy_unknown": "un proxy non identifié",
   "notify.ghost_slot_idle.title": "BlueSight : slot inactif",
-  "notify.ghost_slot_idle.message": "Un slot sur {proxy} est retenu pour {address} sans trafic GATT depuis {seconds}s. Cette adresse ne correspond à aucun appareil Home Assistant : rien d'autre ne permet de savoir si le lien est encore vivant. Si le slot reste retenu, redémarrez ce proxy pour le libérer.",
+  "notify.ghost_slot_idle.message": "Un slot sur {proxy} est retenu pour {address} sans aucun échange avec l'appareil depuis {seconds}s. Cette adresse ne correspond à aucun appareil Home Assistant : rien d'autre ne permet de savoir si le lien est encore vivant. Si le slot reste retenu, redémarrez ce proxy pour le libérer.",
   "notify.bond_lost.title": "BlueSight : clé d'appairage manquante",
   "notify.bond_lost.message.one": "{count} connexion refusée pour {address} via {proxy} : ce proxy n'a pas la clé d'appairage de cet appareil. Isolé, c'est bénin ; si le nombre monte, réappairez l'appareil en passant par {proxy} — chaque proxy garde ses propres clés.",
   "notify.bond_lost.message.other": "{count} connexions refusées pour {address} via {proxy} : ce proxy n'a pas la clé d'appairage de cet appareil. Réappairez l'appareil en passant par {proxy} — chaque proxy garde ses propres clés, appairer via un autre ne corrigera rien.",

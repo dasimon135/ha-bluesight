@@ -29,7 +29,7 @@
 // Kept equal to `manifest.json`'s version by tests/test_card_locale.py. The
 // card has no build step, so there is nowhere to inject the real version at
 // package time; a checked constant is the cheap way to make the drift loud.
-const CARD_VERSION = "0.6.2";
+const CARD_VERSION = "0.6.3";
 
 // eslint-disable-next-line no-console
 console.info(
