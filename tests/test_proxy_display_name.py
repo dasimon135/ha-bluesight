@@ -90,8 +90,9 @@ def _bond_lost_detail(names, *, language="fr"):
 def test_the_rendered_detail_uses_the_name_the_user_gave_the_proxy():
     incident = _bond_lost_detail(_names(_bluesight_proxy_device(renamed_to="Proxy Buanderie")))
     assert incident.detail == (
-        "1 échec d'appairage sur Proxy Buanderie, qui ne détient aucun bond "
-        "pour cet appareil — réappairez via Proxy Buanderie"
+        "1 connexion refusée via Proxy Buanderie, qui n'a pas la clé "
+        "d'appairage de cet appareil. Isolé, c'est bénin ; si le nombre "
+        "monte, réappairez l'appareil en passant par Proxy Buanderie."
     )
     assert SCANNER_NAME not in incident.detail
 
@@ -101,8 +102,9 @@ def test_an_unrenamed_proxy_still_reads_as_it_always_did():
     every user who has not renamed anything."""
     incident = _bond_lost_detail(_names(_bluesight_proxy_device()))
     assert incident.detail == (
-        f"1 échec d'appairage sur {SCANNER_NAME}, qui ne détient aucun bond "
-        f"pour cet appareil — réappairez via {SCANNER_NAME}"
+        f"1 connexion refusée via {SCANNER_NAME}, qui n'a pas la clé "
+        f"d'appairage de cet appareil. Isolé, c'est bénin ; si le nombre "
+        f"monte, réappairez l'appareil en passant par {SCANNER_NAME}."
     )
 
 

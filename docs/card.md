@@ -15,7 +15,10 @@ entities the integration creates:
   advertisement; attributes `device_count`, `connectable`, `online`.
 - `binary_sensor.bluesight_incident` — `on` when incidents exist; attributes
   `incident_count` (int), `availability_degraded` (bool), and `incidents` (list
-  of `{kind, address, sources, detail}`, `kind` ∈ `deadlock` / `ghost_slot` /
+  of `{kind, address, device_name, sources, source_names, detail}` — where
+  `device_name` is what Home Assistant calls the peripheral, `""` when it
+  cannot name one, and `source_names` the proxies named the way the `detail`
+  sentence names them — `kind` ∈ `deadlock` / `ghost_slot` /
   `storm` / `bond_lost` / `proxy_offline` / `proxy_stalled` /
   `proxy_reboot_storm`).
 

@@ -38,6 +38,16 @@ class BlueSightData:
     # and the card can show the raw readings the verdicts were drawn from. A
     # proxy without the ESPHome component is simply absent from this list.
     telemetry: list[ProxyTelemetry] = field(default_factory=list)
+    # What Home Assistant calls each peripheral, keyed by canonical address.
+    # Presentation only -- no detector reads it, and a name is never evidence.
+    # Covers every address the registry can account for via Bluetooth, so an
+    # address absent here is one Home Assistant cannot name (see
+    # `device_index.DeviceIndex.peripherals`).
+    device_names: dict[str, str] = field(default_factory=dict)
+    # What to *call* each proxy, keyed by canonical source. The same map the
+    # detectors render `{proxy}` from, carried through so the card names a
+    # proxy identically to the sentence beside it.
+    proxy_display_names: dict[str, str] = field(default_factory=dict)
 
 
 def build_triage_data(
@@ -67,6 +77,10 @@ def build_triage_data(
     idle_threshold_s: float = 1800.0,
     proxy_names: dict[str, str] | None = None,
     managed_addresses: set[str] | None = None,
+    # Presentation only, and deliberately the last argument: no detector reads
+    # it, so it cannot change a verdict -- it rides through to the snapshot for
+    # the incident sensor to publish beside each address.
+    device_names: dict[str, str] | None = None,
 ) -> BlueSightData:
     """Pure assembly: run all detectors over a snapshot + the rolling failure
     windows and return the combined incident list. No HA, no I/O.
@@ -201,4 +215,6 @@ def build_triage_data(
         proxies_health=proxies_health,
         availability_degraded=availability_degraded,
         telemetry=telemetry,
+        device_names=dict(device_names or {}),
+        proxy_display_names=dict(proxy_names or {}),
     )
