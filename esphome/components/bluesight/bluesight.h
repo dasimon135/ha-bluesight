@@ -54,6 +54,12 @@ struct SlotEntry {
   /// registered application, and `read`/`write` events carry only a conn_id,
   /// so the interface has to be part of the key for the lookup to be
   /// unambiguous across clients.
+  ///
+  /// That makes the key per-*application*, which is why only the per-
+  /// application events may create an entry. The broadcast link events
+  /// (CONNECT, DISCONNECT) arrive once per registered client for a single
+  /// physical link, so keying those by interface records one connection N
+  /// times. See the CONNECT case in `gattc_event_handler`.
   uint32_t key;
   uint32_t last_traffic_ms;
   bool used;
@@ -109,6 +115,7 @@ class BlueSightComponent : public PollingComponent {
 #ifdef USE_ESP32_BLE_CLIENT
   void open_slot_(uint32_t key, const uint8_t *address);
   void close_slot_(uint32_t key);
+  void close_slots_for_address_(const uint8_t *address);
   void touch_slot_(uint32_t key);
   SlotEntry slots_[MAX_TRACKED_SLOTS]{};
 #endif

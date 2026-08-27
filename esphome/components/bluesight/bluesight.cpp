@@ -297,16 +297,28 @@ void BlueSightComponent::gattc_event_handler(esp_gattc_cb_event_t event, esp_gat
   // conn_id is only unique within one GATT client interface, and every
   // registered client's events arrive here, so the interface is part of the
   // key. Read and write events carry no address at all -- only a conn_id --
-  // which is why the mapping has to be built on connect and torn down on
-  // disconnect rather than derived per event.
+  // which is why the mapping has to be built when the connection opens and
+  // torn down when it closes rather than derived per event.
   const uint32_t interface = static_cast<uint32_t>(gattc_if) << 16;
   bool membership_changed = false;
 
   switch (event) {
     case ESP_GATTC_CONNECT_EVT:
-      membership_changed = true;
-      this->open_slot_(interface | param->connect.conn_id, param->connect.remote_bda);
-      break;
+      // Deliberately not tracked. CONNECT reports the *physical* ACL link and
+      // ESP-IDF delivers it to every registered GATT client application, each
+      // under its own `gattc_if`. Opening a slot here therefore recorded one
+      // link as N slots -- one per registered client, which on a proxy is its
+      // connection slots plus every `ble_client` -- all carrying the same
+      // address. Only the interface that actually owns the connection then
+      // received the traffic events, so the other N-1 records sat frozen at
+      // the moment the link came up and aged without bound: a manufactured
+      // ghost slot, and a table full of phantoms that crowded out real ones.
+      //
+      // OPEN below is the per-application event and the one that means "this
+      // client holds a GATT connection", which is the quantity being reported.
+      // It follows CONNECT within milliseconds for the owning interface, so
+      // nothing real is lost by ignoring this.
+      return;
     case ESP_GATTC_OPEN_EVT:
       if (param->open.status == ESP_GATT_OK) {
         membership_changed = true;
@@ -314,8 +326,13 @@ void BlueSightComponent::gattc_event_handler(esp_gattc_cb_event_t event, esp_gat
       }
       break;
     case ESP_GATTC_DISCONNECT_EVT:
+      // Closed by address, not by key: DISCONNECT is broadcast like CONNECT,
+      // so the copy that reaches the owning interface is not distinguishable
+      // here, and the link is gone for every record regardless of which
+      // interface opened it. Idempotent, and it cannot leave a slot behind if
+      // a CLOSE is ever missed.
       membership_changed = true;
-      this->close_slot_(interface | param->disconnect.conn_id);
+      this->close_slots_for_address_(param->disconnect.remote_bda);
       break;
     case ESP_GATTC_CLOSE_EVT:
       membership_changed = true;
@@ -350,8 +367,8 @@ void BlueSightComponent::open_slot_(uint32_t key, const uint8_t *address) {
 
   for (SlotEntry &entry : this->slots_) {
     if (entry.used && entry.key == key) {
-      // CONNECT and then OPEN both land here for one connection; the second is
-      // an update, not a duplicate.
+      // A client that reopens the same conn_id without an intervening close is
+      // updating the record it already has, not taking a second slot.
       memcpy(entry.address, address, ESP_BD_ADDR_LEN);
       entry.last_traffic_ms = now;
       return;
@@ -381,6 +398,17 @@ void BlueSightComponent::close_slot_(uint32_t key) {
     if (entry.used && entry.key == key) {
       entry.used = false;
       return;
+    }
+  }
+}
+
+void BlueSightComponent::close_slots_for_address_(const uint8_t *address) {
+  // No early return: one address is one physical link, but a client that
+  // reconnected without a clean close could still hold a stale record for it,
+  // and the link being down makes every one of them false.
+  for (SlotEntry &entry : this->slots_) {
+    if (entry.used && memcmp(entry.address, address, ESP_BD_ADDR_LEN) == 0) {
+      entry.used = false;
     }
   }
 }
