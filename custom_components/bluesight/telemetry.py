@@ -165,12 +165,23 @@ def _parse_seconds(text: str) -> float:
     return float(text)
 
 
-def _parse_mapping[T](raw: str | None, cast: Callable[[str], T]) -> dict[str, T] | None:
+def _parse_mapping[T](
+    raw: str | None, cast: Callable[[str], T], combine: Callable[[T, T], T]
+) -> dict[str, T] | None:
     """Parse ``address:value`` fields, dropping any the firmware mangled.
 
     Splits on the *last* colon so that an already-expanded address parses as
     one address rather than as ``D0`` plus an unreadable value; a compact
     address, which holds no colon at all, is unaffected.
+
+    One address may carry several fields. The slots payload reports one field
+    per tracked connection *record*, and several GATT client interfaces can
+    hold a record for a single physical link -- only the one carrying the
+    traffic has its idle timer reset, so the others sit frozen at the moment
+    the link came up. ``combine`` folds those into the single value that
+    describes the device. Letting the last field win instead would hand the
+    verdict to whichever record happened to be written last, which is how a
+    device that spoke seconds ago gets reported as idle for hours.
     """
     fields = _split(raw)
     if fields is None:
@@ -182,22 +193,35 @@ def _parse_mapping[T](raw: str | None, cast: Callable[[str], T]) -> dict[str, T]
             _drop(field, "no 'address:value' separator")
             continue
         try:
-            out[expand_compact_mac(address)] = cast(value.strip())
+            key = expand_compact_mac(address)
+            parsed = cast(value.strip())
         except ValueError as err:
             _drop(field, err)
+            continue
+        out[key] = combine(out[key], parsed) if key in out else parsed
     if _is_total_rejection(out, fields, raw):
         return None
     return out
 
 
 def parse_counts(raw: str | None) -> dict[str, int] | None:
-    """Parse ``MAC:count`` pairs (the SMP failure counters)."""
-    return _parse_mapping(raw, _parse_count)
+    """Parse ``MAC:count`` pairs (the SMP failure counters).
+
+    Duplicates fold with ``max``: the counters are monotonic, so the largest
+    reading is the current one. An under-count would silently disarm the
+    storm detector.
+    """
+    return _parse_mapping(raw, _parse_count, max)
 
 
 def parse_idle_seconds(raw: str | None) -> dict[str, float] | None:
-    """Parse ``MAC:seconds`` pairs (per-connection time since GATT traffic)."""
-    return _parse_mapping(raw, _parse_seconds)
+    """Parse ``MAC:seconds`` pairs (per-connection time since GATT traffic).
+
+    Duplicates fold with ``min``: the question this signal answers is "how
+    long since this device last spoke", so the most recent traffic across
+    every record for the address is the answer.
+    """
+    return _parse_mapping(raw, _parse_seconds, min)
 
 
 @dataclass(frozen=True, slots=True)

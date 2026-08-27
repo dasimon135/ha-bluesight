@@ -66,6 +66,34 @@ def test_parse_idle_seconds_reads_floats():
     assert parse_idle_seconds("d0cf130ec92a:240") == {"D0:CF:13:0E:C9:2A": 240.0}
 
 
+def test_duplicate_addresses_keep_the_most_recent_traffic():
+    """One address can occupy several slot records; the freshest one wins.
+
+    A proxy reports one field per tracked connection, and the same device can
+    legitimately appear more than once -- several GATT client interfaces can
+    hold a record for a single physical link, and only the interface carrying
+    the traffic has its idle timer reset. Reducing with "last field wins"
+    would let a record that no traffic ever touches decide the age, reporting
+    a device that spoke seconds ago as idle for hours. That is a manufactured
+    ghost slot: the one verdict this signal exists to reach.
+    """
+    raw = "9cac6dd4f9fc:7.3,9cac6dd4f9fc:29831.7,9cac6dd4f9fc:29831.7"
+    assert parse_idle_seconds(raw) == {"9C:AC:6D:D4:F9:FC": 7.3}
+
+
+def test_duplicate_addresses_keep_the_highest_failure_count():
+    """Counters are monotonic, so the largest reading is the current one.
+
+    The firmware keys its SMP table by address and so emits no duplicates
+    today. This pins the reduction anyway: an under-count silently disarms
+    the storm detector, and "last field wins" would pick arbitrarily.
+    """
+    # Highest last and highest first: "last field wins" passes the first
+    # ordering by luck, so both are pinned.
+    assert parse_counts("d0cf130ec92a:3,d0cf130ec92a:11") == {"D0:CF:13:0E:C9:2A": 11}
+    assert parse_counts("d0cf130ec92a:11,d0cf130ec92a:3") == {"D0:CF:13:0E:C9:2A": 11}
+
+
 def test_malformed_entries_are_skipped_not_fatal():
     """Firmware is the least trustworthy input we have; never crash on it."""
     assert parse_counts("garbage,d0cf130ec92a:3,nope:x") == {"D0:CF:13:0E:C9:2A": 3}

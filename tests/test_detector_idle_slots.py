@@ -14,7 +14,7 @@ from custom_components.bluesight.const import DEFAULT_IDLE_SLOT_THRESHOLD_S
 from custom_components.bluesight.detector import detect_ghost_slots, detect_idle_slots
 from custom_components.bluesight.model import IncidentKind, ProxySlots
 from custom_components.bluesight.rendering import plural_count
-from custom_components.bluesight.telemetry import ProxyTelemetry
+from custom_components.bluesight.telemetry import ProxyTelemetry, parse_idle_seconds
 
 ADDR = "D0:CF:13:0E:C9:2A"
 OTHER = "AA:BB:CC:DD:EE:FF"
@@ -379,5 +379,43 @@ def test_the_shipped_default_does_not_flag_a_measured_healthy_device():
     telemetry = [_tel({ADDR: 430.7})]
     incidents = detect_idle_slots(
         telemetry, _allocated(ADDR), set(), DEFAULT_IDLE_SLOT_THRESHOLD_S, {}
+    )
+    assert incidents == []
+
+
+def test_one_link_reported_as_several_records_is_judged_on_its_freshest():
+    """A live payload that this detector used to read exactly backwards.
+
+    Captured from AtomeValentine on 2026-08-27. Two devices, both talking:
+    one 7.3s ago, the other 23.4s ago. Each also appears in several further
+    records frozen at ~29900s, because the firmware recorded one physical link
+    once per registered GATT client interface and only the interface carrying
+    the traffic had its idle timer reset.
+
+    Reducing those by "last field wins" handed the verdict to a frozen record
+    and called both devices silent for over eight hours -- two ghost slots
+    manufactured out of two healthy connections. Unmanaged here because that is
+    the population this detector judges; the real devices escaped only by being
+    in the registry.
+
+    The firmware no longer emits the duplicates. This stays because the parser
+    must not depend on that: proxies are flashed on their own schedule, and one
+    running the old build must not be able to invent an incident.
+    """
+    raw = (
+        "9cac6dd4f9fc:7.3,9cac6dd4f9fc:29831.7,9cac6dd4f9fc:29831.7,"
+        "9cac6dd4f9fc:29831.7,9cac6dd4f9fc:29831.7,9cac6dd4f9fc:29831.7,"
+        "1c549e8e1d2c:29976.7,1c549e8e1d2c:23.4,1c549e8e1d2c:29976.7"
+    )
+    valentine, madoka = "9C:AC:6D:D4:F9:FC", "1C:54:9E:8E:1D:2C"
+    idle = parse_idle_seconds(raw)
+    assert idle == {valentine: 7.3, madoka: 23.4}
+
+    incidents = detect_idle_slots(
+        [_tel(idle)],
+        _allocated(valentine, madoka),
+        set(),
+        DEFAULT_IDLE_SLOT_THRESHOLD_S,
+        {},
     )
     assert incidents == []
