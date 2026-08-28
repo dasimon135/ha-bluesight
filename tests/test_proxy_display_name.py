@@ -28,7 +28,7 @@ from custom_components.bluesight.device_index import (
 from custom_components.bluesight.locale import read_catalogues
 from custom_components.bluesight.model import IncidentKind, ProxySlots
 from custom_components.bluesight.rendering import Catalogue
-from custom_components.bluesight.telemetry import ProxyTelemetry
+from custom_components.bluesight.telemetry import CounterDeltas, ProxyTelemetry
 from custom_components.bluesight.window import FailureWindow
 
 DOMAIN = "bluesight"
@@ -72,14 +72,20 @@ def _names(*devices):
 
 
 def _bond_lost_detail(names, *, language="fr"):
+    # Fed through the measured route: `detect_bond_lost` reads the rolling
+    # window, so the counter has to reach it as a delta carrying the proxy
+    # that measured it. A baseline of 0 makes the whole count the delta.
+    deltas = CounterDeltas()
+    deltas.update(PROXY, {DEVICE: 0})
     data = build_triage_data(
         [],
         {},
         FailureWindow(60.0, 3, clock=lambda: 0.0),
         catalogue=Catalogue.for_language(language, read_catalogues()),
         telemetry=[
-            ProxyTelemetry(source=PROXY, smp_failures={DEVICE: 1}, bonds=set())
+            ProxyTelemetry(source=PROXY, smp_failures={DEVICE: 3}, bonds=set())
         ],
+        counter_deltas=deltas,
         proxy_names=names,
     )
     incidents = [i for i in data.incidents if i.kind is IncidentKind.BOND_LOST]
@@ -90,9 +96,10 @@ def _bond_lost_detail(names, *, language="fr"):
 def test_the_rendered_detail_uses_the_name_the_user_gave_the_proxy():
     incident = _bond_lost_detail(_names(_bluesight_proxy_device(renamed_to="Proxy Buanderie")))
     assert incident.detail == (
-        "1 connexion refusée via Proxy Buanderie, qui n'a pas la clé "
-        "d'appairage de cet appareil. Isolé, c'est bénin ; si le nombre "
-        "monte, réappairez l'appareil en passant par Proxy Buanderie."
+        "3 connexions refusées en 60s via Proxy Buanderie, qui n'a pas la clé "
+        "d'appairage de cet appareil. Réappairez l'appareil en passant par "
+        "Proxy Buanderie : chaque proxy garde ses propres clés, appairer via "
+        "un autre ne corrigera rien."
     )
     assert SCANNER_NAME not in incident.detail
 
@@ -102,9 +109,10 @@ def test_an_unrenamed_proxy_still_reads_as_it_always_did():
     every user who has not renamed anything."""
     incident = _bond_lost_detail(_names(_bluesight_proxy_device()))
     assert incident.detail == (
-        f"1 connexion refusée via {SCANNER_NAME}, qui n'a pas la clé "
-        f"d'appairage de cet appareil. Isolé, c'est bénin ; si le nombre "
-        f"monte, réappairez l'appareil en passant par {SCANNER_NAME}."
+        f"3 connexions refusées en 60s via {SCANNER_NAME}, qui n'a pas la clé "
+        f"d'appairage de cet appareil. Réappairez l'appareil en passant par "
+        f"{SCANNER_NAME} : chaque proxy garde ses propres clés, appairer via "
+        f"un autre ne corrigera rien."
     )
 
 

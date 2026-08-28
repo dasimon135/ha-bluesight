@@ -28,6 +28,7 @@ from .adapter import (
 )
 from .availability import is_device_alive
 from .const import (
+    DEFAULT_BOND_THRESHOLD,
     DEFAULT_IDLE_SLOT_THRESHOLD_S,
     DEFAULT_OFFLINE_GRACE_S,
     DEFAULT_REBOOT_THRESHOLD,
@@ -97,6 +98,7 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         reboot_threshold: int = DEFAULT_REBOOT_THRESHOLD,
         offline_grace_s: float = DEFAULT_OFFLINE_GRACE_S,
         idle_threshold_s: float = DEFAULT_IDLE_SLOT_THRESHOLD_S,
+        bond_threshold: int = DEFAULT_BOND_THRESHOLD,
         catalogue: Catalogue | None = None,
     ) -> None:
         super().__init__(
@@ -147,6 +149,7 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         # reading is treated as a stuck slot. Bounded by the options schema;
         # ``detect_idle_slots`` deliberately carries no internal guard.
         self._idle_threshold_s = idle_threshold_s
+        self._bond_threshold = bond_threshold
         # Set once if the availability lookup ever fails, so a broken signal
         # is observable instead of masquerading as "all devices present".
         self._availability_degraded = False
@@ -352,6 +355,7 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
             telemetry=telemetry,
             counter_deltas=self._counter_deltas,
             idle_threshold_s=self._idle_threshold_s,
+            bond_threshold=self._bond_threshold,
             # A fresh dict per snapshot: `_names` keeps growing across
             # snapshots and the detectors must not be handed a mapping that
             # mutates under them. `resolve_proxy_names` builds one.

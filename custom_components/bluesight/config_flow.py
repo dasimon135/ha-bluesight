@@ -19,6 +19,7 @@ from homeassistant.config_entries import (
 from homeassistant.core import callback
 
 from .const import (
+    DEFAULT_BOND_THRESHOLD,
     DEFAULT_IDLE_SLOT_THRESHOLD_S,
     DEFAULT_OFFLINE_GRACE_S,
     DEFAULT_POLL_INTERVAL_S,
@@ -39,6 +40,7 @@ CONF_REBOOT_WINDOW_S = "reboot_window_s"
 CONF_REBOOT_THRESHOLD = "reboot_threshold"
 CONF_OFFLINE_GRACE_S = "offline_grace_s"
 CONF_IDLE_THRESHOLD_S = "idle_threshold_s"
+CONF_BOND_THRESHOLD = "bond_threshold"
 
 
 def build_options_schema(options: dict[str, Any]) -> vol.Schema:
@@ -96,6 +98,16 @@ def build_options_schema(options: dict[str, Any]) -> vol.Schema:
                     CONF_IDLE_THRESHOLD_S, DEFAULT_IDLE_SLOT_THRESHOLD_S
                 ),
             ): vol.All(vol.Coerce(float), vol.Range(min=60)),
+            # Floor of 2, not 1. At 1 a single measured refusal is a diagnosis,
+            # and the remedy sends someone to physically re-pair a device --
+            # which is precisely the false positive this threshold was
+            # introduced to end. There is no ceiling: the replay cap in
+            # `coordinator_data` takes the max of the two thresholds, so a
+            # value above the storm threshold stays reachable.
+            vol.Required(
+                CONF_BOND_THRESHOLD,
+                default=options.get(CONF_BOND_THRESHOLD, DEFAULT_BOND_THRESHOLD),
+            ): vol.All(vol.Coerce(int), vol.Range(min=2)),
         }
     )
 

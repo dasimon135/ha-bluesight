@@ -52,13 +52,19 @@ def _storm(address: str, count="7", seconds="300", detail="") -> Incident:
 
 def _bond_lost(
     address: str, proxy="Salon", count="3", sources=("AA:BB:CC:DD:EE:FF",),
-    detail="",
+    detail="", seconds="300",
 ) -> Incident:
-    """As :func:`detector.detect_bond_lost` builds it: measured, per proxy."""
+    """As :func:`detector.detect_bond_lost` builds it: measured, per proxy.
+
+    ``seconds`` is the window the count was measured over, carried for the
+    same reason ``_storm`` carries it: the count means "in the last N
+    seconds", not "ever", and the sentence has to be able to say so.
+    """
     return Incident(
         kind=IncidentKind.BOND_LOST, address=address, sources=list(sources),
         detail=detail, detail_key="incident.bond_lost.detail",
-        detail_params={"count": count, "proxy": proxy}, evidence="smp",
+        detail_params={"count": count, "proxy": proxy, "seconds": seconds},
+        evidence="smp",
     )
 
 

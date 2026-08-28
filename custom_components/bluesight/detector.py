@@ -149,52 +149,87 @@ def detect_reboot_storm(source: str, window: FailureWindow) -> Incident | None:
 
 
 def detect_bond_lost(
-    telemetry: list[ProxyTelemetry], names: dict[str, str]
+    telemetry: list[ProxyTelemetry],
+    names: dict[str, str],
+    window: FailureWindow,
+    threshold: int,
 ) -> list[Incident]:
-    """A device whose pairing keeps failing on a proxy that holds no bond for it.
+    """A device whose pairing keeps failing *now* on a proxy holding no bond.
 
     This is the one diagnosis that needs the firmware: Home Assistant can see
-    neither SMP failures nor the proxy's NVS bond store. Both halves are
-    required, and both must be *reported* -- an absent bond list cannot
-    distinguish "no bond" from "not told", so it yields nothing rather than a
-    confident wrong answer.
+    neither SMP failures nor the proxy's NVS bond store.
+
+    The failures are read from ``window`` -- the same rolling window
+    :func:`detect_storm` uses, filled from the same deltas by the caller -- and
+    never from ``ProxyTelemetry.smp_failures``. That field is the firmware's
+    counter, monotonic since the proxy booted, so testing it directly made a
+    single refusal in a proxy's entire life open an incident that closed only
+    on a reboot: a device connected and exchanging normally through the proxy
+    that holds its bond stayed flagged indefinitely because some *other* proxy
+    had refused it once, long ago. Reading the window puts both halves of the
+    measured evidence on one clock, and lets a fault that stopped happening
+    stop being reported.
+
+    Two consequences of reading the window rather than the snapshot, both
+    wanted. Only *measured* events count, because ``count_by_source`` excludes
+    inferred ones -- the release heuristic cannot name the proxy that dropped a
+    slot, and this verdict implicates one by name. And a proxy that stops
+    publishing its counters for a snapshot while still publishing its bonds
+    keeps its incident, because the evidence outlives the snapshot it arrived
+    in; the same reasoning that makes ``CounterDeltas`` hold a baseline through
+    a blip instead of dropping it.
+
+    ``tel.bonds is None`` still yields nothing, and must: an absent bond list
+    cannot distinguish "no bond" from "not told", and asserting the first from
+    the second would fire BOND_LOST across a whole fleet over nothing worse
+    than a firmware formatting disagreement.
 
     Bonds are per-central: every proxy keeps its own store, so a device paired
     through one proxy genuinely has no bond on the next, and Home Assistant
-    will still route connections there. The verdict is therefore per proxy --
-    a bond held elsewhere neither excuses nor suppresses the proxy that is
-    failing. Which is why the remedy is exact and worth stating: re-pair
-    through this specific proxy, not whichever one Home Assistant picks next.
+    will still route connections there. The verdict is therefore per proxy, and
+    so is the threshold -- pooling two proxies' failures would implicate each
+    on evidence the other gathered. A bond held elsewhere neither excuses nor
+    suppresses the proxy that is failing, which is why the remedy is exact and
+    worth stating: re-pair through this specific proxy, not whichever one Home
+    Assistant picks next.
 
     Both sides of the comparison are canonicalised, as everywhere else
-    addresses are correlated. The parser already normalises, so this guards
-    the seam rather than the wire -- but the failure it guards against is the
-    worst one available here: a bond read as absent purely because it arrived
-    in the other case would assert the opposite of what the proxy reported and
-    fire BOND_LOST across a whole fleet.
+    addresses are correlated. The window's keys arrive canonical from
+    ``CounterDeltas``, so this guards the seam rather than the wire -- but the
+    failure it guards against is the worst one available here: a bond read as
+    absent purely because it arrived in the other case would assert the
+    opposite of what the proxy reported.
     """
+    # Read the window once into a per-proxy view, rather than per proxy into
+    # the window: the window is the single source and does not change while
+    # this runs, and a fleet is polled far more often than it grows.
+    measured: dict[str, dict[str, int]] = {}
+    for raw_address in window.addresses():
+        address = normalize_address(raw_address)
+        for source, count in window.count_by_source(raw_address).items():
+            per_proxy = measured.setdefault(source, {})
+            # Two spellings of one address would otherwise yield two incidents
+            # sharing a key -- a duplicate row that re-alerts as one fault. The
+            # higher wins: they are readings of the same counter, so summing
+            # would invent failures nobody measured.
+            per_proxy[address] = max(per_proxy.get(address, 0), count)
     out: list[Incident] = []
     for tel in telemetry:
-        if tel.smp_failures is None or tel.bonds is None:
+        if tel.bonds is None:
             continue
         name = names.get(tel.source, tel.source)
         bonds = {normalize_address(address) for address in tel.bonds}
-        # Merged on the normalised key rather than iterated directly, so two
-        # spellings of one address cannot yield two incidents sharing a key
-        # (which would render as a duplicate row and re-alert as one). The
-        # higher count wins: they are readings of the same counter, so summing
-        # would invent failures that never happened.
-        failures: dict[str, int] = {}
-        for raw_address, count in tel.smp_failures.items():
-            address = normalize_address(raw_address)
-            failures[address] = max(failures.get(address, count), count)
-        for address, count in sorted(failures.items()):
-            if count <= 0 or address in bonds:
+        for address, count in sorted(measured.get(tel.source, {}).items()):
+            if count < threshold or address in bonds:
                 continue
             out.append(Incident(
                 IncidentKind.BOND_LOST, address, [tel.source],
                 detail_key="incident.bond_lost.detail",
-                detail_params={"count": str(count), "proxy": name},
+                detail_params={
+                    "count": str(count),
+                    "proxy": name,
+                    "seconds": str(int(window.window_s)),
+                },
                 evidence="smp"))
     return out
 

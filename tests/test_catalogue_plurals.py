@@ -44,12 +44,12 @@ COUNTED = [
     ),
     (
         "incident.bond_lost.detail",
-        {"count": "1", "proxy": "Salon"},
-        "1 connection refused through Salon, which has no pairing key for "
-        "this device. On its own this is harmless; if the count climbs, "
+        {"count": "1", "proxy": "Salon", "seconds": "300"},
+        "1 connection refused in 300s through Salon, which has no pairing key "
+        "for this device. On its own this is harmless; if the count climbs, "
         "re-pair the device through Salon.",
-        "1 connexion refusée via Salon, qui n'a pas la clé d'appairage de "
-        "cet appareil. Isolé, c'est bénin ; si le nombre monte, réappairez "
+        "1 connexion refusée en 300s via Salon, qui n'a pas la clé d'appairage "
+        "de cet appareil. Isolé, c'est bénin ; si le nombre monte, réappairez "
         "l'appareil en passant par Salon.",
     ),
     (
@@ -105,24 +105,31 @@ def test_storm_notification_agrees_with_a_single_failure():
 
 
 def test_bond_lost_notification_agrees_with_a_single_failure():
-    """One failure is the common case, not the rare one.
+    """The singular form still has to render, even though nothing raises it.
 
-    A bond is either there or it is not, so the very first attempt after it
-    goes missing raises this — the counter has no threshold to climb to, and
-    ``count`` is a cumulative SMP reading that is often exactly 1.
+    It was the common case when ``count`` was the firmware's cumulative SMP
+    reading and one refusal was a diagnosis. Since the count became measured
+    failures inside the window, and the option floor is 2, no shipped
+    threshold can select this form.
+
+    The catalogue keeps it anyway and this pins that it renders. The renderer
+    picks a form from the number it is given, not from the threshold that
+    produced it, so a catalogue whose singular is wrong is a catalogue that is
+    correct only by luck — and the floor is a user-facing setting, not an
+    invariant of the format.
     """
     incident = Incident(
         IncidentKind.BOND_LOST,
         "11:22:33:44:55:66",
         ["AA:BB:CC:DD:EE:FF"],
         detail_key="incident.bond_lost.detail",
-        detail_params={"count": "1", "proxy": "Salon"},
+        detail_params={"count": "1", "proxy": "Salon", "seconds": "300"},
         evidence="smp",
     )
     _, english = notification_content(incident, EN)
-    assert english.startswith("1 connection refused for")
+    assert english.startswith("1 connection refused in 300s for")
     _, french = notification_content(incident, FR)
-    assert french.startswith("1 connexion refusée pour")
+    assert french.startswith("1 connexion refusée en 300s pour")
 
 
 def test_reboot_storm_notification_agrees_with_a_single_reboot():
