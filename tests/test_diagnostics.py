@@ -11,6 +11,7 @@ import pytest
 
 pytest.importorskip("homeassistant.core")
 
+from custom_components.bluesight.const import DEFAULT_BOND_THRESHOLD, OPTION_DEFAULTS
 from custom_components.bluesight.coordinator_data import BlueSightData
 from custom_components.bluesight.diagnostics import (
     async_get_config_entry_diagnostics,
@@ -54,6 +55,11 @@ def _dump(data):
     )
 
 
+def _minimal_data():
+    """An empty snapshot: these tests are about the options block alone."""
+    return BlueSightData(proxies=[], incidents=[], proxies_health=[])
+
+
 def test_dump_is_json_serialisable_and_complete():
     data = BlueSightData(
         proxies=[ProxySlots("AA:BB:CC:DD:EE:FF", "salon", 3, 1, ["11:22:33:44:55:66"])],
@@ -67,7 +73,9 @@ def test_dump_is_json_serialisable_and_complete():
     dump = _dump(data)
     json.dumps(dump)   # must not raise
 
-    assert dump["options"] == {"storm_threshold": 4}
+    # Every tunable, not just the persisted ones: see the dedicated tests below.
+    assert dump["options"]["storm_threshold"] == 4
+    assert dump["options"]["bond_threshold"] == DEFAULT_BOND_THRESHOLD
     assert dump["availability_degraded"] is True
     assert dump["proxies"][0]["allocated"] == ["11:22:33:44:55:66"]
     assert dump["proxies_health"][0]["device_count"] == 7
@@ -145,3 +153,31 @@ def test_dump_carries_the_counter_baselines():
     assert dump["telemetry"]["counter_baselines"] == {
         "D0:CF:13:0E:C9:2A": {"11:22:33:44:55:66": 9}
     }
+
+
+def test_the_dump_reports_a_tunable_running_at_its_default():
+    """A threshold in force but never submitted must still appear.
+
+    ``options`` held only what the user had saved, so a tunable running at its
+    constant was simply absent from the dump -- and every option is absent
+    until the day someone opens the dialog and presses Submit. That makes the
+    one artifact attached to a bug report silent about the thresholds that
+    produced the behaviour being reported, which is the opposite of its job.
+    """
+    dump = _dump(_minimal_data())
+
+    assert dump["options"] == {**OPTION_DEFAULTS, "storm_threshold": 4}
+    # The value the user actually saved still wins over the constant.
+    assert dump["options"]["storm_threshold"] == 4
+
+
+def test_the_dump_reports_every_tunable_the_options_flow_offers():
+    """No tunable may be missing from the dump.
+
+    Pinned against the defaults table rather than a literal list, so an option
+    added later cannot quietly stop being reported -- the failure mode here is
+    silent, and only shows up as a support thread that cannot be answered.
+    """
+    dump = _dump(_minimal_data())
+
+    assert set(OPTION_DEFAULTS) <= set(dump["options"])

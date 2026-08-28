@@ -25,6 +25,7 @@ from custom_components.bluesight.const import (
     DEFAULT_STALLED_THRESHOLD_S,
     DEFAULT_STORM_THRESHOLD,
     DEFAULT_STORM_WINDOW_S,
+    OPTION_DEFAULTS,
 )
 
 
@@ -113,6 +114,20 @@ def test_bond_threshold_may_exceed_the_storm_threshold():
         {"storm_threshold": 5, "bond_threshold": 9}
     )
     assert validated["bond_threshold"] == 9
+
+
+def test_the_defaults_table_matches_the_schema_exactly():
+    """``OPTION_DEFAULTS`` and the options form must describe the same thing.
+
+    The table exists so the diagnostics dump can report a threshold that is in
+    force but was never submitted. Its whole value is being *right*: a stale
+    entry would put a number in a bug report that no install is running at,
+    which is worse than the silence it replaced. Nothing else compares the two,
+    so this does -- key for key, value for value.
+    """
+    schema_defaults = build_options_schema({})({})
+
+    assert schema_defaults == OPTION_DEFAULTS
 
 
 def test_every_schema_field_is_named_in_strings_json():
