@@ -181,7 +181,7 @@ _NOTIFY_PARAMS: dict[str, Callable[[Incident, Catalogue], dict[str, str]]] = {
     # ("re-pair it through an unspecified proxy"). The detector always supplies
     # the name, and if some future caller does not, `_measured` leaves a
     # visible `{proxy}` — plainly broken, rather than plausibly useless.
-    "bond_lost": lambda i, c: _measured(i, "count", "proxy"),
+    "bond_lost": lambda i, c: _measured(i, "count", "proxy", "seconds"),
     "proxy_offline": lambda i, c: {},
     "proxy_stalled": lambda i, c: _measured(i, "seconds"),
     "proxy_reboot_storm": lambda i, c: _measured(i, "count", "seconds"),

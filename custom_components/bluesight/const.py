@@ -38,5 +38,23 @@ DEFAULT_OFFLINE_GRACE_S = 90.0
 # crying wolf on a typical install.
 DEFAULT_IDLE_SLOT_THRESHOLD_S = 1800.0
 
+# Measured SMP refusals on one proxy, over the storm window, before BlueSight
+# names that proxy as holding no pairing key for a device.
+#
+# Deliberately below `DEFAULT_STORM_THRESHOLD`. A missing bond is deterministic
+# -- it refuses every attempt, not intermittently -- so three refusals inside
+# the window is a pattern rather than noise, while a single one is not a
+# diagnosis worth sending someone to re-pair a device over. BOND_LOST already
+# supersedes STORM in `incident_policy`, so firing first is the entire benefit:
+# the user gets the exact remedy ("re-pair through *this* proxy") instead of
+# the generic one. At the storm threshold the diagnosis could never be anything
+# but a requalification of a storm already raised.
+#
+# One refusal in the window is invisible by design, not by oversight: the
+# firmware counter it is measured from is monotonic since boot, and reading it
+# directly is what made a device working normally on one proxy stay flagged
+# forever over a refusal by another, long ago.
+DEFAULT_BOND_THRESHOLD = 3
+
 SERVICE_FORGET_PROXY = "forget_proxy"
 ATTR_SOURCE = "source"

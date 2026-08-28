@@ -23,7 +23,8 @@
           "reboot_window_s": "Fenêtre de redémarrages (secondes)",
           "reboot_threshold": "Seuil de redémarrages",
           "offline_grace_s": "Délai de grâce hors ligne (secondes)",
-          "idle_threshold_s": "Seuil de slot inactif (secondes)"
+          "idle_threshold_s": "Seuil de slot inactif (secondes)",
+          "bond_threshold": "Seuil de clé d'appairage manquante (refus)"
         },
         "data_description": {
           "storm_window_s": "Fenêtre glissante sur laquelle les échecs de connexion répétés sont comptés.",
@@ -33,7 +34,8 @@
           "reboot_window_s": "Fenêtre glissante sur laquelle les redémarrages de proxy sont comptés.",
           "reboot_threshold": "Nombre de redémarrages dans la fenêtre qui déclenche un incident de proxy instable.",
           "offline_grace_s": "Durée d'absence tolérée avant de signaler un proxy hors ligne. Un proxy disparaît du bus à chaque mise à jour OTA ; mettez 0 pour signaler dès le premier instantané manquant.",
-          "idle_threshold_s": "Durée pendant laquelle une connexion GATT ouverte peut rester sans trafic avant que le slot ne soit signalé comme bloqué. Seuls les proxys équipés du composant ESPHome BlueSight fournissent cette mesure, et seuls les appareils que Home Assistant ne connaît pas par ailleurs sont jugés ainsi. Réglez ce seuil au-dessus de l'appareil le plus silencieux que vous possédez : un thermostat Daikin BRC1H en parfait état de marche a été mesuré à 430 s de silence GATT, et un maillage d'éclairage que personne ne sollicite de la nuit reste muet pendant des heures ; une valeur inférieure signalerait donc une connexion saine comme slot fantôme. Une valeur plus élevée ne fait que retarder le signalement d'un slot réellement bloqué, qui le reste de toute façon."
+          "idle_threshold_s": "Durée pendant laquelle une connexion GATT ouverte peut rester sans trafic avant que le slot ne soit signalé comme bloqué. Seuls les proxys équipés du composant ESPHome BlueSight fournissent cette mesure, et seuls les appareils que Home Assistant ne connaît pas par ailleurs sont jugés ainsi. Réglez ce seuil au-dessus de l'appareil le plus silencieux que vous possédez : un thermostat Daikin BRC1H en parfait état de marche a été mesuré à 430 s de silence GATT, et un maillage d'éclairage que personne ne sollicite de la nuit reste muet pendant des heures ; une valeur inférieure signalerait donc une connexion saine comme slot fantôme. Une valeur plus élevée ne fait que retarder le signalement d'un slot réellement bloqué, qui le reste de toute façon.",
+          "bond_threshold": "Refus d'appairage mesurés sur un proxy, dans la fenêtre de tempête ci-dessus, avant que BlueSight ne signale que ce proxy n'a pas la clé d'appairage d'un appareil. Comptés par proxy, jamais cumulés : une clé vit dans le magasin d'un seul proxy, et le remède consiste à réappairer en passant par ce proxy précis. Seuls les proxys qui font tourner le composant ESPHome BlueSight le mesurent. Gardez-le sous le seuil de tempête pour obtenir le remède exact avant le générique ; l'augmenter retarde un diagnostic réel, et le minimum de 2 existe parce qu'un refus isolé ne justifie pas d'envoyer quelqu'un réappairer un appareil."
         }
       }
     }

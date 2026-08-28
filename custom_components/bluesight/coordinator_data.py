@@ -76,6 +76,10 @@ def build_triage_data(
     # anything, its 0.0 being the neutral "no grace period" value rather than
     # a copy of the shipped default.
     idle_threshold_s: float = 1800.0,
+    # Mirrors `const.DEFAULT_BOND_THRESHOLD` the same way, and pinned to it by
+    # the same test. Measured refusals on one proxy, over `storm_window`'s
+    # horizon, before that proxy is named as holding no pairing key.
+    bond_threshold: int = 3,
     proxy_names: dict[str, str] | None = None,
     managed_addresses: set[str] | None = None,
     # Presentation only, and deliberately the last argument: no detector reads
@@ -138,11 +142,16 @@ def build_triage_data(
                 # Cap the replay. `count` is a firmware-supplied delta with no
                 # upper bound, so a corrupt-but-well-formed 4294967295 would
                 # spin 4.3 billion iterations on Home Assistant's event loop.
-                # `detect_storm` fires at `count >= window.threshold`, so
-                # anything at or above the threshold is already a storm and the
-                # extra iterations buy nothing. The trade: the incident's
-                # reported count understates a genuinely huge burst.
-                for _ in range(min(count, storm_window.threshold)):
+                # Both detectors that read this window fire at `>= threshold`,
+                # so anything at or above the *higher* of the two is already
+                # both verdicts and the extra iterations buy nothing. Capping
+                # at the storm threshold alone would make any bond threshold
+                # above it permanently -- and silently -- unreachable, so the
+                # cap takes the max and stays correct however the two are
+                # tuned relative to each other. The trade is unchanged: the
+                # incident's reported count understates a genuinely huge burst.
+                for _ in range(min(count, max(storm_window.threshold,
+                                              bond_threshold))):
                     storm_window.record(address, tel.source)
     for addr in storm_window.addresses():
         inc = detect_storm(addr, storm_window)
@@ -168,7 +177,12 @@ def build_triage_data(
         if sources:
             inc = replace(inc, sources=sources, evidence="smp")
         incidents.append(inc)
-    incidents += detect_bond_lost(telemetry, proxy_names)
+    # Reads the window the storm loop above has just filled, not the telemetry
+    # snapshot: the failures must age out, and only the measured ones can name
+    # a proxy. See `detect_bond_lost`.
+    incidents += detect_bond_lost(
+        telemetry, proxy_names, storm_window, bond_threshold
+    )
     # `proxies` is handed in whole rather than as a pre-built per-source
     # allocated map: it is the same plain snapshot `detect_deadlocks` and
     # `detect_ghost_slots` already take, there is exactly one thing a caller

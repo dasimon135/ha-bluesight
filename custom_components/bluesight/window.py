@@ -65,6 +65,32 @@ class FailureWindow:
             {src for _ts, src in self._events.get(address, ()) if src is not None}
         )
 
+    def count_by_source(self, address: str) -> dict[str, int]:
+        """Live *measured* events for ``address``, counted per proxy.
+
+        ``sources()`` answers "who measured any of this", which is enough to
+        label a STORM. ``BOND_LOST`` needs the count itself, per proxy: a bond
+        lives in one proxy's NVS store, so the verdict and its remedy are about
+        one proxy, and a threshold that summed every proxy's failures would
+        implicate a proxy on evidence gathered elsewhere.
+
+        Inferred events (``source is None``) are absent by construction, not by
+        a filter applied afterwards. The release heuristic cannot say which
+        proxy dropped a slot, so it can never implicate one -- the same reason
+        ``sources()`` reports only measured provenance.
+
+        Never creates a key, matching ``count``: this is read every snapshot in
+        a 24/7 loop.
+        """
+        if address not in self._events:
+            return {}
+        self._evict(address)
+        counts: dict[str, int] = {}
+        for _ts, src in self._events.get(address, ()):
+            if src is not None:
+                counts[src] = counts.get(src, 0) + 1
+        return counts
+
     def count(self, address: str) -> int:
         # Do not auto-create a key for a never-seen address on read.
         if address not in self._events:

@@ -17,7 +17,11 @@ pytest.importorskip("pytest_homeassistant_custom_component.plugins")
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.bluesight.const import DEFAULT_IDLE_SLOT_THRESHOLD_S, DOMAIN
+from custom_components.bluesight.const import (
+    DEFAULT_BOND_THRESHOLD,
+    DEFAULT_IDLE_SLOT_THRESHOLD_S,
+    DOMAIN,
+)
 from homeassistant.config_entries import SOURCE_USER
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -116,6 +120,7 @@ async def test_options_flow_round_trips_tunables(hass: HomeAssistant) -> None:
         "reboot_threshold": 3,
         "offline_grace_s": 90.0,
         "idle_threshold_s": 900.0,
+        "bond_threshold": DEFAULT_BOND_THRESHOLD,
     }
 
 
@@ -148,6 +153,7 @@ async def test_options_flow_prefills_an_entry_predating_the_idle_threshold(
     # Assistant renders into the fields.
     prefilled = result["data_schema"]({})
     assert prefilled["idle_threshold_s"] == DEFAULT_IDLE_SLOT_THRESHOLD_S
+    assert prefilled["bond_threshold"] == DEFAULT_BOND_THRESHOLD
     assert {key: prefilled[key] for key in legacy} == legacy
 
     result = await hass.config_entries.options.async_configure(
@@ -157,4 +163,5 @@ async def test_options_flow_prefills_an_entry_predating_the_idle_threshold(
     assert entry.options == {
         **legacy,
         "idle_threshold_s": DEFAULT_IDLE_SLOT_THRESHOLD_S,
+        "bond_threshold": DEFAULT_BOND_THRESHOLD,
     }

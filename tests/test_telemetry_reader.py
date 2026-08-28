@@ -16,6 +16,7 @@ from custom_components.bluesight.telemetry_reader import (
     read_fleet_telemetry,
     read_proxy_telemetry,
 )
+from custom_components.bluesight.window import FailureWindow
 
 ADDR = "D0:CF:13:0E:C9:2A"
 
@@ -242,7 +243,12 @@ def test_a_lower_case_source_still_names_the_proxy_in_an_incident():
     ]
     states = {"sensor.smp": "d0cf130ec92a:3", "sensor.bonds": ""}
     tel = read_proxy_telemetry("d0:cf:13:0e:c9:2a", "dev", *_reader(entries, states))
-    [incident] = detect_bond_lost([tel], {ADDR: "Kitchen proxy"})
+    # The failures reach the detector through the window, so the canonical
+    # source has to key the window events too -- which is the same seam.
+    window = FailureWindow(300.0, 5, clock=lambda: 0.0)
+    for _ in range(3):
+        window.record(ADDR, tel.source)
+    [incident] = detect_bond_lost([tel], {ADDR: "Kitchen proxy"}, window, 3)
     assert incident.detail_params["proxy"] == "Kitchen proxy"
     assert incident.sources == [ADDR]
 

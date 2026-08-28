@@ -65,10 +65,22 @@ def _forms(catalogue: dict[str, str], key: str) -> list[str]:
     ]
 
 
-def _window(window_s: float, threshold: int, address: str, hits: int) -> FailureWindow:
+def _window(
+    window_s: float,
+    threshold: int,
+    address: str,
+    hits: int,
+    source: str | None = None,
+) -> FailureWindow:
+    """A pre-filled window. ``source`` names the proxy that measured the events.
+
+    ``None`` (the default) books them as inferred, which is what the storm
+    detectors read. ``detect_bond_lost`` counts only measured events, so its
+    fixture has to name a proxy.
+    """
     window = FailureWindow(window_s=window_s, threshold=threshold, clock=lambda: 0.0)
     for _ in range(hits):
-        window.record(address)
+        window.record(address, source)
     return window
 
 
@@ -102,8 +114,10 @@ def _every_detector_incident() -> list[Incident]:
         detect_storm("11:22", _window(300, 5, "11:22", 5)),
         detect_reboot_storm("PX", _window(600, 3, "PX", 3)),
         *detect_bond_lost(
-            [ProxyTelemetry("AA", smp_failures={"11:22": 3}, bonds=set())],
+            [ProxyTelemetry("AA", bonds=set())],
             {"AA": "Salon"},
+            _window(300, 5, "11:22", 3, source="AA"),
+            3,
         ),
     ]
 

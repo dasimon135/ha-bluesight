@@ -19,6 +19,7 @@ from homeassistant.loader import async_get_integration
 
 from .const import (
     ATTR_SOURCE,
+    DEFAULT_BOND_THRESHOLD,
     DEFAULT_IDLE_SLOT_THRESHOLD_S,
     DEFAULT_OFFLINE_GRACE_S,
     DEFAULT_POLL_INTERVAL_S,
@@ -73,6 +74,7 @@ async def async_setup_entry(
         idle_threshold_s=opts.get(
             "idle_threshold_s", DEFAULT_IDLE_SLOT_THRESHOLD_S
         ),
+        bond_threshold=opts.get("bond_threshold", DEFAULT_BOND_THRESHOLD),
         catalogue=catalogue,
     )
     await coordinator.async_setup()

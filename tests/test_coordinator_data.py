@@ -258,10 +258,46 @@ def test_a_huge_firmware_delta_does_not_spin_the_event_loop():
     tel = [ProxyTelemetry("p1", smp_failures={ADDR: 4294967295}, bonds={ADDR})]
     deltas = CounterDeltas()
     deltas.update("p1", {ADDR: 0})  # baseline 0, so the delta is the whole count
-    data = build_triage_data([], {}, window, telemetry=tel, counter_deltas=deltas)
+    data = build_triage_data(
+        [], {}, window, telemetry=tel, counter_deltas=deltas, bond_threshold=2
+    )
     assert window.count(ADDR) == window.threshold
     storms = [i for i in data.incidents if i.kind is IncidentKind.STORM]
     assert len(storms) == 1
+
+
+def test_the_replay_cap_leaves_a_bond_threshold_above_the_storms_reachable():
+    """Two detectors read this window, and the cap must not starve either.
+
+    Capping the replay at the storm threshold alone would make any higher bond
+    threshold permanently unreachable -- and silently, since nothing about a
+    diagnosis that never fires looks broken. Taking the max keeps the
+    anti-spin guard and leaves both thresholds attainable.
+    """
+    window = FailureWindow(300.0, 2, clock=lambda: 0.0)
+    tel = [ProxyTelemetry("p1", smp_failures={ADDR: 4294967295}, bonds=set())]
+    deltas = CounterDeltas()
+    deltas.update("p1", {ADDR: 0})
+    data = build_triage_data(
+        [], {}, window, telemetry=tel, counter_deltas=deltas, bond_threshold=6
+    )
+    # Capped at the higher of the two thresholds, not at the storm's 2.
+    assert window.count(ADDR) == 6
+    assert [i.kind for i in data.incidents] == [IncidentKind.BOND_LOST]
+
+
+def test_the_replay_cap_still_stops_at_the_storm_threshold_when_it_is_higher():
+    """The guard is a max, not a swap: a bond threshold below the storm's must
+    not shrink the replay and cost the storm its own diagnosis."""
+    window = FailureWindow(300.0, 5, clock=lambda: 0.0)
+    tel = [ProxyTelemetry("p1", smp_failures={ADDR: 4294967295}, bonds={ADDR})]
+    deltas = CounterDeltas()
+    deltas.update("p1", {ADDR: 0})
+    data = build_triage_data(
+        [], {}, window, telemetry=tel, counter_deltas=deltas, bond_threshold=2
+    )
+    assert window.count(ADDR) == 5
+    assert [i.kind for i in data.incidents] == [IncidentKind.STORM]
 
 
 def test_one_snapshot_never_yields_two_incidents_with_the_same_key():
@@ -529,12 +565,18 @@ def test_bond_lost_supersedes_a_storm_for_the_same_address():
     address = "11:22:33:44:55:66"
     now = [0.0]
     window = FailureWindow(window_s=300, threshold=5, clock=lambda: now[0])
-    for _ in range(5):
-        now[0] += 10
-        window.record(address)
+    # Fed through the measured route, because BOND_LOST is a measured verdict:
+    # the deltas land in the window carrying the proxy that counted them, and
+    # the same events raise both diagnoses. Inferred events would raise only
+    # the storm, which is the case the next test pins.
+    deltas = CounterDeltas()
+    deltas.update("AA", {address: 0})
 
     data = build_triage_data(
-        [], {}, window, telemetry=_bond_lost_telemetry(address), proxy_names={}
+        [], {}, window,
+        telemetry=_bond_lost_telemetry(address),
+        counter_deltas=deltas,
+        proxy_names={},
     )
 
     kinds = [i.kind for i in data.incidents]

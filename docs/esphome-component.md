@@ -165,8 +165,18 @@ wonder about, since plenty of integrations do collapse the two.
 
 ### Bond lost
 
-**Fires when** a device's pairing keeps failing on a proxy whose own bond store
-holds no entry for it. Both halves are required, and both must be *reported*.
+**Fires when** a device's pairing fails at least `bond_threshold` times, inside
+the storm window, on a proxy whose own bond store holds no entry for it. Both
+halves are required, and both must be *reported*.
+
+The failures are counted **inside the window**, not since the proxy booted, and
+counted **per proxy**, never pooled. Both matter. A refusal that stops happening
+ages out, so the incident clears on its own once the device is re-paired —
+before 0.6.4 the count was the firmware's lifetime counter, and a single refusal
+in a proxy's whole life kept the incident open until that proxy rebooted, even
+for a device connected and working normally through the proxy that does hold its
+bond. And a threshold measured per proxy is what keeps the remedy honest: pooling
+two proxies' failures would name a proxy on evidence the other one gathered.
 
 This is the one diagnosis that genuinely needs firmware, because Home Assistant
 can see neither half. It is also the one whose remedy is exact, which is the
@@ -278,6 +288,28 @@ connection may go minutes without.
 
 If in doubt, raise it. A genuinely stuck slot stays stuck and will still be
 reported.
+
+#### Choosing `bond_threshold`
+
+Default 3 refusals, floor 2, in the same **Configure** dialog. Counted per proxy,
+over the storm window above — so the window setting moves both diagnoses.
+
+It sits below the storm threshold of 5 on purpose. A missing bond is
+deterministic: it refuses every attempt, not now and then, so three refusals
+inside the window is a pattern rather than noise. And `bond_lost` supersedes
+`storm` for the same address, so firing first is the whole benefit — you get the
+exact remedy ("re-pair through *this* proxy") instead of the generic one ("this
+device keeps failing"). Set it at or above the storm threshold and the diagnosis
+can only ever be a requalification of a storm already raised.
+
+The floor of 2 is the fix of 0.6.4 expressed as a constraint. At 1, a single
+measured refusal is a diagnosis — and this diagnosis asks you to go and
+physically re-pair a device, which is not a trip worth sending anyone on over one
+failed connection.
+
+Raising it costs you the specific remedy, not the alert: past the storm
+threshold, the same failures still surface as a `storm`. Only the sentence that
+names the proxy to re-pair through goes away.
 
 ### Storm detection stops guessing
 
