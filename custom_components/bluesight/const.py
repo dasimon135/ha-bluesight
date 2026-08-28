@@ -56,5 +56,31 @@ DEFAULT_IDLE_SLOT_THRESHOLD_S = 1800.0
 # forever over a refusal by another, long ago.
 DEFAULT_BOND_THRESHOLD = 3
 
+#: Every tunable and the value it runs at when the user has never saved one.
+#:
+#: A config entry's ``options`` holds only what was actually submitted, so a
+#: threshold that has never been through the dialog is *absent* from it while
+#: being very much in force -- ``async_setup_entry`` falls back to the constant.
+#: The diagnostics dump reported the persisted map verbatim and was therefore
+#: silent about exactly those thresholds, which is worst on the newest option
+#: and best on the ones nobody is asking about.
+#:
+#: Keyed by the option name rather than derived from the schema on purpose: the
+#: dump is the artifact downloaded when things are already broken, and running
+#: it through voluptuous would let one out-of-range persisted value raise where
+#: a report is being collected. ``test_options_schema`` pins this table against
+#: the schema instead, so the two cannot drift without a test saying so.
+OPTION_DEFAULTS = {
+    "storm_window_s": DEFAULT_STORM_WINDOW_S,
+    "storm_threshold": DEFAULT_STORM_THRESHOLD,
+    "poll_interval_s": DEFAULT_POLL_INTERVAL_S,
+    "stalled_threshold_s": DEFAULT_STALLED_THRESHOLD_S,
+    "reboot_window_s": DEFAULT_REBOOT_WINDOW_S,
+    "reboot_threshold": DEFAULT_REBOOT_THRESHOLD,
+    "offline_grace_s": DEFAULT_OFFLINE_GRACE_S,
+    "idle_threshold_s": DEFAULT_IDLE_SLOT_THRESHOLD_S,
+    "bond_threshold": DEFAULT_BOND_THRESHOLD,
+}
+
 SERVICE_FORGET_PROXY = "forget_proxy"
 ATTR_SOURCE = "source"

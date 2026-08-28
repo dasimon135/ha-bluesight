@@ -19,6 +19,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 
 from . import BlueSightConfigEntry
+from .const import OPTION_DEFAULTS
 from .diagnostics_data import telemetry_report
 from .incident_policy import dedupe_incidents
 from .window import FailureWindow
@@ -40,7 +41,12 @@ async def async_get_config_entry_diagnostics(
     coordinator = entry.runtime_data
     data = coordinator.data
     return {
-        "options": {**entry.data, **entry.options},
+        # Defaults first, so a threshold in force but never submitted is
+        # reported rather than absent. `entry.options` holds only what the
+        # dialog actually saved, and `async_setup_entry` falls back to the
+        # same constants -- so this is what the integration is *running at*,
+        # which is the only version of the answer a bug report can use.
+        "options": {**OPTION_DEFAULTS, **entry.data, **entry.options},
         "availability_degraded": data.availability_degraded,
         "proxies": [asdict(proxy) for proxy in data.proxies],
         "proxies_health": [asdict(health) for health in data.proxies_health],
