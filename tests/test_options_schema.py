@@ -16,6 +16,7 @@ pytest.importorskip("homeassistant.config_entries")
 
 from custom_components.bluesight.config_flow import build_options_schema
 from custom_components.bluesight.const import (
+    DEFAULT_BOND_THRESHOLD,
     DEFAULT_IDLE_SLOT_THRESHOLD_S,
     DEFAULT_OFFLINE_GRACE_S,
     DEFAULT_POLL_INTERVAL_S,
@@ -38,6 +39,7 @@ def test_defaults_come_from_const_when_options_empty():
         "reboot_threshold": DEFAULT_REBOOT_THRESHOLD,
         "offline_grace_s": DEFAULT_OFFLINE_GRACE_S,
         "idle_threshold_s": DEFAULT_IDLE_SLOT_THRESHOLD_S,
+        "bond_threshold": DEFAULT_BOND_THRESHOLD,
     }
 
 
@@ -82,6 +84,35 @@ def test_idle_threshold_floor_is_enforced():
     assert build_options_schema({})({"idle_threshold_s": 60})[
         "idle_threshold_s"
     ] == 60.0
+
+
+def test_bond_threshold_is_coerced_and_overridable():
+    validated = build_options_schema({"bond_threshold": "4"})({})
+    assert validated["bond_threshold"] == 4
+    assert isinstance(validated["bond_threshold"], int)
+
+
+def test_bond_threshold_floor_is_enforced():
+    """At 1, a single measured refusal is a diagnosis again.
+
+    That is precisely the false positive this threshold was introduced to end,
+    and the remedy it produces sends someone to physically re-pair a device.
+    The floor is the fix expressed as a bound, so it is pinned here.
+    """
+    for rejected in (0, 1, -1):
+        with pytest.raises(vol.Invalid):
+            build_options_schema({})({"bond_threshold": rejected})
+    assert build_options_schema({})({"bond_threshold": 2})["bond_threshold"] == 2
+
+
+def test_bond_threshold_may_exceed_the_storm_threshold():
+    """No ceiling, on purpose. The replay cap in ``coordinator_data`` takes the
+    max of the two thresholds, so a higher bond threshold stays reachable
+    rather than being silently starved of events."""
+    validated = build_options_schema({})(
+        {"storm_threshold": 5, "bond_threshold": 9}
+    )
+    assert validated["bond_threshold"] == 9
 
 
 def test_every_schema_field_is_named_in_strings_json():

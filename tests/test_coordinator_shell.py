@@ -47,6 +47,9 @@ def _bare_coordinator() -> BlueSightCoordinator:
     # bare coordinator needs its own rather than sharing one.
     c._counter_deltas = CounterDeltas()
     c._idle_threshold_s = 300.0
+    # Below `_window`'s threshold of 5, as it ships: BOND_LOST is meant to
+    # reach its verdict before the storm it would otherwise be reported as.
+    c._bond_threshold = 3
     return c
 
 
@@ -601,9 +604,17 @@ def _telemetry_coordinator(
     return c
 
 
-def test_a_proxy_with_telemetry_entities_raises_bond_lost(monkeypatch):
-    """End to end: registry -> reader -> parser -> detector -> incident."""
-    c = _telemetry_coordinator(
+def _bond_lost_states():
+    """States for one proxy reporting SMP counters and an empty bond store."""
+    return {
+        "sensor.smp": _FakeState("d0cf130ec92a:0"),
+        # Reporting zero bonds, which is a reading and not an absence.
+        "sensor.bonds": _FakeState(""),
+    }
+
+
+def _bond_lost_coordinator(monkeypatch, states):
+    return _telemetry_coordinator(
         monkeypatch,
         entries={
             "dev_proxy": [
@@ -611,13 +622,21 @@ def test_a_proxy_with_telemetry_entities_raises_bond_lost(monkeypatch):
                 _FakeEntry("sensor.bonds", BONDS_NAME),
             ]
         },
-        states={
-            "sensor.smp": _FakeState("d0cf130ec92a:3"),
-            # Reporting zero bonds, which is a reading and not an absence.
-            "sensor.bonds": _FakeState(""),
-        },
+        states=states,
     )
+
+
+def test_a_proxy_with_telemetry_entities_raises_bond_lost(monkeypatch):
+    """End to end: registry -> reader -> parser -> deltas -> window -> incident."""
+    states = _bond_lost_states()
+    c = _bond_lost_coordinator(monkeypatch, states)
+
+    # First snapshot baselines the counter; the second sees it move. The
+    # window is what the detector reads, and only a delta reaches it.
+    c._snapshot()
+    states["sensor.smp"] = _FakeState("d0cf130ec92a:3")
     data = c._snapshot()
+
     # The proxy resolved through its NETWORK MAC and reported.
     assert [t.source for t in data.telemetry] == [PROXY]
     [incident] = [i for i in data.incidents if i.kind is IncidentKind.BOND_LOST]
@@ -626,6 +645,28 @@ def test_a_proxy_with_telemetry_entities_raises_bond_lost(monkeypatch):
     assert incident.evidence == "smp"
     # Named from the health snapshot, which is keyed on the canonical source.
     assert incident.detail_params["proxy"] == "Kitchen proxy"
+    # The count is what was measured in the window, and the window it was
+    # measured over travels with it.
+    assert incident.detail_params["count"] == "3"
+    assert incident.detail_params["seconds"] == "300"
+
+
+def test_the_first_snapshot_only_baselines_and_raises_no_bond_lost(monkeypatch):
+    """A proxy's counter has been climbing since it booted, possibly for weeks.
+
+    Replaying that history on the first snapshot is exactly the defect this
+    detector was rewritten to end -- it is how a device working normally came
+    to be reported as needing a re-pair. The first reading establishes a
+    baseline and asserts nothing, as it already did for STORM.
+    """
+    states = _bond_lost_states()
+    states["sensor.smp"] = _FakeState("d0cf130ec92a:99")
+    c = _bond_lost_coordinator(monkeypatch, states)
+
+    data = c._snapshot()
+
+    assert [t.source for t in data.telemetry] == [PROXY]
+    assert [i for i in data.incidents if i.kind is IncidentKind.BOND_LOST] == []
 
 
 def test_a_proxy_without_the_component_is_absent_from_the_snapshot(monkeypatch):
