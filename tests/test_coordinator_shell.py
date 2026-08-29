@@ -50,6 +50,10 @@ def _bare_coordinator() -> BlueSightCoordinator:
     # Below `_window`'s threshold of 5, as it ships: BOND_LOST is meant to
     # reach its verdict before the storm it would otherwise be reported as.
     c._bond_threshold = 3
+    # Per-proxy saturation windows, created lazily by `_snapshot`. Empty here
+    # for the same reason the real coordinator starts empty: a proxy has no
+    # pressure history until it has been seen.
+    c._saturation = {}
     return c
 
 

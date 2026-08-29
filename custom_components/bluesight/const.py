@@ -82,5 +82,11 @@ OPTION_DEFAULTS = {
     "bond_threshold": DEFAULT_BOND_THRESHOLD,
 }
 
+# Window over which per-proxy saturation is measured. 24h, and not a tunable:
+# nothing detects on this reading, so there is no threshold for a user to move
+# it against -- and a day is the span that makes "how often is this proxy full"
+# answerable at all, since a fleet's load follows a daily rhythm.
+SATURATION_WINDOW_S = 86400.0
+
 SERVICE_FORGET_PROXY = "forget_proxy"
 ATTR_SOURCE = "source"
