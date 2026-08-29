@@ -21,6 +21,9 @@
 >    was wrong from 0.4.0, was corrected in a reply two days later, and the
 >    opening post went on saying it.
 >
+> Screenshot to attach: `images/card_en.png`. Discourse needs an upload, not
+> a link — drag the file into the editor.
+>
 > The French HACF version is in `post-hacf.md`, and **is** editable — it was
 > updated to this text on 2026-08-29.
 

@@ -8,6 +8,9 @@
 > lecteur arrive sur le premier message, donc une correction postée en réponse
 > est une correction que presque personne ne lit.
 >
+> Capture à joindre : `images/card_fr.png`. Discourse veut un envoi de
+> fichier, pas un lien — glissez-le dans l'éditeur.
+>
 > La version anglaise est dans `post-community.md`.
 
 Bonjour à tous 👋
