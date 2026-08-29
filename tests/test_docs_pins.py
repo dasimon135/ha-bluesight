@@ -23,9 +23,15 @@ ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "custom_components" / "bluesight" / "manifest.json"
 
 #: Every file carrying the `external_components` snippet a user copies.
+#:
+#: The announcement posts count. Their snippet is meant to be pasted straight
+#: out of a forum thread, which is the least correctable place a stale tag can
+#: end up -- a post is edited rarely and quoted often.
 PINNED = [
     ROOT / "docs" / "esphome-component.md",
     ROOT / "esphome" / "bluesight-example.yaml",
+    ROOT / "docs" / "post-community.md",
+    ROOT / "docs" / "post-hacf.md",
 ]
 
 _PIN = re.compile(r"ha-bluesight@v(\d+\.\d+\.\d+)")
