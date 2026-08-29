@@ -4,13 +4,25 @@
 >
 > The thread is already posted and this is its opening post:
 > https://community.home-assistant.io/t/bluesight-see-whats-actually-holding-your-bluetooth-proxy-slots/1022461
-> (posted 2026-08-24). Update it by **editing that post**, not by starting a new
-> thread — a reader lands on the opening post, so a correction added as a reply
-> is a correction almost nobody sees. That already happened once: the card
-> section below was wrong from 0.4.0 and was fixed in a reply two days later,
-> while the opening post kept saying it.
+> (posted 2026-08-24).
 >
-> The French HACF version is in `post-hacf.md`.
+> **The opening post can no longer be edited there.** Discourse closes editing
+> after `post_edit_time_limit` — 24 hours at the lower trust levels — so this
+> text cannot simply be pasted back over it the way the HACF one can. Two ways
+> round it, in order of preference:
+>
+> 1. **Ask the moderators to make the opening post a wiki** (flag it →
+>    *Something Else*). A wiki post stays editable indefinitely, which fixes
+>    this release and every one after it. Request text in
+>    `moderator-wiki-request.md`.
+> 2. Until that lands, carry the news in a reply — the *Update* section at the
+>    bottom of this file. A reply is read by far fewer people than the opening
+>    post, which is exactly why option 1 is worth asking for: the card section
+>    was wrong from 0.4.0, was corrected in a reply two days later, and the
+>    opening post went on saying it.
+>
+> The French HACF version is in `post-hacf.md`, and **is** editable — it was
+> updated to this text on 2026-08-29.
 
 ---
 
@@ -141,3 +153,40 @@ I would especially like to hear about:
 - which Bluetooth devices hold slots hostage for you; I suspect this is not just a Daikin story.
 
 If you have Bluetooth devices going `unavailable` with no explanation, this is worth a look. Feedback and issues very welcome — here or on [GitHub Issues](https://github.com/dasimon135/ha-bluesight/issues). 🔵
+
+---
+
+## Update reply — post this now
+
+> The opening post above cannot be edited (see the header). Until it can be,
+> this reply is what carries the news. Post it as-is.
+
+**Update — v0.6.5, and the roadmap item above has shipped.**
+
+The "next up" in my Roadmap section is done: there is now an optional **ESPHome component** for the proxies themselves. Two blocks pasted into a proxy config you already run, no change to the radio and no slot consumed — it is a passive observer on the BLE event stream:
+
+```yaml
+external_components:
+  - source: github://dasimon135/ha-bluesight@v0.6.5
+    components: [bluesight]
+
+bluesight:
+```
+
+It publishes three things Home Assistant cannot see at all: **SMP (pairing) failure counts**, the proxy's **NVS bond store**, and **per-connection idle time**.
+
+What that buys:
+
+- pairing-storm detection stops being a heuristic and becomes a count;
+- a new diagnosis, **missing pairing key** — a device whose pairing keeps being refused by a proxy that holds no key for it. The remedy is exact, and that is the point: *re-pair through that specific proxy*, because bonds are per-central and pairing through whichever proxy HA picks next will not help. It found a thermostat here that had been unreachable for hours for exactly that reason, while the proxy that did hold the key sat idle;
+- a ghost slot can now be judged for a device Home Assistant does not manage at all.
+
+Evidence is replaced **per proxy**, so a mixed fleet degrades gracefully: a flashed proxy is judged on measurements, an unflashed one keeps the heuristic, and everything works with no proxy running it. Flash one node and compare before deciding.
+
+**It has also been wrong twice, which is the part I want help with.** A thermostat working normally was reported as needing a re-pair because a *different* proxy had refused it in the past — the count was the firmware's lifetime counter, so the incident could never clear. 0.6.4 made it a count inside a rolling window. And a BLE Mesh proxy link, healthy but silent for nine hours and invisible to HA's device registry, was flagged as a stuck slot.
+
+Both are the same class of mistake, and it is the one that matters here: an alarm on something that is fine teaches you to ignore the tool, and you do not get that back. I would rather hear about one false positive than ten confirmations — especially on BLE devices Home Assistant does not manage, where the only evidence is how long a connection has been quiet.
+
+Also since the original post: the Lovelace card ships with the integration and registers its own dashboard resource (0.4.0 — the manual steps described above are gone), the card names the device holding each slot, and the interface and notifications follow your language, English and French.
+
+Releases: https://github.com/dasimon135/ha-bluesight/releases
