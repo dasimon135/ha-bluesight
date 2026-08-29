@@ -20,22 +20,37 @@ On the thread: **flag the opening post → Something Else**, and paste the text
 below. (A flag routes to the moderator queue; it is the normal channel for this
 kind of request and not a report against anyone.)
 
-## Request text
+**That field caps at 500 characters**, which is the binding constraint here —
+the request has to make its case in a paragraph, not a page. The text below is
+461 characters. Do not pad it: newlines may be sent as CRLF, so anything within
+a few characters of the cap risks being rejected on paste.
 
-> Hi — I'm the author of this topic. Could the opening post be made a wiki, or
-> the edit window reopened for it?
+## Request text (461 chars)
+
+> Hi — I'm the author of this topic. Could the first post be made a wiki, or
+> its edit window reopened?
 >
-> It's a custom integration announcement and it has gone stale: the post lists
-> an ESPHome component under "Roadmap — next up" that has since shipped, and
-> its install section describes two manual steps for the Lovelace card that a
-> later release removed. I corrected the second point in a reply, but a reader
-> arriving at the topic reads the first post, so the wrong instructions are
-> what they act on.
+> The announcement has gone stale: it lists a feature as "next up" that has
+> since shipped, and its install section describes two manual steps a later
+> release removed. I corrected that in a reply, but people read the first post,
+> so the stale instructions are what they follow.
 >
-> The project ships fairly often, so a wiki would let me keep the first post
-> accurate without asking you again after every release. Happy to do it any
-> other way you prefer.
+> The project ships often, so a wiki would save asking you again each release.
+> Thanks!
+
+### Shorter fallback (403 chars)
+
+If the field rejects the above for any reason, this drops the roadmap point and
+keeps the one that actually misleads people:
+
+> Hi — I'm the author of this topic. Could the first post be made a wiki, or
+> its edit window reopened?
 >
+> The announcement has gone stale: its install section describes two manual
+> steps a later release removed, so readers follow instructions that no longer
+> apply. I corrected it in a reply, but people read the first post.
+>
+> A wiki would let me keep it accurate without asking you again each release.
 > Thanks!
 
 ## If the answer is no
