@@ -35,6 +35,7 @@ from .const import (
     DEFAULT_REBOOT_WINDOW_S,
     DEFAULT_STALLED_THRESHOLD_S,
     DOMAIN,
+    SATURATION_WINDOW_S,
 )
 from .coordinator_data import BlueSightData, build_triage_data
 from .device_index import (
@@ -45,6 +46,7 @@ from .device_index import (
 )
 from .model import DeviceRef, normalize_address
 from .rendering import Catalogue
+from .saturation import SaturationWindow
 from .storm_signal import ReleaseTracker
 from .telemetry import CounterDeltas
 from .telemetry_reader import read_fleet_telemetry
@@ -145,6 +147,12 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         # rather than as a burst of failures. It therefore has to live as long
         # as the coordinator, and is pruned only by ``forget_proxy``.
         self._counter_deltas = CounterDeltas()
+        # Time each proxy spends with no free slot, one window per source.
+        # A pressure reading, not a fault: nothing detects on it. It exists so
+        # a threshold can later be chosen from measurements across fleets
+        # rather than argued from this one. Lives as long as the coordinator
+        # and is pruned only by ``forget_proxy``.
+        self._saturation: dict[str, SaturationWindow] = {}
         # How long a slot may sit without GATT traffic before the firmware's
         # reading is treated as a stuck slot. Bounded by the options schema;
         # ``detect_idle_slots`` deliberately carries no internal guard.
@@ -175,6 +183,17 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         through this property can rearm a counter.
         """
         return self._counter_deltas.baselines
+
+    def saturation_for(self, source: str) -> SaturationWindow | None:
+        """The saturation window for ``source``, or None if never seen.
+
+        Handed out rather than copied: the sensor only reads it, and copying a
+        window every poll for every proxy would cost more than the reading is
+        worth. Nothing here can open an incident, so a caller holding it cannot
+        fabricate one -- the difference from ``counter_baselines``, which is
+        copied precisely because a writer could.
+        """
+        return self._saturation.get(normalize_address(source))
 
     @property
     def tracked_sources(self) -> set[str]:
@@ -299,6 +318,11 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         # user's rename into the device's `name` field -- after which clearing
         # the rename would restore the rename. See `_display_names_for`.
         proxies = current_proxy_slots(self._manager, self._name_for, device_for)
+        for proxy in proxies:
+            self._saturation.setdefault(
+                proxy.source,
+                SaturationWindow(SATURATION_WINDOW_S, time.monotonic),
+            ).record(proxy.free == 0)
         # What to *say* about each proxy, resolved once for every detector
         # that names one.
         display_names = self._display_names_for(index)
@@ -398,6 +422,8 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         # reuses the MAC would otherwise inherit a stranger's counter and
         # replay the whole difference as a burst of measured failures.
         self._counter_deltas.forget(norm)
+        # A retired proxy's pressure history describes a proxy that is gone.
+        self._saturation.pop(norm, None)
         return self._last_online.pop(norm, None) is not None
 
     def _name_for(self, source: str) -> str:

@@ -9,8 +9,10 @@ from __future__ import annotations
 
 from custom_components.bluesight.coordinator_data import BlueSightData
 from custom_components.bluesight.model import DeviceRef, ProxyHealth, ProxySlots
+from custom_components.bluesight.saturation import SaturationWindow
 from custom_components.bluesight.sensor import (
     LastDeviceSeenSensor,
+    SaturationSensor,
     SlotsFreeSensor,
     SlotsUsedSensor,
 )
@@ -208,3 +210,75 @@ def test_the_published_attributes_are_json_shaped() -> None:
     assert json.loads(json.dumps(_slots_used_attrs(proxy)))["allocated_devices"] == [
         {"address": "11:22", "name": "Madoka", "device_id": "dev_1"}
     ]
+
+
+# --- saturation -------------------------------------------------------------
+#
+# The pressure reading: how much of the last day a proxy spent with nowhere to
+# put a connection. Nothing detects on it, so the entity IS the feature -- if
+# it reports the wrong number there is no incident downstream to catch it.
+
+
+def _saturated_window(saturated_s: float, span_s: float) -> SaturationWindow:
+    """A window observed for ``span_s``, of which ``saturated_s`` was full."""
+    now = [0.0]
+    w = SaturationWindow(window_s=86400.0, clock=lambda: now[0])
+    w.record(True)
+    now[0] += saturated_s
+    w.record(False)
+    now[0] += span_s - saturated_s
+    return w
+
+
+class _SaturationCoordinator(_FakeCoordinator):
+    def __init__(self, window: SaturationWindow | None) -> None:
+        super().__init__(BlueSightData(proxies=[], incidents=[]))
+        self._window = window
+
+    def saturation_for(self, source: str) -> SaturationWindow | None:
+        return self._window
+
+
+def test_saturation_is_reported_as_a_percentage() -> None:
+    """A ratio reads as a percentage everywhere else in Home Assistant, and
+    this number is meant to be skimmed on a dashboard."""
+    sensor = SaturationSensor(_saturation_coord(250.0, 1000.0), "AA:BB")
+
+    assert sensor.native_value == 25.0
+    assert sensor.native_unit_of_measurement == "%"
+    assert sensor.unique_id == "AA:BB_saturation_24h"
+
+
+def _saturation_coord(saturated_s: float, span_s: float) -> _SaturationCoordinator:
+    return _SaturationCoordinator(_saturated_window(saturated_s, span_s))
+
+
+def test_a_proxy_never_seen_reports_nothing_rather_than_zero() -> None:
+    """Zero would claim the proxy has been comfortable all day. It has not
+    been watched at all, which is a different statement."""
+    sensor = SaturationSensor(_SaturationCoordinator(None), "AA:BB")
+
+    assert sensor.native_value is None
+    assert sensor.extra_state_attributes is None
+
+
+def test_the_attributes_carry_what_a_ratio_cannot_say() -> None:
+    """Ten brief squeezes and one long lockout give the same percentage. The
+    worst stretch and the episode count are what tell them apart, and picking
+    a threshold later needs all three."""
+    sensor = SaturationSensor(_saturation_coord(250.0, 1000.0), "AA:BB")
+    attrs = sensor.extra_state_attributes
+
+    assert attrs["longest_saturated_s"] == 250.0
+    assert attrs["episodes"] == 1
+    assert attrs["observed_s"] == 1000.0
+    assert attrs["window_s"] == 86400.0
+
+
+def test_the_reading_says_how_much_evidence_it_rests_on() -> None:
+    """A proxy adopted a minute ago and full ever since reads 100%, which is
+    true and useless without knowing it covers sixty seconds."""
+    sensor = SaturationSensor(_saturation_coord(60.0, 60.0), "AA:BB")
+
+    assert sensor.native_value == 100.0
+    assert sensor.extra_state_attributes["observed_s"] == 60.0

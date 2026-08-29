@@ -12,7 +12,7 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfTime
+from homeassistant.const import PERCENTAGE, UnitOfTime
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -51,6 +51,7 @@ async def async_setup_entry(
             new_entities.append(SlotsUsedSensor(coordinator, source))
             new_entities.append(SlotsFreeSensor(coordinator, source))
             new_entities.append(LastDeviceSeenSensor(coordinator, source))
+            new_entities.append(SaturationSensor(coordinator, source))
         if new_entities:
             async_add_entities(new_entities)
 
@@ -192,4 +193,70 @@ class LastDeviceSeenSensor(CoordinatorEntity[BlueSightCoordinator], SensorEntity
             "device_count": health.device_count,
             "connectable": health.connectable,
             "online": health.online,
+        }
+
+
+class SaturationSensor(CoordinatorEntity[BlueSightCoordinator], SensorEntity):
+    """Share of the last day this proxy spent with no free slot.
+
+    A pressure reading, not a fault. Nothing detects on it and no incident is
+    raised from it: a proxy dedicated to three permanent connections is
+    saturated *by design*, and the point at which busy becomes too busy is not
+    knowable from one fleet. This publishes the measurement so that threshold
+    can be chosen from data later -- the way `idle_threshold_s` went from an
+    argued 300s to a measured 1800s.
+
+    It is still worth reading today. A proxy sitting at 100% while its
+    neighbours idle is the reason a device will go `unavailable` with no error
+    days from now, and nothing else in Home Assistant can see it: it needs
+    per-proxy slot accounting, which is what this integration is.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Saturation (24h)"
+    _attr_icon = "mdi:gauge"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = PERCENTAGE
+
+    def __init__(self, coordinator: BlueSightCoordinator, source: str) -> None:
+        super().__init__(coordinator)
+        self._source = source
+        self._attr_unique_id = f"{source}_saturation_24h"
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, source)})
+
+    @property
+    def _window(self):
+        return self.coordinator.saturation_for(self._source)
+
+    @property
+    def native_value(self) -> float | None:
+        """``None`` until the proxy has been observed at all.
+
+        Zero would be a claim -- "comfortable all day" -- about a proxy nobody
+        has watched yet. Unknown is the honest answer, and the difference
+        matters most on the first snapshot after a restart, when every window
+        is empty and every proxy would otherwise read as perfectly healthy.
+        """
+        window = self._window
+        if window is None or window.observed_s() <= 0:
+            return None
+        return round(window.ratio() * 100, 1)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object] | None:
+        """The three numbers a threshold will eventually be chosen from.
+
+        The ratio alone cannot separate ten one-second squeezes from a single
+        ten-minute lockout, and only the second is an outage. `observed_s`
+        says how much evidence any of it rests on.
+        """
+        window = self._window
+        if window is None:
+            return None
+        return {
+            "longest_saturated_s": round(window.longest_s(), 1),
+            "episodes": window.episodes(),
+            "observed_s": round(window.observed_s(), 1),
+            "window_s": window.window_s,
+            "source": self._source,
         }

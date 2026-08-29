@@ -201,7 +201,28 @@ per signal, so "no telemetry" never looks like "nothing to report"), and
 | `sensor.<proxy>_slots_free` | sensor | slots still free on that proxy | — |
 | `binary_sensor.<proxy>_online` | binary_sensor (`connectivity`) | `on` while the proxy is a registered scanner | — |
 | `sensor.<proxy>_last_device_seen` | sensor (`duration`, seconds) | seconds since that proxy last heard an advertisement | `device_count`, `connectable`, `online` |
+| `sensor.<proxy>_saturation_24h` | sensor (`%`) | share of the last 24h that proxy spent with **no free slot** | `longest_saturated_s`, `episodes`, `observed_s`, `window_s`, `source` |
 | `binary_sensor.bluesight_incident` | binary_sensor (`problem`) | `on` when any incident is open | `incident_count`, `availability_degraded`, `incidents` (list of `{kind, address, device_name, sources, source_names, detail}`, where `device_name` is what Home Assistant calls the peripheral — `""` when it cannot name it — and `source_names` the proxies named the way the detail sentence names them; `kind` ∈ `deadlock` / `ghost_slot` / `storm` / `bond_lost` / `proxy_offline` / `proxy_stalled` / `proxy_reboot_storm`) |
+
+### Saturation is measured, not judged
+
+`sensor.<proxy>_saturation_24h` raises no incident and never will on its own.
+A proxy dedicated to three permanent connections is saturated *by design*, and
+the point where busy becomes too busy is not knowable from one fleet — so this
+publishes the measurement rather than a verdict, the way `idle_threshold_s`
+went from an argued 300s to a measured 1800s.
+
+It is still the most useful number here when nothing is wrong. A proxy sitting
+near 100% while its neighbours idle is why a device will go `unavailable` with
+no error days from now: the next connection that needs that proxy will not get
+in. Nothing else in Home Assistant can see this, because it needs per-proxy
+slot accounting.
+
+Read the attributes alongside the percentage. Ten one-second squeezes and one
+ten-minute lockout give the same ratio and mean nothing alike —
+`longest_saturated_s` and `episodes` are what separate them, and `observed_s`
+says how much evidence any of it rests on (the window is in memory, so it
+restarts with Home Assistant; the sensor's own recorder history does not).
 
 `availability_degraded` turns `true` if the device/entity registry lookup behind
 ghost-slot detection ever fails. Ghost verdicts are biased toward "alive", so a
