@@ -1,7 +1,16 @@
 # community.home-assistant.io announcement — launch (English)
 
-> **Launch post, current as of v0.6.5.** The project has still never been
-> announced. The French HACF version is in `post-hacf.md`.
+> **Body of the live thread, current as of v0.6.5.**
+>
+> The thread is already posted and this is its opening post:
+> https://community.home-assistant.io/t/bluesight-see-whats-actually-holding-your-bluetooth-proxy-slots/1022461
+> (posted 2026-08-24). Update it by **editing that post**, not by starting a new
+> thread — a reader lands on the opening post, so a correction added as a reply
+> is a correction almost nobody sees. That already happened once: the card
+> section below was wrong from 0.4.0 and was fixed in a reply two days later,
+> while the opening post kept saying it.
+>
+> The French HACF version is in `post-hacf.md`.
 
 ---
 

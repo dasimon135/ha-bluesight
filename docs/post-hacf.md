@@ -1,7 +1,14 @@
 # [Intégration] BlueSight — voir ce qui bloque vraiment vos proxys Bluetooth
 
-> **Message de lancement du fil HACF, à jour pour la v0.6.5.**
-> Le projet n'a toujours jamais été annoncé.
+> **Corps du fil en ligne, à jour pour la v0.6.5.**
+>
+> Le fil est déjà publié et ceci en est le premier message :
+> https://forum.hacf.fr/t/integration-bluesight-voir-ce-qui-bloque-vraiment-vos-proxys-bluetooth/83183
+> Mettez-le à jour en **éditant ce message**, pas en ouvrant un nouveau fil : un
+> lecteur arrive sur le premier message, donc une correction postée en réponse
+> est une correction que presque personne ne lit.
+>
+> La version anglaise est dans `post-community.md`.
 
 Bonjour à tous 👋
 
