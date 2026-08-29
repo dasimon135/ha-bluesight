@@ -9,6 +9,13 @@ staring at `unavailable` devices with no explanation: slot-leak **deadlocks**,
 > **Status:** v1 — read-only diagnostics. BlueSight detects and advises; it
 > never touches your proxies or bonds. Installs through HACS with no reflash.
 
+![The BlueSight card: four Bluetooth proxies, twelve GATT slots, and the device holding each one](https://raw.githubusercontent.com/dasimon135/ha-bluesight/main/docs/images/card.png)
+
+*Four proxies, twelve slots, and what is actually in them — every held slot
+named by the device holding it, not by a MAC address. One proxy is full while
+two sit empty. "No incidents" is the normal reading: the card is quiet until
+something is actually wrong.*
+
 ## The problem
 
 Home Assistant's Bluetooth stack has two layers. The **visibility** layer —
