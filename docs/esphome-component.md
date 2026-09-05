@@ -57,7 +57,7 @@ the file to trust if the two ever disagree.
 
 ```yaml
 external_components:
-  - source: github://dasimon135/ha-bluesight@v0.7.0
+  - source: github://dasimon135/ha-bluesight@v0.7.1
     components: [bluesight]
 ```
 

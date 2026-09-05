@@ -90,7 +90,7 @@ So there is an optional **ESPHome component** you can add to proxies you already
 
 ```yaml
 external_components:
-  - source: github://dasimon135/ha-bluesight@v0.7.0
+  - source: github://dasimon135/ha-bluesight@v0.7.1
     components: [bluesight]
 
 bluesight:
@@ -170,7 +170,7 @@ The "next up" in my Roadmap section is done: there is now an optional **ESPHome 
 
 ```yaml
 external_components:
-  - source: github://dasimon135/ha-bluesight@v0.7.0
+  - source: github://dasimon135/ha-bluesight@v0.7.1
     components: [bluesight]
 
 bluesight:
