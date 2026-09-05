@@ -6,3 +6,6 @@ __pycache__/
 htmlcov/
 # Personal Claude Code permissions, never shared
 .claude/settings.local.json
+
+# per-session git worktrees
+.worktrees/

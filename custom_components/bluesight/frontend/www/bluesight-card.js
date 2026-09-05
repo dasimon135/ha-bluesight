@@ -29,7 +29,7 @@
 // Kept equal to `manifest.json`'s version by tests/test_card_locale.py. The
 // card has no build step, so there is nowhere to inject the real version at
 // package time; a checked constant is the cheap way to make the drift loud.
-const CARD_VERSION = "0.7.0";
+const CARD_VERSION = "0.7.1";
 
 // eslint-disable-next-line no-console
 console.info(
@@ -1165,14 +1165,14 @@ class BlueSightCard extends HTMLElement {
         gap: 8px;
         border-radius: 6px;
         padding: 6px 10px;
-        color: #fff;
+        color: var(--bluesight-on-status, #fff);
       }
       .incident.critical {
         background: var(--error-color, #db4437);
       }
       .incident.warning {
         background: var(--warning-color, #ffa600);
-        color: #1a1a1a;
+        color: var(--bluesight-on-warning, #1a1a1a);
       }
       .incident-kind {
         font-weight: 700;
