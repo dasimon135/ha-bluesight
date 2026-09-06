@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Known limitations - read this first
+    url: https://github.com/dasimon135/ha-bluesight#known-limitations
+    about: Several behaviours reported as bugs are heuristics working as designed, and that section says which.
+  - name: General discussion (English)
+    url: https://community.home-assistant.io/t/1022461
+    about: User-to-user help. Not tracked - open an issue for anything that needs a fix.
+  - name: Discussion generale (francais)
+    url: https://forum.hacf.fr/t/83183
+    about: Entraide entre utilisateurs. Non suivi - ouvrez une issue pour tout correctif attendu.

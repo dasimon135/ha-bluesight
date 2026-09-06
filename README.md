@@ -1,4 +1,9 @@
-# BlueSight
+# BlueSight — Home Assistant integration
+
+[![Release](https://img.shields.io/github/v/release/dasimon135/ha-bluesight)](https://github.com/dasimon135/ha-bluesight/releases)
+[![Validate](https://github.com/dasimon135/ha-bluesight/actions/workflows/validate.yml/badge.svg)](https://github.com/dasimon135/ha-bluesight/actions/workflows/validate.yml)
+[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
+[![License](https://img.shields.io/github/license/dasimon135/ha-bluesight)](LICENSE)
 
 Make the **connection layer** of Home Assistant's Bluetooth visible. BlueSight
 shows how many GATT connection slots each ESPHome Bluetooth proxy is using, who
@@ -52,8 +57,8 @@ Assistant already tracks internally:
 | Detector | Fires when |
 | --- | --- |
 | **Deadlock** (`#176516`) | the same device address is allocated on **two or more distinct** proxies at once — a BLE peripheral can only be connected to one central, so the extra allocations are stale duplicates spending slots across the pool. |
-| **Ghost slot** | an address is in a proxy's allocated list while its Home Assistant device is dead — the device is found in the registry (by MAC in `connections` or `identifiers`) and **all** its entities are `unavailable`. Availability is judged from entity state, not advertising: a connected device stops advertising, so advertisement presence would false-positive every healthy persistent connection. A device with no registry entry cannot be judged this way and is treated as alive — unless the proxy holding it runs the optional [ESPHome component](#measured-evidence-060-optional), which measures the connection's idle time directly instead. See [Limitations](#limitations). |
-| **Pairing storm** | a device's slot is released, over and over, while its Home Assistant device is unavailable — beyond the configured threshold inside the storm window. A best-effort heuristic on its own; on a proxy running the optional [ESPHome component](#measured-evidence-060-optional) the same window is fed real SMP-failure counts instead — see [Limitations](#limitations). |
+| **Ghost slot** | an address is in a proxy's allocated list while its Home Assistant device is dead — the device is found in the registry (by MAC in `connections` or `identifiers`) and **all** its entities are `unavailable`. Availability is judged from entity state, not advertising: a connected device stops advertising, so advertisement presence would false-positive every healthy persistent connection. A device with no registry entry cannot be judged this way and is treated as alive — unless the proxy holding it runs the optional [ESPHome component](#measured-evidence-060-optional), which measures the connection's idle time directly instead. See [Known limitations](#known-limitations). |
+| **Pairing storm** | a device's slot is released, over and over, while its Home Assistant device is unavailable — beyond the configured threshold inside the storm window. A best-effort heuristic on its own; on a proxy running the optional [ESPHome component](#measured-evidence-060-optional) the same window is fed real SMP-failure counts instead — see [Known limitations](#known-limitations). |
 
 It surfaces the state as:
 
@@ -147,7 +152,7 @@ it is working are in **[docs/esphome-component.md](docs/esphome-component.md)**.
   ghost/storm detection; the deadlock detector is most meaningful across
   multiple proxies.
 
-## Install
+## Installation
 
 BlueSight is a HACS custom repository.
 
@@ -336,7 +341,7 @@ proxies.
 - **v2 — self-healing.** Guided, then automatic remediation: "free this slot" and
   guided re-pair, built on the proven v1 base.
 
-## Limitations
+## Known limitations
 
 BlueSight is honest about its edges:
 
@@ -387,6 +392,33 @@ BlueSight is honest about its edges:
   French need. Languages with richer plural rules — Polish, Russian, Arabic and
   others — cannot be translated correctly until the renderer learns their
   categories. Adding such a language is a code change, not just a catalogue.
+
+## Support
+
+Open an issue here for anything about this integration — a bug, a question, or a
+feature request. Forum threads are for general discussion and user-to-user help;
+nothing raised there is tracked, and it can be lost. An issue cannot.
+
+Before you open one, read [Known limitations](#known-limitations). Several of the behaviours
+reported as bugs are heuristics working as designed, and the section says which.
+
+To get a useful answer on the first exchange, include:
+
+- your Home Assistant version and the version of this integration;
+- the adapters and ESPHome proxies involved — board, ESPHome version, and how
+  many of each;
+- the diagnostics download (Settings → Devices & services → BlueSight → **⋮** →
+  *Download diagnostics*);
+- a debug log, plus what you did, what you expected, and what happened instead.
+
+### Staying informed
+
+New versions are announced here and nowhere else. To hear about one:
+
+- **HACS already offers you the update**, release notes included — nothing to do;
+- subscribe to `https://github.com/dasimon135/ha-bluesight/releases.atom` in any
+  RSS reader, or inside Home Assistant through the `feedreader` integration;
+- or use **Watch → Custom → Releases** on this repository.
 
 ## License
 
