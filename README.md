@@ -5,51 +5,56 @@
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
 [![License](https://img.shields.io/github/license/dasimon135/ha-bluesight)](LICENSE)
 
-Make the **connection layer** of Home Assistant's Bluetooth visible. BlueSight
-shows how many GATT connection slots each ESPHome Bluetooth proxy is using, who
-is holding them, and — the point — flags the failure modes that today leave you
-staring at `unavailable` devices with no explanation: slot-leak **deadlocks**,
-**ghost slots**, and **pairing storms**.
+When a Bluetooth device in Home Assistant goes `unavailable` for no visible
+reason, this tells you why.
 
-> **Status:** v1 — read-only diagnostics. BlueSight detects and advises; it
-> never touches your proxies or bonds. Installs through HACS with no reflash.
+Every ESPHome Bluetooth proxy can hold only a handful of Bluetooth connections
+at once — three, usually. Home Assistant does not show you how many are in use
+or which device is holding each one, so when they run out, devices simply stop
+working and nothing says so. **BlueSight shows you those connections**, names
+the device holding each one, and flags the three ways they go wrong.
 
-![The BlueSight card: four Bluetooth proxies, twelve GATT slots, and the device holding each one](https://raw.githubusercontent.com/dasimon135/ha-bluesight/main/docs/images/card_en.png)
+> **What it does not do:** anything. BlueSight only reads. It never touches a
+> proxy, a connection or a pairing, and it needs no firmware reflash — it
+> installs through HACS like any other integration.
+
+![The BlueSight card: four Bluetooth proxies, twelve connection slots, and the device holding each one](https://raw.githubusercontent.com/dasimon135/ha-bluesight/main/docs/images/card_en.png)
 
 *Four proxies, twelve slots, and what is actually in them — every held slot
 named by the device holding it, not by a MAC address. One proxy is full while
-two sit empty. "No incidents" is the normal reading: the card is quiet until
-something is actually wrong.*
+two sit empty. "No incidents" is the normal reading: the card stays quiet until
+something is genuinely wrong.*
 
-## The problem
+## Will this be useful to me?
 
-Home Assistant's Bluetooth stack has two layers. The **visibility** layer —
-which devices each proxy can *see* — is well served: HA 2025.2 added an
-[Advertisement Monitor](https://www.home-assistant.io/integrations/bluetooth/)
-(Settings → Devices → Bluetooth → Configure) that lists what each proxy hears.
+**If you run ESPHome Bluetooth proxies**, and especially several of them, yes.
+The more Bluetooth devices you have, the more often you meet the problems below.
 
-The **connection** layer — the finite pool of GATT slots a proxy can actually
-*connect* through — is invisible. And that is where things break:
+**If your Bluetooth devices never misbehave**, it is a dashboard that says
+everything is fine. That is a reasonable thing to own, but it is not urgent.
 
-- **Slot-leak deadlock** — one misbehaving device grabs a slot on *every* proxy
-  and never releases it. The shared pool deadlocks, and unrelated devices go
-  `unavailable` with no error. This is a real, documented failure: core issue
-  [home-assistant/core#176516](https://github.com/home-assistant/core/issues/176516).
-  There is no diagnostic tool for it — the only method offered in the thread is
-  "enable debug logs" and read them by hand.
-- **Ghost slot** — a proxy still reports a device as holding a slot while that
-  device is dead: every one of its Home Assistant entities has gone
-  `unavailable`. The slot is spent on a connection that is no longer doing
-  anything.
-- **Pairing storm** — a device fails to bond over and over (SMP failures /
-  connection rejects) in a tight burst, churning slots and destabilising the
-  proxy.
+**It requires nothing new.** No hardware, no reflash, no configuration file. It
+reads what Home Assistant and your proxies already know.
 
-The Advertisement Monitor cannot show any of this, because it covers *what a
-proxy sees*, not *what a proxy is connected to*. BlueSight fills exactly that
-gap.
+## The three failures it catches
 
-## What it does (v1)
+Home Assistant already shows you what each proxy can *hear* — the Advertisement
+Monitor added in 2025.2 does that well. What no tool shows is what each proxy is
+*connected to*, and that is where these live:
+
+- **A device that hogs every proxy.** One misbehaving device takes a connection
+  on every proxy and never gives it back. The shared pool runs dry and unrelated
+  devices go `unavailable` with no error anywhere. This is a real, documented
+  failure — Home Assistant core issue
+  [#176516](https://github.com/home-assistant/core/issues/176516) — and the only
+  method offered in that thread is to turn on debug logs and read them by hand.
+- **A connection held by something already dead.** The proxy still counts a
+  device as connected while every one of that device's entities has gone
+  `unavailable`. The slot is spent on nothing.
+- **A device that keeps failing to pair.** It retries over and over in a tight
+  burst, churning connections and destabilising the proxy for everything else.
+
+## What it shows
 
 Three detectors, running over the exact per-proxy slot allocations Home
 Assistant already tracks internally:
@@ -57,8 +62,8 @@ Assistant already tracks internally:
 | Detector | Fires when |
 | --- | --- |
 | **Deadlock** (`#176516`) | the same device address is allocated on **two or more distinct** proxies at once — a BLE peripheral can only be connected to one central, so the extra allocations are stale duplicates spending slots across the pool. |
-| **Ghost slot** | an address is in a proxy's allocated list while its Home Assistant device is dead — the device is found in the registry (by MAC in `connections` or `identifiers`) and **all** its entities are `unavailable`. Availability is judged from entity state, not advertising: a connected device stops advertising, so advertisement presence would false-positive every healthy persistent connection. A device with no registry entry cannot be judged this way and is treated as alive — unless the proxy holding it runs the optional [ESPHome component](#measured-evidence-060-optional), which measures the connection's idle time directly instead. See [Known limitations](#known-limitations). |
-| **Pairing storm** | a device's slot is released, over and over, while its Home Assistant device is unavailable — beyond the configured threshold inside the storm window. A best-effort heuristic on its own; on a proxy running the optional [ESPHome component](#measured-evidence-060-optional) the same window is fed real SMP-failure counts instead — see [Known limitations](#known-limitations). |
+| **Ghost slot** | an address is in a proxy's allocated list while its Home Assistant device is dead — the device is found in the registry (by MAC in `connections` or `identifiers`) and **all** its entities are `unavailable`. Availability is judged from entity state, not advertising: a connected device stops advertising, so advertisement presence would false-positive every healthy persistent connection. A device with no registry entry cannot be judged this way and is treated as alive — unless the proxy holding it runs the optional [ESPHome component](#measured-evidence-optional-esphome-component), which measures the connection's idle time directly instead. See [Known limitations](#known-limitations). |
+| **Pairing storm** | a device's slot is released, over and over, while its Home Assistant device is unavailable — beyond the configured threshold inside the storm window. A best-effort heuristic on its own; on a proxy running the optional [ESPHome component](#measured-evidence-optional-esphome-component) the same window is fed real SMP-failure counts instead — see [Known limitations](#known-limitations). |
 
 It surfaces the state as:
 
@@ -78,7 +83,7 @@ It surfaces the state as:
 Everything is **read-only**. BlueSight never frees a slot, forces an unbond, or
 reflashes anything. It observes and reports.
 
-## Proxy health (v1.2)
+## Proxy health
 
 The v1 detectors watch what flows *through* the proxies. v1.2 adds a layer that
 watches the **proxies themselves**. BlueSight reads the `habluetooth` scanner
@@ -109,7 +114,7 @@ They need per-proxy instrumentation, and when that instrumentation arrived in
 not of the connection layer, nothing in BlueSight would consume them, and ESPHome
 already exposes all three directly if you want them on a dashboard.
 
-## Measured evidence (0.6.0, optional)
+## Measured evidence (optional ESPHome component)
 
 Everything above runs on what Home Assistant already knows. Two things it does
 not know, and cannot: **why a pairing failed** — the reason is raised as a
