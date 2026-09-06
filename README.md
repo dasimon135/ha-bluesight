@@ -388,6 +388,33 @@ BlueSight is honest about its edges:
   others — cannot be translated correctly until the renderer learns their
   categories. Adding such a language is a code change, not just a catalogue.
 
+## Support
+
+Open an issue here for anything about this integration — a bug, a question, or a
+feature request. Forum threads are for general discussion and user-to-user help;
+nothing raised there is tracked, and it can be lost. An issue cannot.
+
+Before you open one, read [Limitations](#limitations). Several of the behaviours
+reported as bugs are heuristics working as designed, and the section says which.
+
+To get a useful answer on the first exchange, include:
+
+- your Home Assistant version and the version of this integration;
+- the adapters and ESPHome proxies involved — board, ESPHome version, and how
+  many of each;
+- the diagnostics download (Settings → Devices & services → BlueSight → **⋮** →
+  *Download diagnostics*);
+- a debug log, plus what you did, what you expected, and what happened instead.
+
+### Staying informed
+
+New versions are announced here and nowhere else. To hear about one:
+
+- **HACS already offers you the update**, release notes included — nothing to do;
+- subscribe to `https://github.com/dasimon135/ha-bluesight/releases.atom` in any
+  RSS reader, or inside Home Assistant through the `feedreader` integration;
+- or use **Watch → Custom → Releases** on this repository.
+
 ## License
 
 [MIT](LICENSE) © 2026 David Simon.

@@ -1,0 +1,63 @@
+name: Bug report
+description: Report a problem with the BlueSight integration
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. Please fill in as much of the form as
+        possible - it is what makes an issue diagnosable without a round trip.
+
+        Before you continue, check [Limitations](https://github.com/dasimon135/ha-bluesight#limitations).
+        Several behaviours reported as bugs are heuristics working as designed, and that section says which.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the problem, what you expected instead, and how to reproduce it.
+    validations:
+      required: true
+  - type: input
+    id: ha-version
+    attributes:
+      label: Home Assistant version
+      description: Settings -> About (e.g. 2026.8.2)
+      placeholder: "2026.8.2"
+    validations:
+      required: true
+  - type: input
+    id: integration-version
+    attributes:
+      label: BlueSight version
+      description: HACS -> BlueSight (e.g. 0.7.1)
+      placeholder: "0.7.1"
+    validations:
+      required: true
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Adapters and proxies
+      description: |
+        The Bluetooth adapters and ESPHome proxies involved: how many of each, board, and ESPHome version.
+      placeholder: |
+        1 local adapter on the host, 3 x ESP32 proxy on ESPHome 2026.8.2
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: |
+        Settings -> Devices & services -> BlueSight -> entry menu (...) -> Download diagnostics.
+        Attach the file or paste its content here.
+      placeholder: Drag and drop the diagnostics JSON file here.
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: Home Assistant logs related to the issue (Settings -> System -> Logs, filter on "bluesight").
+      render: text
+    validations:
+      required: false
