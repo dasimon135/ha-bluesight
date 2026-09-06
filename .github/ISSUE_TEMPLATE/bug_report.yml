@@ -8,7 +8,7 @@ body:
         Thanks for taking the time to report this. Please fill in as much of the form as
         possible - it is what makes an issue diagnosable without a round trip.
 
-        Before you continue, check [Limitations](https://github.com/dasimon135/ha-bluesight#limitations).
+        Before you continue, check [Known limitations](https://github.com/dasimon135/ha-bluesight#known-limitations).
         Several behaviours reported as bugs are heuristics working as designed, and that section says which.
   - type: textarea
     id: description

@@ -9,7 +9,7 @@ body:
 
         Two things worth reading first, because they answer a large share of what gets
         asked: the [README](https://github.com/dasimon135/ha-bluesight#readme) and
-        [Limitations](https://github.com/dasimon135/ha-bluesight#limitations).
+        [Known limitations](https://github.com/dasimon135/ha-bluesight#known-limitations).
   - type: textarea
     id: question
     attributes:
