@@ -150,13 +150,13 @@ Confirm each in the source rather than reciting it, but know they exist:
 
 ### (a) Already documented
 
-The answer exists in the README — very often in § *Limitations* — and you have
+The answer exists in the README — very often in § *Known limitations* — and you have
 verified against the source that it is still accurate.
 
 - Answer the question directly in the comment, in your own words.
 - Then link the section: `https://github.com/dasimon135/ha-bluesight#<anchor>`.
   Derive the anchor from a real heading in `README.md` — do not invent one.
-  `#limitations`, `#how-it-works` and `#roadmap` cover most of these.
+  `#known-limitations`, `#how-it-works` and `#roadmap` cover most of these.
 - Label: `question`.
 
 ### (b) Missing information
