@@ -105,9 +105,7 @@ L'interface et les notifications suivent votre langue ; l'anglais et le françai
 
 ## Installation
 
-Via HACS, en ajoutant le dépôt comme dépôt personnalisé de type `Integration` :
-
-`https://github.com/dasimon135/ha-bluesight`
+Via HACS : l'intégration est dans le magasin par défaut, il n'y a donc aucun dépôt personnalisé à ajouter. Ouvrez HACS, cherchez **BlueSight**, téléchargez-la.
 
 Puis redémarrage, et Paramètres → Appareils et services → Ajouter une intégration → BlueSight.
 
