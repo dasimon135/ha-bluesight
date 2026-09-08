@@ -1,0 +1,36 @@
+# Compile-check configuration: BlueSight on a scan-only node, i.e. no BLE
+# client stack at all.
+#
+# Without `esp32_ble_tracker` there is no USE_ESP32_BLE_CLIENT define, so
+# ESP32BLE::add_gattc_event_callback is not compiled and `to_code` takes its
+# other branch: no GATTC handler, no "BlueSight slots" sensor, one warning.
+# SMP failures and bonds are unaffected.
+#
+# Both branches are built because they generate different C++ -- the same
+# reason daikin_madoka builds its two setpoint modes. A change that compiles
+# on a proxy and breaks a scan-only node would otherwise ship green.
+#
+# This file exists so `esphome config` / `esphome compile` can prove the
+# external component still builds. It is not a deployable configuration:
+# there is no wifi/api/ota block.
+
+esphome:
+  name: bluesight-scan-only
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [bluesight]
+
+esp32_ble:
+
+bluesight:
