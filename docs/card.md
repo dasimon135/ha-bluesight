@@ -106,6 +106,42 @@ a card that turns entirely red stops meaning anything.
 
 It is a single vanilla-JS file — no build step, no dependencies.
 
+#### `layout: tile` — the whole fleet on one line
+
+```yaml
+type: custom:bluesight-card
+layout: tile
+```
+
+```
+● BlueSight                              5/12 slots · No incidents
+```
+
+A coloured dot, the card's title, how many of the fleet's slots are spent, and
+how many incidents are open. **Tapping the line opens the full card in a popup**,
+so the rack is one gesture away and costs no room on the page until you ask for
+it. Set `tile_tap: more-info` to get Home Assistant's own dialog for the
+incident sensor instead.
+
+The dot answers *do I need to look*, and nothing else — the tile never says
+*where* the problem is. That is the full card's job, one tap below.
+
+| Dot | Meaning |
+| --- | --- |
+| 🔴 red | An open incident that **wastes a slot**: `deadlock`, `ghost_slot` |
+| 🟠 amber | Any other open incident, `bond_lost` included — and an incident that is on with no detail attached |
+| 🟢 green | The incident sensor says `off`, and reports its picture complete |
+| ⚫ grey | **The diagnostic is not answering**: the sensor is missing, `unavailable`, or reports `availability_degraded` |
+
+Red and amber are the incident feed's own criterion, unchanged (see above).
+Grey is the one this card could not do without: a green dot on a fleet whose
+diagnostic has stopped reporting would be the single lie a diagnostic card must
+never tell. Degradation never hides an incident, though — something seen is a
+fact whatever the gaps around it, so an open incident still colours the dot.
+
+The tile reserves one row of dashboard height (`getCardSize()` answers 1), where
+the full card grows with the fleet.
+
 ### Languages
 
 The card is translated: English and French ship, anything else falls back to

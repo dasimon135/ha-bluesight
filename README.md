@@ -255,6 +255,13 @@ native fallback YAML — is in **[docs/card.md](docs/card.md)**.
 > a single line and drops the names. See
 > [docs/card.md](docs/card.md#show_devices-false--the-squares-on-one-line).
 
+> **`layout: tile` is the whole fleet on one line** — a coloured dot, the slots
+> in use, the open incidents — and tapping it opens the full card in a popup.
+> Green means nothing is wrong, amber and red are the incident feed's own
+> colours, and grey means the diagnostic itself is not answering. For a
+> dashboard where BlueSight is something you check rather than something you
+> watch. See [docs/card.md](docs/card.md#layout-tile--the-whole-fleet-on-one-line).
+
 > Since 0.4.0 the card ships **inside the integration**, so HACS delivers it
 > along with everything else and the integration serves and registers it
 > itself — no copying, no resource to declare. YAML-mode dashboards still
