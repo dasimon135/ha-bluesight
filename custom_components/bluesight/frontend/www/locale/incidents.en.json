@@ -10,7 +10,6 @@
   "incident.proxy_stalled.detail": "Online but no BLE advertisement seen for {seconds}s",
   "incident.proxy_reboot_storm.detail.one": "{count} proxy reboot in {seconds}s",
   "incident.proxy_reboot_storm.detail.other": "{count} proxy reboots in {seconds}s",
-
   "notify.storm.title": "BlueSight: pairing storm",
   "notify.storm.message.one": "{count} connection failure on {address} in {seconds}s. If this is a Daikin/BRC1H-type device, toggle its Bluetooth off and on, then trigger a reconnect.",
   "notify.storm.message.other": "{count} connection failures on {address} in {seconds}s. If this is a Daikin/BRC1H-type device, toggle its Bluetooth off and on, then trigger a reconnect.",
@@ -33,7 +32,6 @@
   "notify.proxy_reboot_storm.message.other": "Bluetooth proxy {address} has rebooted {count} times in {seconds}s — check its power supply / for brownouts.",
   "notify.unknown.title": "BlueSight: incident",
   "notify.unknown.message": "An incident was detected on {address}.",
-
   "card.proxies.empty": "No BlueSight proxies found. Once the integration is set up, sensor.<proxy>_slots_used entities appear automatically. You can also list them explicitly with the `proxies:` config option.",
   "card.proxy.missing": "missing",
   "card.proxy.offline": "offline",
@@ -42,14 +40,15 @@
   "card.proxy.last_advert": "last advert {age} ago",
   "card.proxy.last_advert_with_devices.one": "last advert {age} ago · {count} device seen",
   "card.proxy.last_advert_with_devices.other": "last advert {age} ago · {count} devices seen",
-
   "card.incidents.none": "No incidents",
   "card.incidents.one": "{count} incident",
   "card.incidents.other": "{count} incidents",
   "card.incidents.no_detail": "Incident active (no detail available)",
   "card.incidents.sensor_missing": "Incident sensor {entity} not found.",
+  "card.tile.slots.one": "{used}/{total} slot",
+  "card.tile.slots.other": "{used}/{total} slots",
+  "card.tile.no_data": "No diagnostic data",
   "card.incident.sources": "on {sources}",
-
   "card.kind.deadlock": "Deadlock",
   "card.kind.ghost_slot": "Ghost slot",
   "card.kind.storm": "Storm",
@@ -58,7 +57,6 @@
   "card.kind.proxy_stalled": "Proxy stalled",
   "card.kind.proxy_reboot_storm": "Proxy reboot storm",
   "card.kind.unknown": "Unknown",
-
   "card.age.seconds": "{value} s",
   "card.age.minutes": "{value} min",
   "card.age.hours": "{value} h"

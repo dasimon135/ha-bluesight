@@ -10,7 +10,6 @@
   "incident.proxy_stalled.detail": "En ligne mais aucune annonce BLE reçue depuis {seconds}s",
   "incident.proxy_reboot_storm.detail.one": "{count} redémarrage du proxy en {seconds}s",
   "incident.proxy_reboot_storm.detail.other": "{count} redémarrages du proxy en {seconds}s",
-
   "notify.storm.title": "BlueSight : tempête d'appairage",
   "notify.storm.message.one": "{count} échec de connexion sur {address} en {seconds}s. S'il s'agit d'un appareil de type Daikin/BRC1H, désactivez puis réactivez son Bluetooth, puis déclenchez une reconnexion.",
   "notify.storm.message.other": "{count} échecs de connexion sur {address} en {seconds}s. S'il s'agit d'un appareil de type Daikin/BRC1H, désactivez puis réactivez son Bluetooth, puis déclenchez une reconnexion.",
@@ -33,7 +32,6 @@
   "notify.proxy_reboot_storm.message.other": "Le proxy Bluetooth {address} a redémarré {count} fois en {seconds}s — vérifiez son alimentation / les baisses de tension.",
   "notify.unknown.title": "BlueSight : incident",
   "notify.unknown.message": "Un incident a été détecté sur {address}.",
-
   "card.proxies.empty": "Aucun proxy BlueSight trouvé. Une fois l'intégration configurée, les entités sensor.<proxy>_slots_used apparaissent automatiquement. Vous pouvez aussi les lister explicitement avec l'option de configuration `proxies:`.",
   "card.proxy.missing": "introuvable",
   "card.proxy.offline": "hors ligne",
@@ -42,14 +40,15 @@
   "card.proxy.last_advert": "dernière annonce il y a {age}",
   "card.proxy.last_advert_with_devices.one": "dernière annonce il y a {age} · {count} appareil vu",
   "card.proxy.last_advert_with_devices.other": "dernière annonce il y a {age} · {count} appareils vus",
-
   "card.incidents.none": "Aucun incident",
   "card.incidents.one": "{count} incident",
   "card.incidents.other": "{count} incidents",
   "card.incidents.no_detail": "Incident actif (aucun détail disponible)",
   "card.incidents.sensor_missing": "Capteur d'incident {entity} introuvable.",
+  "card.tile.slots.one": "{used}/{total} créneau",
+  "card.tile.slots.other": "{used}/{total} créneaux",
+  "card.tile.no_data": "Pas de diagnostic",
   "card.incident.sources": "sur {sources}",
-
   "card.kind.deadlock": "Blocage de slot",
   "card.kind.ghost_slot": "Slot fantôme",
   "card.kind.storm": "Tempête",
@@ -58,7 +57,6 @@
   "card.kind.proxy_stalled": "Proxy figé",
   "card.kind.proxy_reboot_storm": "Redémarrages du proxy",
   "card.kind.unknown": "Inconnu",
-
   "card.age.seconds": "{value} s",
   "card.age.minutes": "{value} min",
   "card.age.hours": "{value} h"

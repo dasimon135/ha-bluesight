@@ -24,6 +24,8 @@
  *   incident_entity: binary_sensor.bluesight_incident
  *   title: BlueSight                        # card header text
  *   show_devices: true                      # false = one row of pips, no names
+ *   layout: full                            # `tile` = one line, tap for a popup
+ *   tile_tap: popup                         # `more-info` = HA's own dialog
  */
 
 // Kept equal to `manifest.json`'s version by tests/test_card_locale.py. The
@@ -53,6 +55,12 @@ const DEFAULT_INCIDENT_ENTITY = "binary_sensor.bluesight_incident";
 // several devices at once, so putting it here would turn the whole card red at
 // once -- and a card that is always red has stopped saying anything.
 const CRITICAL_KINDS = new Set(["deadlock", "ghost_slot"]);
+
+// States in which the incident sensor is not answering. Separate from the
+// proxy-reachability rule in `_reachability`, which is about a proxy and has a
+// single reader by design (tests/test_card_locale.py pins that); this one is
+// about the diagnostic itself, and is what turns the tile's dot grey.
+const SENSOR_SILENT_STATES = new Set(["unavailable", "unknown"]);
 
 // ---------------------------------------------------------------------------
 // Locale
@@ -112,6 +120,9 @@ const EMBEDDED_EN = {
   "card.incidents.other": "{count} incidents",
   "card.incidents.no_detail": "Incident active (no detail available)",
   "card.incidents.sensor_missing": "Incident sensor {entity} not found.",
+  "card.tile.slots.one": "{used}/{total} slot",
+  "card.tile.slots.other": "{used}/{total} slots",
+  "card.tile.no_data": "No diagnostic data",
   "card.incident.sources": "on {sources}",
   "card.kind.deadlock": "Deadlock",
   "card.kind.ghost_slot": "Ghost slot",
@@ -230,6 +241,66 @@ class BlueSightCard extends HTMLElement {
    * truthy string, which is the one way this option could silently do the
    * opposite of what was written.
    */
+  /**
+   * `full` (the default) or `tile`.
+   *
+   * The tile is one line: a coloured dot, the fleet's slot count, how many
+   * incidents are open. It answers "do I need to look", where the full card
+   * answers "where is it" -- and tapping it opens that full card in a popup,
+   * so the second question is one gesture away. `layout` is the option name
+   * the other cards from this author use.
+   */
+  _layout() {
+    const value = (this._config || {}).layout;
+    return String(value || "").trim().toLowerCase() === "tile" ? "tile" : "full";
+  }
+
+  /**
+   * The colour of the dot: `red`, `amber`, `grey` or `green`.
+   *
+   * `red` and `amber` are the incident feed's own criterion, unchanged: red is
+   * a fault that wastes a connection slot (see CRITICAL_KINDS).
+   *
+   * `grey` is the state the feed never needed and the tile cannot do without:
+   * the diagnostic is not answering, so the card knows nothing. A sensor that
+   * is missing or unavailable is one case; `availability_degraded` -- the
+   * integration saying its own picture is incomplete -- is the other. Green
+   * there would be the one lie a diagnostic card must never tell.
+   *
+   * Degradation never hides an incident: something seen is a fact whatever the
+   * gaps around it, so an open incident still colours the dot.
+   */
+  _severity(incidentState) {
+    if (!incidentState) return "grey";
+    const state = incidentState.state;
+    if (SENSOR_SILENT_STATES.has(state)) return "grey";
+
+    const attrs = incidentState.attributes || {};
+    if (state === "on") {
+      const incidents = Array.isArray(attrs.incidents) ? attrs.incidents : [];
+      const critical = incidents.some(
+        (inc) => inc && CRITICAL_KINDS.has(String(inc.kind))
+      );
+      return critical ? "red" : "amber";
+    }
+    return attrs.availability_degraded ? "grey" : "green";
+  }
+
+  /** Slots used and slots existing, summed over every discovered proxy. */
+  _fleetSlots(proxyEntities, hass) {
+    const states = (hass && hass.states) || {};
+    let used = 0;
+    let total = 0;
+    for (const entityId of proxyEntities) {
+      const stateObj = states[entityId];
+      if (!stateObj) continue;
+      const attrs = stateObj.attributes || {};
+      used += this._toInt(stateObj.state, 0);
+      total += this._toInt(attrs.total, 0);
+    }
+    return { used, total };
+  }
+
   _showDevices() {
     const value = this._config.show_devices;
     if (value === undefined || value === null) {
@@ -249,6 +320,8 @@ class BlueSightCard extends HTMLElement {
    */
   set hass(hass) {
     this._hass = hass;
+    // The popup holds a second card; nothing else feeds it.
+    if (this._dialogCard) this._dialogCard.hass = hass;
     try {
       this._render();
     } catch (err) {
@@ -485,14 +558,185 @@ class BlueSightCard extends HTMLElement {
     }
     this._lastSignature = signature;
 
-    if (!this._built) {
+    if (this._layout() === "tile") {
+      this._renderTile(title, proxyEntities, hass, incidentState);
+      return;
+    }
+
+    if (!this._built || this._builtLayout !== "full") {
       this._buildSkeleton();
       this._built = true;
+      this._builtLayout = "full";
     }
 
     this._headerEl.textContent = title;
     this._renderProxies(proxyEntities, hass);
     this._renderIncidents(incidentEntity, incidentState);
+  }
+
+  /**
+   * One row: dot, name, slot count, incident count.
+   *
+   * Rebuilt whole on every changed signature rather than patched in place --
+   * it is four nodes, and the skeleton-and-patch dance the full card needs for
+   * its dozens of rows would buy nothing here.
+   */
+  _renderTile(title, proxyEntities, hass, incidentState) {
+    const severity = this._severity(incidentState);
+    const { used, total } = this._fleetSlots(proxyEntities, hass);
+
+    const style = document.createElement("style");
+    style.textContent = this._css();
+
+    const card = document.createElement("ha-card");
+    const row = document.createElement("div");
+    row.className = "tile " + severity;
+
+    const dot = document.createElement("span");
+    dot.className = "dot " + severity;
+    row.appendChild(dot);
+
+    const name = document.createElement("span");
+    name.className = "tile-name";
+    name.textContent = title;
+    row.appendChild(name);
+
+    const meta = document.createElement("span");
+    meta.className = "tile-meta";
+    meta.textContent = this._tileSummary(severity, used, total, incidentState);
+    row.appendChild(meta);
+
+    card.appendChild(row);
+    this.shadowRoot.innerHTML = "";
+    this.shadowRoot.appendChild(style);
+    this.shadowRoot.appendChild(card);
+
+    row.addEventListener("click", () => this._onTileTap());
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        this._onTileTap();
+      }
+    });
+
+    this._built = true;
+    this._builtLayout = "tile";
+  }
+
+  /** The right-hand half of the line: slots, then what the dot means. */
+  _tileSummary(severity, used, total, incidentState) {
+    const slots = this._t("card.tile.slots", { used, total }, total);
+    if (severity === "grey") {
+      return `${slots} · ${this._t("card.tile.no_data")}`;
+    }
+    if (severity === "green") {
+      return `${slots} · ${this._t("card.incidents.none")}`;
+    }
+    const attrs = (incidentState && incidentState.attributes) || {};
+    const incidents = Array.isArray(attrs.incidents) ? attrs.incidents : [];
+    const count =
+      attrs.incident_count !== undefined
+        ? this._toInt(attrs.incident_count, incidents.length)
+        : incidents.length;
+    return `${slots} · ${this._t("card.incidents", { count: String(count) }, count)}`;
+  }
+
+  /**
+   * What tapping the line does: open the full card in a popup (the default),
+   * or Home Assistant's own dialog for the incident sensor.
+   */
+  _onTileTap() {
+    if (this._config.tile_tap === "more-info") {
+      this.dispatchEvent(
+        new CustomEvent("hass-more-info", {
+          detail: {
+            entityId: this._config.incident_entity || DEFAULT_INCIDENT_ENTITY,
+          },
+          bubbles: true,
+          composed: true,
+        })
+      );
+      return;
+    }
+    this._openCardDialog();
+  }
+
+  /**
+   * The full card in a self-contained modal overlay -- no external dependency.
+   * Mounted on document.body so it is never clipped by the tile's grid cell;
+   * Home Assistant's theme variables inherit through the shadow root.
+   *
+   * The scroll is this card's own problem and not the other cards': a fleet of
+   * eight proxies is a rack far taller than a phone screen, so the wrapper
+   * scrolls rather than overflowing off the viewport.
+   */
+  _openCardDialog() {
+    if (this._dialog) return;
+    const host = document.createElement("div");
+    const sr = host.attachShadow({ mode: "open" });
+
+    const style = document.createElement("style");
+    style.textContent = `
+      .scrim { position:fixed; inset:0; z-index:1000; display:grid; place-items:center;
+        box-sizing:border-box; padding:16px; background:rgba(0,0,0,.5);
+        animation:bsfade .15s ease; }
+      @keyframes bsfade { from{opacity:0} to{opacity:1} }
+      .wrap { position:relative; width:100%; max-width:480px; max-height:90vh;
+        overflow:auto; }
+      .x { position:absolute; top:-12px; right:-12px; z-index:1; width:34px; height:34px;
+        border-radius:50%; border:none; cursor:pointer; font-size:17px; line-height:1;
+        display:grid; place-items:center;
+        background:var(--card-background-color,#fff); color:var(--primary-text-color,#222);
+        box-shadow:0 2px 10px rgba(0,0,0,.35); }
+      .x:focus-visible { outline:2px solid var(--primary-color,#03a9f4); outline-offset:2px; }
+      @media (prefers-reduced-motion: reduce) { .scrim { animation:none } }
+    `;
+
+    const scrim = document.createElement("div");
+    scrim.className = "scrim";
+    const wrap = document.createElement("div");
+    wrap.className = "wrap";
+    const closeButton = document.createElement("button");
+    closeButton.className = "x";
+    closeButton.setAttribute("aria-label", "Close");
+    closeButton.textContent = "✕";
+
+    const card = document.createElement("bluesight-card");
+    card.setConfig({ ...this._config, layout: "full" });
+    card.hass = this._hass;
+
+    wrap.appendChild(closeButton);
+    wrap.appendChild(card);
+    scrim.appendChild(wrap);
+    sr.appendChild(style);
+    sr.appendChild(scrim);
+
+    const close = () => this._closeCardDialog();
+    // A click anywhere off the card closes -- the scrim itself, and the empty
+    // area of the wrapper around the card.
+    scrim.addEventListener("click", (event) => {
+      if (!event.composedPath().includes(card)) close();
+    });
+    closeButton.addEventListener("click", close);
+    this._dialogKey = (event) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("keydown", this._dialogKey);
+    document.body.appendChild(host);
+    this._dialog = host;
+    this._dialogCard = card;
+  }
+
+  _closeCardDialog() {
+    if (this._dialogKey) window.removeEventListener("keydown", this._dialogKey);
+    if (this._dialog) this._dialog.remove();
+    this._dialog = null;
+    this._dialogCard = null;
+    this._dialogKey = null;
+  }
+
+  disconnectedCallback() {
+    this._closeCardDialog();
   }
 
   _computeSignature(proxyEntities, hass, incidentEntity, incidentState, title) {
@@ -509,6 +753,7 @@ class BlueSightCard extends HTMLElement {
       incidentEntity,
       this._language(),
       `rack:${this._showDevices() ? 1 : 0}`,
+      `layout:${this._layout()}`,
     ];
     for (const id of proxyEntities) {
       const s = hass.states ? hass.states[id] : undefined;
@@ -542,6 +787,11 @@ class BlueSightCard extends HTMLElement {
     }
     if (incidentState) {
       parts.push(`inc:${incidentState.state}`);
+      // The tile's dot turns grey on this alone, with every other drawn value
+      // standing still, so it has to be here or the colour lags a whole cycle.
+      parts.push(
+        `degr:${(incidentState.attributes || {}).availability_degraded ? 1 : 0}`
+      );
       const incidents =
         (incidentState.attributes && incidentState.attributes.incidents) || [];
       // Length + a hash-ish join is enough to detect changes cheaply.
@@ -1170,6 +1420,47 @@ class BlueSightCard extends HTMLElement {
       .incident.critical {
         background: var(--error-color, #db4437);
       }
+      /* layout: tile -- one row, aligned with Home Assistant's own tile cards */
+      .tile {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 12px;
+        cursor: pointer;
+      }
+      .tile:focus-visible {
+        outline: 2px solid var(--primary-color, #03a9f4);
+        outline-offset: -2px;
+      }
+      .tile .dot {
+        flex: 0 0 auto;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: var(--disabled-text-color, #9e9e9e);
+      }
+      .tile .dot.green {
+        background: var(--success-color, #43a047);
+      }
+      .tile .dot.amber {
+        background: var(--warning-color, #ffa600);
+      }
+      .tile .dot.red {
+        background: var(--error-color, #db4437);
+      }
+      .tile-name {
+        font-weight: 600;
+        color: var(--primary-text-color);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .tile-meta {
+        margin-left: auto;
+        font-size: 0.9rem;
+        color: var(--secondary-text-color, #888);
+        white-space: nowrap;
+      }
       .incident.warning {
         background: var(--warning-color, #ffa600);
         color: var(--bluesight-on-warning, #1a1a1a);
@@ -1283,6 +1574,7 @@ class BlueSightCard extends HTMLElement {
    *     and grows with the slot count under the rack.
    */
   getCardSize() {
+    if (this._layout() === "tile") return 1;
     const hass = this._hass;
     const states = (hass && hass.states) || {};
     const proxies = this._discoverProxyEntities(hass || {});
