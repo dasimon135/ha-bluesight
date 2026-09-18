@@ -2,7 +2,7 @@
 
 [![Release](https://img.shields.io/github/v/release/dasimon135/ha-bluesight)](https://github.com/dasimon135/ha-bluesight/releases)
 [![Validate](https://github.com/dasimon135/ha-bluesight/actions/workflows/validate.yml/badge.svg)](https://github.com/dasimon135/ha-bluesight/actions/workflows/validate.yml)
-[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
+[![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://github.com/hacs/integration)
 [![License](https://img.shields.io/github/license/dasimon135/ha-bluesight)](LICENSE)
 
 When a Bluetooth device in Home Assistant goes `unavailable` for no visible
@@ -159,13 +159,12 @@ it is working are in **[docs/esphome-component.md](docs/esphome-component.md)**.
 
 ## Installation
 
-BlueSight is a HACS custom repository.
+BlueSight is in the default HACS store, so there is no custom repository to
+add.
 
-1. In HACS, open the three-dot menu → **Custom repositories**.
-2. Add `https://github.com/dasimon135/ha-bluesight` with category
-   **Integration**.
-3. Install **BlueSight**, then restart Home Assistant.
-4. Go to **Settings → Devices & Services → Add Integration** and add
+1. Open HACS, search for **BlueSight**, and download it.
+2. Restart Home Assistant.
+3. Go to **Settings → Devices & Services → Add Integration** and add
    **BlueSight**. It is single-instance and needs no configuration to start.
 
 ### Options
