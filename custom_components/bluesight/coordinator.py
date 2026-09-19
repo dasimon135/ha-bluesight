@@ -82,6 +82,22 @@ _CONF_SOURCE_DEVICE_ID = "source_device_id"
 _PUSH_SETTLE_S = 0.25
 
 
+def _registry_devices(registry: dr.DeviceRegistry) -> list[dr.DeviceEntry]:
+    """Every device entry, on either side of Home Assistant's registry change.
+
+    Newer cores iterate ``registry.devices`` as the entries themselves and
+    deprecate its mapping methods (a logged warning now, removal in 2027.9).
+    Older ones -- still within what this integration supports -- expose a
+    mapping, which iterates as *ids*. Iterating is the one form both accept;
+    the lookup below only ever runs on a core where it is not deprecated.
+    """
+    devices = registry.devices
+    items = list(devices)
+    if items and isinstance(items[0], str):
+        return [devices[device_id] for device_id in items]
+    return items
+
+
 class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
     """Feed per-proxy slot snapshots through the pure assembly function.
 
@@ -602,7 +618,7 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         """
         try:
             return build_device_index(
-                dr.async_get(self.hass).devices.values(),
+                _registry_devices(dr.async_get(self.hass)),
                 bluetooth_connection=dr.CONNECTION_BLUETOOTH,
                 network_connection=dr.CONNECTION_NETWORK_MAC,
                 # Also read back what the user renamed *our own* per-proxy
