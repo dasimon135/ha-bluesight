@@ -73,6 +73,19 @@ class _FakeAdapter:
         self.stopped = True
 
 
+def test_every_tunable_is_a_constructor_argument():
+    """`async_setup_entry` builds the coordinator with
+    `**{name: opts[name] for name in OPTION_DEFAULTS}`, and no local test runs
+    that line. A tunable added to the table and not to the constructor -- or
+    renamed on one side -- would be a TypeError at setup on a real install."""
+    import inspect
+
+    from custom_components.bluesight.const import OPTION_DEFAULTS
+
+    parameters = inspect.signature(BlueSightCoordinator.__init__).parameters
+    assert set(OPTION_DEFAULTS) <= set(parameters)
+
+
 def test_name_for_falls_back_to_source():
     assert _bare_coordinator()._name_for("AA:BB:CC") == "AA:BB:CC"
 

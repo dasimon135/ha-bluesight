@@ -4,8 +4,8 @@ Makes the connection layer of Home Assistant's Bluetooth stack visible:
 GATT slot allocations per ESPHome proxy, deadlocks (core issue #176516),
 ghost slots, and pairing storms.
 
-The config flow and platforms arrive in later tasks; setup here only
-constructs the coordinator and stores it on the entry's ``runtime_data``.
+Setup builds the coordinator, stores it on the entry's ``runtime_data``, and
+hangs everything else off it: the notifications, the card, the two platforms.
 """
 from __future__ import annotations
 
@@ -18,20 +18,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.loader import async_get_integration
 
-from .const import (
-    ATTR_SOURCE,
-    DEFAULT_BOND_THRESHOLD,
-    DEFAULT_IDLE_SLOT_THRESHOLD_S,
-    DEFAULT_OFFLINE_GRACE_S,
-    DEFAULT_POLL_INTERVAL_S,
-    DEFAULT_REBOOT_THRESHOLD,
-    DEFAULT_REBOOT_WINDOW_S,
-    DEFAULT_STALLED_THRESHOLD_S,
-    DEFAULT_STORM_THRESHOLD,
-    DEFAULT_STORM_WINDOW_S,
-    DOMAIN,
-    SERVICE_FORGET_PROXY,
-)
+from .const import ATTR_SOURCE, DOMAIN, OPTION_DEFAULTS, SERVICE_FORGET_PROXY
 from .coordinator import BlueSightCoordinator
 from .device_index import looks_like_mac, own_proxy_records
 from .frontend import JSModuleRegistration
@@ -52,10 +39,12 @@ async def async_setup_entry(
 ) -> bool:
     """Set up BlueSight from a config entry.
 
-    The config flow (Task 7) defines the option keys read here; until then
-    they simply fall back to the module defaults.
+    ``entry.options`` holds only what the options dialog actually saved, so
+    every tunable starts from ``OPTION_DEFAULTS`` -- the same table the
+    diagnostics dump reports, which is what keeps the two from disagreeing
+    about what the integration is running at.
     """
-    opts = {**entry.data, **entry.options}
+    opts = {**OPTION_DEFAULTS, **entry.data, **entry.options}
     # Read the string catalogues once, off the event loop, and resolve the one
     # language this Home Assistant speaks. Incident details and notifications
     # are rendered from it on every snapshot, so it must never touch the disk
@@ -65,19 +54,7 @@ async def async_setup_entry(
     coordinator = BlueSightCoordinator(
         hass,
         config_entry=entry,
-        storm_window_s=opts.get("storm_window_s", DEFAULT_STORM_WINDOW_S),
-        storm_threshold=opts.get("storm_threshold", DEFAULT_STORM_THRESHOLD),
-        poll_interval_s=opts.get("poll_interval_s", DEFAULT_POLL_INTERVAL_S),
-        stalled_threshold_s=opts.get(
-            "stalled_threshold_s", DEFAULT_STALLED_THRESHOLD_S
-        ),
-        reboot_window_s=opts.get("reboot_window_s", DEFAULT_REBOOT_WINDOW_S),
-        reboot_threshold=opts.get("reboot_threshold", DEFAULT_REBOOT_THRESHOLD),
-        offline_grace_s=opts.get("offline_grace_s", DEFAULT_OFFLINE_GRACE_S),
-        idle_threshold_s=opts.get(
-            "idle_threshold_s", DEFAULT_IDLE_SLOT_THRESHOLD_S
-        ),
-        bond_threshold=opts.get("bond_threshold", DEFAULT_BOND_THRESHOLD),
+        **{name: opts[name] for name in OPTION_DEFAULTS},
         catalogue=catalogue,
     )
     # "Seen online once, remembered for good" has to outlive the process: the
@@ -102,13 +79,12 @@ async def async_setup_entry(
             hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _on_started)
         )
 
-    # Fire/clear persistent notifications as incidents appear and resolve. The
-    # manager rides on the coordinator instance so runtime_data stays the
-    # coordinator (the entity platforms read it directly) and remains
-    # retrievable at unload time.
+    # Fire/clear persistent notifications as incidents appear and resolve, and
+    # dismiss whatever is still up when the entry unloads, so a removed or
+    # reloaded integration leaves no stale notification behind.
     manager = NotificationManager(hass, catalogue)
-    coordinator.notification_manager = manager
     manager.async_update(coordinator.data.incidents)
+    entry.async_on_unload(manager.async_shutdown)
     entry.async_on_unload(
         coordinator.async_add_listener(
             lambda: manager.async_update(coordinator.data.incidents)
@@ -230,9 +206,5 @@ async def async_unload_entry(
     """Unload the platforms first, then tear down the coordinator."""
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
-        coordinator = entry.runtime_data
-        manager = getattr(coordinator, "notification_manager", None)
-        if manager is not None:
-            manager.async_shutdown()
-        await coordinator.async_shutdown()
+        await entry.runtime_data.async_shutdown()
     return unloaded

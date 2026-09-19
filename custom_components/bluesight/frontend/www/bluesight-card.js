@@ -227,22 +227,6 @@ class BlueSightCard extends HTMLElement {
   }
 
   /**
-   * Draw a rack with a name per slot (`true`, the default), or a single
-   * horizontal row of bare pips (`false`)?
-   *
-   * Defaults to `true` because that is what the card did before the option
-   * existed: a dashboard whose stored config predates it must not change
-   * appearance on upgrade. `this._config` is `{}` from the constructor, so
-   * this is also safe on any path that reads it before `setConfig` --
-   * `getCardSize` can be one, and answering "rack" there matches what the
-   * first paint will draw.
-   *
-   * Only an explicit false turns it off. A YAML author who quotes the value
-   * (`show_devices: "false"`) means the same thing and would otherwise get a
-   * truthy string, which is the one way this option could silently do the
-   * opposite of what was written.
-   */
-  /**
    * `full` (the default) or `tile`.
    *
    * The tile is one line: a coloured dot, the fleet's slot count, how many
@@ -302,6 +286,22 @@ class BlueSightCard extends HTMLElement {
     return { used, total };
   }
 
+  /**
+   * Draw a rack with a name per slot (`true`, the default), or a single
+   * horizontal row of bare pips (`false`)?
+   *
+   * Defaults to `true` because that is what the card did before the option
+   * existed: a dashboard whose stored config predates it must not change
+   * appearance on upgrade. `this._config` is `{}` from the constructor, so
+   * this is also safe on any path that reads it before `setConfig` --
+   * `getCardSize` can be one, and answering "rack" there matches what the
+   * first paint will draw.
+   *
+   * Only an explicit false turns it off. A YAML author who quotes the value
+   * (`show_devices: "false"`) means the same thing and would otherwise get a
+   * truthy string, which is the one way this option could silently do the
+   * opposite of what was written.
+   */
   _showDevices() {
     const value = this._config.show_devices;
     if (value === undefined || value === null) {
@@ -1435,6 +1435,31 @@ class BlueSightCard extends HTMLElement {
       .incident.critical {
         background: var(--error-color, #db4437);
       }
+      .incident.warning {
+        background: var(--warning-color, #ffa600);
+        color: var(--bluesight-on-warning, #1a1a1a);
+      }
+      .incident-kind {
+        font-weight: 700;
+      }
+      .incident-device {
+        font-weight: 600;
+      }
+      .incident-addr {
+        font-family: var(--code-font-family, monospace);
+        font-size: 0.9rem;
+        opacity: 0.95;
+      }
+      /* An address shown beside a name it agrees with: still readable, but no
+         longer competing with the name for the eye. */
+      .incident-addr.subtle {
+        font-size: 0.8rem;
+        opacity: 0.75;
+      }
+      .incident-detail {
+        font-size: 0.9rem;
+        opacity: 0.95;
+      }
       /* layout: tile -- one row, aligned with Home Assistant's own tile cards */
       .tile {
         display: flex;
@@ -1475,31 +1500,6 @@ class BlueSightCard extends HTMLElement {
         font-size: 0.9rem;
         color: var(--secondary-text-color, #888);
         white-space: nowrap;
-      }
-      .incident.warning {
-        background: var(--warning-color, #ffa600);
-        color: var(--bluesight-on-warning, #1a1a1a);
-      }
-      .incident-kind {
-        font-weight: 700;
-      }
-      .incident-device {
-        font-weight: 600;
-      }
-      .incident-addr {
-        font-family: var(--code-font-family, monospace);
-        font-size: 0.9rem;
-        opacity: 0.95;
-      }
-      /* An address shown beside a name it agrees with: still readable, but no
-         longer competing with the name for the eye. */
-      .incident-addr.subtle {
-        font-size: 0.8rem;
-        opacity: 0.75;
-      }
-      .incident-detail {
-        font-size: 0.9rem;
-        opacity: 0.95;
       }
       .empty {
         color: var(--secondary-text-color, #888);
