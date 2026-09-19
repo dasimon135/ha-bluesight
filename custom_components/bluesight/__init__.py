@@ -84,7 +84,10 @@ async def async_setup_entry(
     # proxies this integration has a device for are the ones it has seen.
     # Before the first snapshot, so that snapshot already reports them.
     coordinator.remember_proxies(
-        own_proxy_records(dr.async_get(hass).devices.values(), DOMAIN)
+        own_proxy_records(
+            dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id),
+            DOMAIN,
+        )
     )
     await coordinator.async_setup()
     entry.runtime_data = coordinator

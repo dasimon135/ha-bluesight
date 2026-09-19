@@ -271,6 +271,36 @@ def test_build_device_index_scans_identifiers_and_connections(monkeypatch):
     assert len(index) == 2
 
 
+class _IterableDeviceRegistry:
+    """The registry as newer Home Assistant exposes it: iterating `devices`
+    yields the entries, and the mapping methods are deprecated (they log a
+    warning today and stop working in 2027.9)."""
+
+    class _Devices:
+        def __init__(self, devices):
+            self._devices = list(devices)
+
+        def __iter__(self):
+            return iter(self._devices)
+
+        def values(self):
+            pytest.fail("the deprecated mapping API was used")
+
+    def __init__(self, devices):
+        self.devices = self._Devices(devices)
+
+
+def test_build_device_index_reads_a_registry_that_iterates_entries(monkeypatch):
+    c = _bare_coordinator()
+    c.hass = object()
+    registry = _IterableDeviceRegistry(
+        [_FakeDevice("dev", identifiers={("daikin_madoka", "1C:54:9E:8E:1D:2C")})]
+    )
+    monkeypatch.setattr(coordinator_module.dr, "async_get", lambda hass: registry)
+    assert c._build_device_index().peripherals == {"1C:54:9E:8E:1D:2C": "dev"}
+    assert c._availability_degraded is False
+
+
 def test_build_device_index_ignores_non_bluetooth_connections(monkeypatch):
     # A device with BOTH a Bluetooth MAC and a network (wifi) MAC connection:
     # only the Bluetooth one may be indexed, or a BLE allocation could collide
