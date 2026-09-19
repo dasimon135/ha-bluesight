@@ -121,7 +121,9 @@ A coloured dot, the card's title, how many of the fleet's slots are spent, and
 how many incidents are open. **Tapping the line opens the full card in a popup**,
 so the rack is one gesture away and costs no room on the page until you ask for
 it. Set `tile_tap: more-info` to get Home Assistant's own dialog for the
-incident sensor instead.
+incident sensor instead. The line is a button to the keyboard as well: Tab
+reaches it, Enter or Space opens the popup, Escape closes it and puts the focus
+back where it was.
 
 The dot answers *do I need to look*, and nothing else — the tile never says
 *where* the problem is. That is the full card's job, one tap below.

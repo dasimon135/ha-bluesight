@@ -50,10 +50,20 @@ def _incident(state: str, **attributes) -> dict:
     return {"state": state, "attributes": attributes}
 
 
-def _run(config: dict, states: dict, tap: bool = False) -> dict:
+def _run(
+    config: dict,
+    states: dict,
+    tap: bool = False,
+    key: str | None = None,
+    close: bool = False,
+) -> dict:
     scenario = {"config": config, "states": states}
     if tap:
         scenario["tap"] = True
+    if key is not None:
+        scenario["key"] = key
+    if close:
+        scenario["close"] = True
     out = subprocess.run(
         [NODE, str(HARNESS), json.dumps(scenario)],
         capture_output=True,
@@ -220,3 +230,42 @@ def test_tapping_opens_the_full_card_in_a_popup() -> None:
 
 def test_the_popup_is_not_open_before_the_tap() -> None:
     assert "bluesight-card" not in _tile(QUIET)["dialog"]
+
+
+# --- without a mouse ---------------------------------------------------------
+
+
+def test_the_tile_can_be_reached_from_the_keyboard() -> None:
+    """The row listened for Enter and styled `:focus-visible`, and could receive
+    neither: a bare div takes no focus, so both were dead code."""
+    attrs = _tile(QUIET)["attrs"]["tile green"]
+    assert attrs["tabindex"] == "0"
+    assert attrs["role"] == "button"
+
+
+def test_enter_on_the_tile_opens_the_popup() -> None:
+    out = _run({"layout": "tile"}, QUIET, key="Enter")
+    assert "<bluesight-card>" in out["dialog"]
+
+
+def test_any_other_key_leaves_the_popup_closed() -> None:
+    out = _run({"layout": "tile"}, QUIET, key="a")
+    assert "<bluesight-card>" not in out["dialog"]
+
+
+def test_the_popup_is_announced_as_a_modal_dialog() -> None:
+    attrs = _run({"layout": "tile"}, QUIET, tap=True)["attrs"]["wrap"]
+    assert attrs["role"] == "dialog"
+    assert attrs["aria-modal"] == "true"
+    # Named after the card, which is what the dialog contains.
+    assert attrs["aria-label"] == "BlueSight"
+
+
+def test_the_popup_takes_the_focus_it_was_opened_with() -> None:
+    """Otherwise the next Tab lands on whatever sits behind the scrim."""
+    assert _run({"layout": "tile"}, QUIET, tap=True)["focused"] == "x"
+
+
+def test_closing_the_popup_hands_the_focus_back_to_the_tile() -> None:
+    out = _run({"layout": "tile"}, QUIET, tap=True, close=True)
+    assert out["focused"] == "tile green"

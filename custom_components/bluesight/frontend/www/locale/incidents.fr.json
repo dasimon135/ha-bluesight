@@ -48,6 +48,7 @@
   "card.tile.slots.one": "{used}/{total} créneau",
   "card.tile.slots.other": "{used}/{total} créneaux",
   "card.tile.no_data": "Pas de diagnostic",
+  "card.dialog.close": "Fermer",
   "card.incident.sources": "sur {sources}",
   "card.kind.deadlock": "Blocage de slot",
   "card.kind.ghost_slot": "Slot fantôme",

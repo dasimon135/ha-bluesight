@@ -48,6 +48,7 @@
   "card.tile.slots.one": "{used}/{total} slot",
   "card.tile.slots.other": "{used}/{total} slots",
   "card.tile.no_data": "No diagnostic data",
+  "card.dialog.close": "Close",
   "card.incident.sources": "on {sources}",
   "card.kind.deadlock": "Deadlock",
   "card.kind.ghost_slot": "Ghost slot",

@@ -123,6 +123,7 @@ const EMBEDDED_EN = {
   "card.tile.slots.one": "{used}/{total} slot",
   "card.tile.slots.other": "{used}/{total} slots",
   "card.tile.no_data": "No diagnostic data",
+  "card.dialog.close": "Close",
   "card.incident.sources": "on {sources}",
   "card.kind.deadlock": "Deadlock",
   "card.kind.ghost_slot": "Ghost slot",
@@ -591,6 +592,11 @@ class BlueSightCard extends HTMLElement {
     const card = document.createElement("ha-card");
     const row = document.createElement("div");
     row.className = "tile " + severity;
+    // A bare div takes no focus, so without these two the keydown listener and
+    // the `:focus-visible` rule below are both unreachable.
+    row.setAttribute("role", "button");
+    row.setAttribute("tabindex", "0");
+    this._tileRow = row;
 
     const dot = document.createElement("span");
     dot.className = "dot " + severity;
@@ -696,9 +702,12 @@ class BlueSightCard extends HTMLElement {
     scrim.className = "scrim";
     const wrap = document.createElement("div");
     wrap.className = "wrap";
+    wrap.setAttribute("role", "dialog");
+    wrap.setAttribute("aria-modal", "true");
+    wrap.setAttribute("aria-label", this._config.title || "BlueSight");
     const closeButton = document.createElement("button");
     closeButton.className = "x";
-    closeButton.setAttribute("aria-label", "Close");
+    closeButton.setAttribute("aria-label", this._t("card.dialog.close"));
     closeButton.textContent = "✕";
 
     const card = document.createElement("bluesight-card");
@@ -725,14 +734,20 @@ class BlueSightCard extends HTMLElement {
     document.body.appendChild(host);
     this._dialog = host;
     this._dialogCard = card;
+    // Otherwise the next Tab lands on whatever sits behind the scrim.
+    closeButton.focus();
   }
 
   _closeCardDialog() {
     if (this._dialogKey) window.removeEventListener("keydown", this._dialogKey);
+    const wasOpen = Boolean(this._dialog);
     if (this._dialog) this._dialog.remove();
     this._dialog = null;
     this._dialogCard = null;
     this._dialogKey = null;
+    // Back to where the keyboard user was. Only after a real close:
+    // `disconnectedCallback` calls this too, with nothing open.
+    if (wasOpen && this._tileRow) this._tileRow.focus();
   }
 
   disconnectedCallback() {
