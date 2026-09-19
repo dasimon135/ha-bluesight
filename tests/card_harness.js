@@ -1,11 +1,15 @@
 // Runs the shipped card under Node with just enough DOM to render it.
 //
 // Usage: node card_harness.js '<scenario json>'
-// Scenario: { config, states, language?, tap?: true }
+// Scenario: { config, states, language?, tap?: true, key?: "Enter" }
 //   states  — the `hass.states` map to render against
 //   tap     — also fire the tile's tap handler, and serialise what it opened
-// Prints: { html, size, dialog } — the card's rendered shadow tree, what it
-// answers for `getCardSize()`, and the tree of anything mounted on document.body.
+//   key     — press that key on the tile's row instead, through its listeners
+//   close   — then close whatever the tap or the key opened
+// Prints: { html, size, dialog, attrs, focused } — the card's rendered shadow
+// tree, what it answers for `getCardSize()`, the tree of anything mounted on
+// document.body, the attributes of every element that has any (keyed by class
+// name), and the class name of whatever holds the focus.
 //
 // The card builds its DOM with createElement/appendChild and reads back only a
 // handful of properties, so a fake element tree is enough to exercise its real
@@ -28,6 +32,7 @@ class FakeElement {
     this.className = "";
     this.dataset = {};
     this.listeners = {};
+    this.attributes = {};
     this._text = "";
     this.classList = {
       add: (...names) => {
@@ -74,9 +79,14 @@ class FakeElement {
   }
 
   remove() {}
-  setAttribute() {}
-  getAttribute() {
-    return null;
+  setAttribute(name, value) {
+    this.attributes[name] = String(value);
+  }
+  getAttribute(name) {
+    return name in this.attributes ? this.attributes[name] : null;
+  }
+  focus() {
+    global.__focused = this;
   }
   addEventListener(type, fn) {
     (this.listeners[type] = this.listeners[type] || []).push(fn);
@@ -109,6 +119,14 @@ function serialise(el) {
   const shadow = el.shadowRoot ? serialise(el.shadowRoot) : "";
   const inner = shadow + el._text + el.children.map(serialise).join("");
   return `<${el.tagName}${cls}>${inner}</${el.tagName}>`;
+}
+
+/** Every element under `el`, shadow roots included. */
+function walk(el, visit) {
+  if (!el || typeof el !== "object") return;
+  visit(el);
+  if (el.shadowRoot) walk(el.shadowRoot, visit);
+  el.children.forEach((child) => walk(child, visit));
 }
 
 const registry = {};
@@ -167,10 +185,32 @@ if (scenario.tap) {
   card._onTileTap();
 }
 
+if (scenario.key) {
+  walk(card.shadowRoot, (el) => {
+    if (!el.className.split(" ").includes("tile")) return;
+    (el.listeners.keydown || []).forEach((fn) =>
+      fn({ key: scenario.key, preventDefault: () => {} })
+    );
+  });
+}
+
+if (scenario.close) {
+  card._closeCardDialog();
+}
+
+const attrs = {};
+[card.shadowRoot, global.document.body].forEach((root) =>
+  walk(root, (el) => {
+    if (Object.keys(el.attributes).length) attrs[el.className] = el.attributes;
+  })
+);
+
 process.stdout.write(
   JSON.stringify({
     html: serialise(card.shadowRoot),
     size: card.getCardSize(),
     dialog: serialise(global.document.body),
+    attrs,
+    focused: global.__focused ? global.__focused.className : null,
   })
 );
