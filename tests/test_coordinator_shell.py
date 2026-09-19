@@ -119,6 +119,46 @@ def test_snapshot_flags_ghost_slot(monkeypatch):
     assert any(i.kind is IncidentKind.GHOST_SLOT for i in data.incidents)
 
 
+def _saturation_after_one_snapshot(monkeypatch, *, slots, free):
+    """The saturation window for proxy "AA" after one snapshot, or None."""
+    c = _bare_coordinator()
+
+    class _FakeAlloc:
+        source, allocated = "AA", []
+
+    _FakeAlloc.slots, _FakeAlloc.free = slots, free
+
+    class _FakeMgr:
+        def async_current_allocations(self, source=None):
+            return [_FakeAlloc()]
+
+        def async_current_scanners(self):
+            return []
+
+    c._manager = _FakeMgr()
+    c.hass = object()
+    c._build_device_index = lambda: DeviceIndex({}, {})
+    monkeypatch.setattr(coordinator_module.er, "async_get", lambda hass: None)
+    c._snapshot()
+    return c.saturation_for("AA")
+
+
+def test_a_full_proxy_is_recorded_as_saturated(monkeypatch):
+    window = _saturation_after_one_snapshot(monkeypatch, slots=3, free=0)
+    assert window is not None
+    assert window.episodes() == 1
+
+
+def test_a_scan_only_proxy_has_no_saturation_reading(monkeypatch):
+    """habluetooth registers a non-connectable scanner with slots=0, free=0.
+
+    "No free slot" is true of it and means nothing: it has no slots to run out
+    of. Recording it made every passive scanner read 100 % saturated, forever.
+    No window at all, so the sensor reads unknown -- zero would be a claim too.
+    """
+    assert _saturation_after_one_snapshot(monkeypatch, slots=0, free=0) is None
+
+
 # --- Registry-backed availability: fakes for dr/er/states ---------------
 
 class _FakeDevice:

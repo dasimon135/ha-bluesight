@@ -319,10 +319,17 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         # the rename would restore the rename. See `_display_names_for`.
         proxies = current_proxy_slots(self._manager, self._name_for, device_for)
         for proxy in proxies:
-            self._saturation.setdefault(
-                proxy.source,
-                SaturationWindow(SATURATION_WINDOW_S, time.monotonic),
-            ).record(proxy.free == 0)
+            # habluetooth registers a passive scanner with slots=0, free=0:
+            # "no free slot" is true of it and means nothing, so it gets no
+            # window at all and its sensor reads unknown rather than 100 %.
+            if not proxy.is_connectable:
+                continue
+            window = self._saturation.get(proxy.source)
+            if window is None:
+                window = self._saturation[proxy.source] = SaturationWindow(
+                    SATURATION_WINDOW_S, time.monotonic
+                )
+            window.record(proxy.is_full)
         # What to *say* about each proxy, resolved once for every detector
         # that names one.
         display_names = self._display_names_for(index)
