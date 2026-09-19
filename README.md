@@ -99,7 +99,9 @@ and raises three more incidents:
 It surfaces per-proxy health as two extra entities on each proxy device:
 
 - `binary_sensor.<proxy>_online` (device class `connectivity`) — `on` while the
-  proxy is a registered scanner.
+  proxy is a registered scanner, `off` the moment it is not. There is no grace
+  period here: the sensor reports the fact, the **proxy offline** incident
+  applies the patience — so an OTA update is a brief `off` and no alert.
 - `sensor.<proxy>_last_device_seen` — seconds since the last advertisement that
   proxy heard, the signal behind the stalled detector.
 

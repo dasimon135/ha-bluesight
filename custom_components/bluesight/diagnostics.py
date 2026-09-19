@@ -71,7 +71,8 @@ async def async_get_config_entry_diagnostics(
         # reported as PROXY_OFFLINE.
         "telemetry": telemetry_report(
             data.telemetry,
-            [p.source for p in data.proxies_health] + [p.source for p in data.proxies],
+            [p.source for p in data.proxies_health if p.online]
+            + [p.source for p in data.proxies],
             coordinator.counter_baselines,
         ),
         "storm_window": _window_state(coordinator.storm_window),
