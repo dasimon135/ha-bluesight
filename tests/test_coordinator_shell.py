@@ -789,6 +789,86 @@ def test_a_forgotten_proxy_is_not_reported_offline(monkeypatch):
     assert c._snapshot().proxies_health == []
 
 
+def _clock(monkeypatch, start=1000.0):
+    """Drive the coordinator's monotonic clock by hand."""
+    now = [start]
+    monkeypatch.setattr(coordinator_module.time, "monotonic", lambda: now[0])
+    return now
+
+
+def _empty_fleet(monkeypatch, *, grace_s):
+    """A coordinator that finds no scanner and no allocation at all."""
+    c = _telemetry_coordinator(monkeypatch, entries={}, states={})
+    c._manager.async_current_scanners = lambda: []
+    c._offline_grace_s = grace_s
+    return c
+
+
+def test_a_proxy_known_from_the_registry_is_offline_if_it_never_shows_up(monkeypatch):
+    """The README's "remembered for good" lasted until the next restart, and an
+    options edit is a restart: a dead proxy's incident was one click from gone.
+    """
+    now = _clock(monkeypatch)
+    c = _empty_fleet(monkeypatch, grace_s=90.0)
+    c.remember_proxies([(PROXY, "Kitchen proxy")])
+
+    assert c._snapshot().incidents == []          # inside the grace period
+    now[0] += 91.0
+    data = c._snapshot()
+
+    assert [i.kind for i in data.incidents] == [IncidentKind.PROXY_OFFLINE]
+    assert [(h.name, h.online) for h in data.proxies_health] == [
+        ("Kitchen proxy", False)
+    ]
+
+
+def test_remembering_a_proxy_never_ages_one_already_seen(monkeypatch):
+    now = _clock(monkeypatch)
+    c = _empty_fleet(monkeypatch, grace_s=90.0)
+    c._last_online = {PROXY: now[0] - 500.0}
+    c._names = {PROXY: "Kitchen proxy"}
+    c.remember_proxies([(PROXY, "a stale registry name")])
+    assert c._last_online[PROXY] == now[0] - 500.0
+    assert c._names[PROXY] == "Kitchen proxy"
+
+
+def test_the_grace_period_starts_when_home_assistant_has_started(monkeypatch):
+    """BlueSight can be set up minutes before an ESPHome proxy reconnects.
+    Counting that wait against the proxy would raise an offline alert on
+    every restart of a large install."""
+    now = _clock(monkeypatch)
+    c = _empty_fleet(monkeypatch, grace_s=90.0)
+    c.remember_proxies([(PROXY, "Kitchen proxy")])
+    now[0] += 300.0                                # a slow startup
+    c.restart_offline_clock()
+    assert c._snapshot().incidents == []
+    now[0] += 91.0
+    assert [i.kind for i in c._snapshot().incidents] == [IncidentKind.PROXY_OFFLINE]
+
+
+def test_only_a_proxy_that_is_gone_may_be_retired(monkeypatch):
+    """Deleting the device of a proxy that is still a registered scanner would
+    orphan entities that are reporting, and the next reload would recreate the
+    device anyway. A retired one is forgotten along with its device."""
+    c = _telemetry_coordinator(monkeypatch, entries={}, states={})
+    c.data = c._snapshot()
+    assert c.retire_proxy(PROXY.lower()) is False      # online: refused
+    assert c.tracked_sources == {PROXY}
+
+    c._manager.async_current_scanners = lambda: []
+    c.data = c._snapshot()
+    assert c.retire_proxy(PROXY.lower()) is True
+    assert c.tracked_sources == set()
+
+
+def test_a_proxy_bluesight_never_tracked_may_be_retired(monkeypatch):
+    """A device left over from a proxy long gone: nothing to forget, and no
+    reason to keep the user from deleting it."""
+    c = _empty_fleet(monkeypatch, grace_s=0.0)
+    c.data = c._snapshot()
+    assert c.retire_proxy(PROXY) is True
+
+
 def _released_dead_device(monkeypatch, *, proxy_entries, proxy_states):
     """Two snapshots: a dead device holds a slot on the proxy, then releases it.
 

@@ -15,6 +15,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, Platform
 from homeassistant.core import CoreState, Event, HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import device_registry as dr
 from homeassistant.loader import async_get_integration
 
 from .const import (
@@ -32,8 +33,10 @@ from .const import (
     SERVICE_FORGET_PROXY,
 )
 from .coordinator import BlueSightCoordinator
+from .device_index import looks_like_mac, own_proxy_records
 from .frontend import JSModuleRegistration
 from .locale import read_catalogues
+from .model import normalize_address
 from .notify import NotificationManager
 from .rendering import Catalogue
 
@@ -77,8 +80,24 @@ async def async_setup_entry(
         bond_threshold=opts.get("bond_threshold", DEFAULT_BOND_THRESHOLD),
         catalogue=catalogue,
     )
+    # "Seen online once, remembered for good" has to outlive the process: the
+    # proxies this integration has a device for are the ones it has seen.
+    # Before the first snapshot, so that snapshot already reports them.
+    coordinator.remember_proxies(
+        own_proxy_records(dr.async_get(hass).devices.values(), DOMAIN)
+    )
     await coordinator.async_setup()
     entry.runtime_data = coordinator
+    if hass.state is not CoreState.running:
+        # An ESPHome proxy can reconnect minutes after this runs. The offline
+        # grace period is patience with the proxy, not with the startup.
+        @callback
+        def _on_started(_event: Event) -> None:
+            coordinator.restart_offline_clock()
+
+        entry.async_on_unload(
+            hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _on_started)
+        )
 
     # Fire/clear persistent notifications as incidents appear and resolve. The
     # manager rides on the coordinator instance so runtime_data stays the
@@ -147,14 +166,52 @@ def _async_register_services(hass: HomeAssistant) -> None:
         A retired or replaced proxy is remembered forever, so its offline
         incident can never resolve on its own. This is the escape hatch.
         """
+        source = normalize_address(call.data[ATTR_SOURCE])
         for entry in hass.config_entries.async_loaded_entries(DOMAIN):
             coordinator: BlueSightCoordinator = entry.runtime_data
-            if coordinator.forget_proxy(call.data[ATTR_SOURCE]):
-                await coordinator.async_request_refresh()
+            if coordinator.retire_proxy(source):
+                # Its device is this integration's memory of it; left in place
+                # it would bring the proxy, and its alert, back at the next
+                # restart.
+                registry = dr.async_get(hass)
+                for device in dr.async_entries_for_config_entry(
+                    registry, entry.entry_id
+                ):
+                    if (DOMAIN, source) in {
+                        (domain, normalize_address(value))
+                        for domain, value in device.identifiers
+                    }:
+                        registry.async_remove_device(device.id)
+            else:
+                # Still a registered scanner: forgotten as before, and seen
+                # again by the refresh below.
+                coordinator.forget_proxy(source)
+            await coordinator.async_request_refresh()
 
     hass.services.async_register(
         DOMAIN, SERVICE_FORGET_PROXY, _forget_proxy, schema=FORGET_PROXY_SCHEMA
     )
+
+
+async def async_remove_config_entry_device(
+    hass: HomeAssistant, entry: BlueSightConfigEntry, device: dr.DeviceEntry
+) -> bool:
+    """Let the user delete the device of a proxy that is gone.
+
+    Without this a retired proxy's device, and its five unavailable entities,
+    had no Delete button at all. The hub device and a proxy that is still a
+    registered scanner are refused.
+    """
+    coordinator = entry.runtime_data
+    sources = [
+        value
+        for domain, value in device.identifiers
+        if domain == DOMAIN and looks_like_mac(value)
+    ]
+    if not sources or not all(coordinator.retire_proxy(s) for s in sources):
+        return False
+    await coordinator.async_request_refresh()
+    return True
 
 
 async def _async_update_listener(

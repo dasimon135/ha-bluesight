@@ -17,6 +17,7 @@ from __future__ import annotations
 from custom_components.bluesight.device_index import (
     build_device_index,
     build_proxy_index,
+    own_proxy_records,
 )
 
 #: The real values of ``homeassistant.helpers.device_registry``'s constants.
@@ -448,3 +449,58 @@ def test_a_blank_name_on_either_side_never_displaces_a_real_one():
         PROXY_MAC: "atomebuanderie"
     }
     assert resolve_proxy_names({PROXY_MAC: ""}, {}) == {}
+
+
+# --- the proxies BlueSight already knows -----------------------------------
+#
+# "A proxy seen online once is remembered for good" is what the README says.
+# The memory was a dict, so it lasted until the next restart -- or the next
+# options edit, which reloads the entry. The registry is where it survives:
+# every proxy BlueSight has seen has a device there under its own domain.
+
+
+def test_the_proxies_bluesight_created_devices_for_are_read_back():
+    records = own_proxy_records(
+        [
+            _NamedDevice(
+                "d1", identifiers={("bluesight", "d8:3b:da:11:22:33")}, name="Kitchen"
+            ),
+        ],
+        "bluesight",
+    )
+    assert records == [(PROXY_MAC, "Kitchen")]
+
+
+def test_the_integrations_own_name_is_read_back_not_the_users_rename():
+    """It is fed back into device creation, where a rename must never land --
+    see `resolve_proxy_names`."""
+    [record] = own_proxy_records(
+        [
+            _NamedDevice(
+                "d1",
+                identifiers={("bluesight", PROXY_MAC)},
+                name="Kitchen",
+                name_by_user="My favourite proxy",
+            )
+        ],
+        "bluesight",
+    )
+    assert record == (PROXY_MAC, "Kitchen")
+
+
+def test_the_hub_device_and_other_domains_are_not_proxies():
+    records = own_proxy_records(
+        [
+            _NamedDevice("hub", identifiers={("bluesight", "service")}, name="BlueSight"),
+            _NamedDevice("madoka", identifiers={("daikin_madoka", PERIPHERAL_MAC)}),
+        ],
+        "bluesight",
+    )
+    assert records == []
+
+
+def test_a_nameless_device_is_still_a_known_proxy():
+    records = own_proxy_records(
+        [_NamedDevice("d1", identifiers={("bluesight", PROXY_MAC)})], "bluesight"
+    )
+    assert records == [(PROXY_MAC, "")]

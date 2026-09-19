@@ -70,9 +70,19 @@ class _BaseSlotSensor(CoordinatorEntity[BlueSightCoordinator], SensorEntity):
         super().__init__(coordinator)
         self._source = source
         proxy = self._proxy
+        # A proxy that is offline right now is in the health snapshot only.
+        # Its name there is the one the health sensors use, and every entity
+        # on a device has to hand the registry the same one.
+        name = proxy.name if proxy is not None else next(
+            (
+                h.name
+                for h in coordinator.data.proxies_health
+                if h.source == source
+            ),
+            source,
+        )
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, source)},
-            name=proxy.name if proxy is not None else source,
+            identifiers={(DOMAIN, source)}, name=name
         )
 
     @property

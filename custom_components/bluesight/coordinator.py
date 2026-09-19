@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Iterable
 from dataclasses import replace
 from datetime import timedelta
 
@@ -447,6 +448,54 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
                 for address, device_id in index.peripherals.items()
             },
         )
+
+    def remember_proxies(self, records: Iterable[tuple[str, str]]) -> None:
+        """Start tracking proxies known from a previous run.
+
+        ``records`` are ``(source, name)`` pairs read back from the device
+        registry (:func:`.device_index.own_proxy_records`). Without this, "seen
+        online once, remembered for good" held only until the next restart --
+        and an options edit reloads the entry, so a dead proxy's incident was
+        one click from disappearing.
+
+        A remembered proxy is stamped *now*, so it gets the full grace period
+        to show up, and one already seen in this run is left alone: what was
+        observed beats what was stored.
+        """
+        now = time.monotonic()
+        for source, name in records:
+            norm = normalize_address(source)
+            self._last_online.setdefault(norm, now)
+            if name:
+                self._names.setdefault(norm, name)
+
+    def restart_offline_clock(self) -> None:
+        """Give every tracked proxy a fresh grace period, from now.
+
+        Called once Home Assistant has finished starting. This integration can
+        be set up minutes before an ESPHome proxy reconnects, and counting that
+        wait against the proxy would raise an offline alert on every restart.
+        A proxy that is online is restamped by every snapshot anyway, so this
+        only ever moves the ones still missing.
+        """
+        now = time.monotonic()
+        for source in self._last_online:
+            self._last_online[source] = now
+
+    def retire_proxy(self, source: str) -> bool:
+        """Forget ``source`` if it is gone; say whether its device may go too.
+
+        False for a proxy that is still a registered scanner: deleting its
+        device would orphan entities that are reporting, and the next reload
+        would recreate it anyway. True otherwise -- including for a source
+        never tracked in this run, which is what a device left over from a
+        long-retired proxy looks like.
+        """
+        norm = normalize_address(source)
+        if any(h.online and h.source == norm for h in self.data.proxies_health):
+            return False
+        self.forget_proxy(norm)
+        return True
 
     def forget_proxy(self, source: str) -> bool:
         """Stop tracking a source, clearing any open ``proxy_offline`` incident.

@@ -189,7 +189,7 @@ Open the integration's **Configure** dialog to tune:
 
 | Action | What it does |
 | --- | --- |
-| `bluesight.forget_proxy` | Stops tracking a proxy (field: `source`, its MAC) and clears any open **proxy offline** incident. A proxy seen online once is remembered for good, so this is how you retire or replace one without leaving a permanent alert. |
+| `bluesight.forget_proxy` | Stops tracking a proxy that is gone (field: `source`, its MAC): clears any open **proxy offline** incident and deletes the proxy's BlueSight device. A proxy seen online once is remembered for good — across restarts, from that device — so this is how you retire or replace one without leaving a permanent alert. Deleting the device from its page does the same. A proxy that is still a registered scanner cannot be retired either way. |
 
 ### Diagnostics
 
