@@ -234,6 +234,29 @@ def build_device_index(
     )
 
 
+def own_proxy_records(devices: Iterable[Any], own_domain: str) -> list[tuple[str, str]]:
+    """``(source, name)`` for every proxy the caller already has a device for.
+
+    This is the caller's memory across restarts: a proxy it has seen has a
+    device under ``(own_domain, mac)``, and that is the only record of it that
+    outlives the process. The name is the registry's ``name`` -- what the
+    integration itself wrote -- and never ``name_by_user``, because the caller
+    feeds it back into device creation (see :func:`resolve_proxy_names`).
+
+    Only MAC-shaped identifiers, which is what keeps the ``(domain, "service")``
+    hub device out. Sorted, so the result does not depend on registry order.
+    """
+    records: list[tuple[str, str]] = []
+    for device in devices:
+        for ident in device.identifiers:
+            if ident[0] == own_domain and looks_like_mac(ident[1]):
+                name = getattr(device, "name", None)
+                records.append(
+                    (normalize_address(ident[1]), str(name).strip() if name else "")
+                )
+    return sorted(records)
+
+
 def resolve_proxy_names(
     scanner_names: dict[str, str], user_names: dict[str, str]
 ) -> dict[str, str]:

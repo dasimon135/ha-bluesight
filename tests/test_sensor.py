@@ -282,3 +282,17 @@ def test_the_reading_says_how_much_evidence_it_rests_on() -> None:
 
     assert sensor.native_value == 100.0
     assert sensor.extra_state_attributes["observed_s"] == 60.0
+
+
+# --- one device, one name ----------------------------------------------------
+
+
+def test_a_slot_sensor_names_its_device_as_the_health_sensors_do() -> None:
+    """A proxy that is offline when its entities are created is in the health
+    snapshot and not in the slot one. Every entity on a device must give the
+    registry the same name, or it keeps whichever was written last -- here, a
+    MAC over the name the proxy had."""
+    health = ProxyHealth("AA:BB", "proxy-a", True, False, 120.0, 0)
+    sensor = SlotsUsedSensor(_coord_health(health), "AA:BB")
+    assert sensor.device_info["name"] == "proxy-a"
+

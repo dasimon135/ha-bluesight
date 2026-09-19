@@ -43,7 +43,7 @@
   "services": {
     "forget_proxy": {
       "name": "Oublier un proxy",
-      "description": "Cesse de suivre un proxy et referme l'incident « proxy hors ligne » correspondant. À utiliser après avoir retiré ou remplacé un proxy : sinon il reste mémorisé et continue d'alerter.",
+      "description": "Cesse de suivre un proxy disparu : referme l'incident « proxy hors ligne » correspondant et supprime l'appareil BlueSight du proxy. À utiliser après avoir retiré ou remplacé un proxy : sinon il reste mémorisé, d'un redémarrage à l'autre, et continue d'alerter. Supprimer l'appareil depuis sa page fait la même chose.",
       "fields": {
         "source": {
           "name": "Source",

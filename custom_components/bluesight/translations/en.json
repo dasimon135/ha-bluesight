@@ -43,7 +43,7 @@
   "services": {
     "forget_proxy": {
       "name": "Forget proxy",
-      "description": "Stop tracking a proxy, clearing any open 'proxy offline' incident. Use it after retiring or replacing a proxy — otherwise it stays remembered and keeps alerting as offline.",
+      "description": "Stop tracking a proxy that is gone: clears any open 'proxy offline' incident and deletes the proxy's BlueSight device. Use it after retiring or replacing a proxy — otherwise it stays remembered, across restarts, and keeps alerting as offline. Deleting the device from its page does the same.",
       "fields": {
         "source": {
           "name": "Source",
