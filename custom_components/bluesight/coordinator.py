@@ -44,7 +44,7 @@ from .device_index import (
     build_proxy_index,
     resolve_proxy_names,
 )
-from .model import DeviceRef, normalize_address
+from .model import DeviceRef, ProxyHealth, normalize_address
 from .rendering import Catalogue
 from .saturation import SaturationWindow
 from .storm_signal import ReleaseTracker
@@ -132,6 +132,9 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         # Last friendly name observed per source, so a proxy that drops out of
         # the health snapshot keeps its name instead of reverting to its MAC.
         self._names: dict[str, str] = {}
+        # Whether each source was a connectable scanner when last seen, so a
+        # proxy reported offline is not also reported as a passive scanner.
+        self._connectable: dict[str, bool] = {}
         self._scanner_adapter = ScannerAdapter(
             self._manager,
             on_change=self._handle_push,
@@ -277,7 +280,23 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
                 self._names[h.source] = h.name
             if h.online:
                 self._last_online[h.source] = now
+                self._connectable[h.source] = h.connectable
         offline_for = {src: now - seen for src, seen in self._last_online.items()}
+        # A proxy seen before and gone now is *reported* offline, not omitted.
+        # `health` itself stays the registered scanners: it is also the list of
+        # proxies worth asking for telemetry, and these cannot answer.
+        registered = {h.source for h in health}
+        dropped_off = [
+            ProxyHealth(
+                source=src,
+                name=self._names.get(src, src),
+                connectable=self._connectable.get(src, False),
+                online=False,
+                seconds_since_detection=offline_for[src],
+                device_count=0,
+            )
+            for src in sorted(self._last_online.keys() - registered)
+        ]
 
         # Resolve availability from the device's HA entities rather than its
         # advertising presence: a connected device (holding a slot) stops
@@ -388,7 +407,7 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
             proxies,
             availability,
             self._window,
-            proxies_health=health,
+            proxies_health=health + dropped_off,
             known_sources=set(self._last_online),
             reboot_window=self._reboot_window,
             stalled_threshold_s=self._stalled_threshold_s,
@@ -438,6 +457,7 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         """
         norm = normalize_address(source)
         self._names.pop(norm, None)
+        self._connectable.pop(norm, None)
         # A retired proxy must not keep a counter baseline. A replacement that
         # reuses the MAC would otherwise inherit a stranger's counter and
         # replay the whole difference as a burst of measured failures.

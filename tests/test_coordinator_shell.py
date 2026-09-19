@@ -43,6 +43,7 @@ def _bare_coordinator() -> BlueSightCoordinator:
     c._last_online = {}
     c._offline_grace_s = 0.0
     c._names = {}
+    c._connectable = {}
     # Proxy telemetry (v1.5). The deltas object outlives the snapshot, so a
     # bare coordinator needs its own rather than sharing one.
     c._counter_deltas = CounterDeltas()
@@ -743,6 +744,49 @@ def test_forget_proxy_clears_the_counter_baseline(monkeypatch):
     c._snapshot()
     # Re-baselined at 9 rather than counting 5->9 against a stale baseline.
     assert c.storm_window.count(PERIPHERAL) == 2
+
+
+def _proxy_that_drops_off(monkeypatch):
+    """Two snapshots: the proxy is a registered scanner, then it is not."""
+    c = _telemetry_coordinator(
+        monkeypatch,
+        entries={"dev_proxy": [_FakeEntry("sensor.smp", SMP_NAME)]},
+        states={"sensor.smp": _FakeState("")},
+    )
+    c._snapshot()
+    c._manager.async_current_scanners = lambda: []
+    return c, c._snapshot()
+
+
+def test_a_proxy_that_drops_off_is_reported_offline_not_omitted(monkeypatch):
+    """`ProxyHealth.online` had one value, so the Online sensor had two states
+    -- on and unavailable -- and an automation waiting for `off` never ran.
+    The detectors and the sensor already read `online=False`; nothing made one.
+    """
+    _c, data = _proxy_that_drops_off(monkeypatch)
+    [health] = data.proxies_health
+    assert (health.source, health.online) == (PROXY, False)
+    # It keeps the name its entities were created with, not its MAC.
+    assert health.name == "Kitchen proxy"
+    # Going offline does not make a connectable proxy a passive scanner; it
+    # sees nobody, and that is all that changed.
+    assert health.connectable is True
+    assert health.device_count == 0
+
+
+def test_an_offline_proxy_is_not_asked_for_telemetry(monkeypatch):
+    """Nobody can ask it anything, so it must not read as *silent* either: the
+    diagnostics would send the reader after the telemetry chain for a proxy
+    whose real problem is already reported as PROXY_OFFLINE."""
+    _c, data = _proxy_that_drops_off(monkeypatch)
+    assert data.telemetry == []
+    assert [i.kind for i in data.incidents] == [IncidentKind.PROXY_OFFLINE]
+
+
+def test_a_forgotten_proxy_is_not_reported_offline(monkeypatch):
+    c, _data = _proxy_that_drops_off(monkeypatch)
+    assert c.forget_proxy(PROXY) is True
+    assert c._snapshot().proxies_health == []
 
 
 def _released_dead_device(monkeypatch, *, proxy_entries, proxy_states):
