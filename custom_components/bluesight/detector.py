@@ -112,8 +112,16 @@ def detect_stalled_proxies(
         Incident(
             IncidentKind.PROXY_STALLED, p.source, [p.source],
             detail_key="incident.proxy_stalled.detail",
-            # int() truncates, exactly as the prose it replaces did.
-            detail_params={"seconds": str(int(p.seconds_since_detection))},
+            # `detail` renders the threshold and never the reading: it is a
+            # published attribute, and a number that moves every snapshot
+            # rewrites it for as long as the proxy stays deaf -- the reason
+            # `detect_offline_proxies` carries no elapsed time at all. The
+            # reading still travels, for the notification written once when
+            # the incident opens. int() truncates, as the prose always did.
+            detail_params={
+                "seconds": str(int(p.seconds_since_detection)),
+                "threshold": str(int(threshold_s)),
+            },
         )
         for p in proxies
         if p.online and p.seconds_since_detection > threshold_s
@@ -357,8 +365,13 @@ def detect_idle_slots(
             out.append(Incident(
                 IncidentKind.GHOST_SLOT, address, [tel.source],
                 detail_key="incident.ghost_slot.idle_detail",
-                # int() truncates, as in `detect_stalled_proxies`: the same
-                # kind of reading, reported the same way.
-                detail_params={"proxy": name, "seconds": str(int(idle))},
+                # As in `detect_stalled_proxies`: `detail` states the
+                # threshold, which stands still, and the reading rides along
+                # for the notification. int() truncates, there as here.
+                detail_params={
+                    "proxy": name,
+                    "seconds": str(int(idle)),
+                    "threshold": str(int(threshold_s)),
+                },
                 evidence="smp"))
     return out
