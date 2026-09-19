@@ -8,6 +8,7 @@ Assistant. Keep it deliberately minimal.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Iterable
@@ -73,6 +74,12 @@ _AVAILABILITY_ERRORS = (RuntimeError, KeyError, AttributeError, TypeError)
 _BLUETOOTH_DOMAIN = "bluetooth"
 _CONF_SOURCE = "source"
 _CONF_SOURCE_DEVICE_ID = "source_device_id"
+
+# How long a push waits for the rest of its burst. habluetooth pushes once per
+# allocation change, a proxy reconnecting its devices changes several in a row,
+# and every snapshot walks the whole device registry. A quarter of a second is
+# invisible on a diagnostic card and turns that burst into one walk.
+_PUSH_SETTLE_S = 0.25
 
 
 class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
@@ -168,6 +175,8 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         # Set at shutdown so a push already queued on the loop cannot snapshot
         # a torn-down coordinator.
         self._stopped = False
+        # The armed snapshot of the current push burst, if any.
+        self._push_handle: asyncio.TimerHandle | None = None
 
     @property
     def storm_window(self) -> FailureWindow:
@@ -244,12 +253,23 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         an executor thread, so hop back onto the loop before touching
         coordinator state via ``async_set_updated_data``.
         """
-        # M3 (deferred): each push produces its own snapshot; coalescing rapid
-        # bursts into a single snapshot is an efficiency-only concern, out of
-        # scope for v1.
         if self._stopped:
             return
-        self.hass.loop.call_soon_threadsafe(self._push_snapshot)
+        self.hass.loop.call_soon_threadsafe(self._schedule_push_snapshot)
+
+    @callback
+    def _schedule_push_snapshot(self) -> None:
+        """Arm one snapshot for the burst this push belongs to.
+
+        On the loop, so the handle needs no lock. A push arriving while a
+        snapshot is already armed is absorbed by it: the snapshot reads the
+        manager when it runs, so it sees that push's change too.
+        """
+        if self._stopped or self._push_handle is not None:
+            return
+        self._push_handle = self.hass.loop.call_later(
+            _PUSH_SETTLE_S, self._push_snapshot
+        )
 
     @callback
     def _push_snapshot(self) -> None:
@@ -258,6 +278,7 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         The stopped check is repeated here because ``async_shutdown`` may run
         between the ``call_soon_threadsafe`` scheduling and this callback.
         """
+        self._push_handle = None
         if self._stopped:
             return
         self.async_set_updated_data(self._snapshot())
@@ -669,6 +690,9 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         loop no-ops instead of snapshotting a torn-down coordinator.
         """
         self._stopped = True
+        if self._push_handle is not None:
+            self._push_handle.cancel()
+            self._push_handle = None
         self._scanner_adapter.stop()
         self._adapter.stop()
         await super().async_shutdown()

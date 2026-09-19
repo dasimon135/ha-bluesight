@@ -37,6 +37,7 @@ def _bare_coordinator() -> BlueSightCoordinator:
     c._release_tracker = ReleaseTracker()
     c._availability_degraded = False
     c._stopped = False
+    c._push_handle = None
     # Proxy-health wiring (Task 7).
     c._stalled_threshold_s = 180.0
     c._reboot_window = FailureWindow(window_s=600, threshold=3, clock=lambda: 0.0)
@@ -483,6 +484,68 @@ def test_push_snapshot_no_ops_once_stopped():
     c._snapshot = lambda: pytest.fail("snapshot taken after shutdown")
     c.async_set_updated_data = lambda data: pytest.fail("published after shutdown")
     c._push_snapshot()
+
+
+class _TimerLoopHass:
+    """hass fake whose loop runs thread-safe calls at once and *holds* timers,
+    so a burst of pushes and the one snapshot they earn are both observable."""
+
+    class _Handle:
+        def __init__(self, fn):
+            self.fn, self.cancelled = fn, False
+
+        def cancel(self):
+            self.cancelled = True
+
+    class _Loop:
+        def __init__(self):
+            self.timers = []
+
+        def call_soon_threadsafe(self, fn, *args):
+            fn(*args)
+
+        def call_later(self, delay, fn, *args):
+            handle = _TimerLoopHass._Handle(lambda: fn(*args))
+            self.timers.append((delay, handle))
+            return handle
+
+    def __init__(self):
+        self.loop = self._Loop()
+        self.is_stopping = False
+
+
+def _pushed_coordinator():
+    c = _bare_coordinator()
+    c.hass = _TimerLoopHass()
+    c._push_handle = None
+    published = []
+    c._snapshot = lambda: "snapshot"
+    c.async_set_updated_data = published.append
+    return c, published
+
+
+def test_a_burst_of_pushes_earns_one_snapshot():
+    """habluetooth pushes once per allocation change, and a proxy reconnecting
+    its devices changes several in a row. Each snapshot walks the whole device
+    registry, so N pushes were N registry walks for one picture."""
+    c, published = _pushed_coordinator()
+    for _ in range(5):
+        c._handle_push()
+    [(delay, handle)] = c.hass.loop.timers
+    assert 0 < delay <= 1.0            # a diagnostic card, not a control loop
+    assert published == []             # nothing yet: the burst may not be over
+    handle.fn()
+    assert published == ["snapshot"]
+
+
+def test_a_push_after_the_snapshot_earns_another():
+    c, published = _pushed_coordinator()
+    c._handle_push()
+    c.hass.loop.timers[0][1].fn()
+    c._handle_push()
+    assert len(c.hass.loop.timers) == 2
+    c.hass.loop.timers[1][1].fn()
+    assert published == ["snapshot", "snapshot"]
 
 
 def _offline_coordinator(monkeypatch, *, grace_s, elapsed):
