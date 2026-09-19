@@ -29,6 +29,7 @@ from custom_components.bluesight.detector import (
     detect_stalled_proxies,
     detect_storm,
 )
+from custom_components.bluesight.incident_policy import _NOTIFY_VARIANTS
 from custom_components.bluesight.model import Incident, ProxyHealth, ProxySlots
 from custom_components.bluesight.telemetry import ProxyTelemetry
 from custom_components.bluesight.window import FailureWindow
@@ -176,13 +177,28 @@ def test_detector_emits_a_key_that_exists(incident):
 @pytest.mark.parametrize("language", ["en", "fr"])
 @pytest.mark.parametrize("incident", INCIDENTS, ids=_ids())
 def test_parameters_match_the_template_placeholders(incident, language):
-    """Exactly the names the template asks for -- no more, no fewer.
+    """Every name the detail asks for, and nothing nobody reads.
 
-    A missing name renders a literal ``{proxy}``; a surplus one is a parameter
-    the user never sees, usually the residue of a rename on one side only.
+    A missing name renders a literal ``{proxy}``. A surplus one is a parameter
+    the user never sees, usually the residue of a rename on one side only --
+    unless the *notification* is what reads it. That is the one legitimate
+    surplus, and it exists on purpose: ``detail`` is a published attribute and
+    must not carry a reading that moves every snapshot, while the notification
+    is written once and should (see ``test_detail_is_stable``). So a parameter
+    has to be consumed by the detail or by the message built from the same
+    incident, and by name -- an orphan still fails.
     """
-    for template in _forms(_catalogue(language), incident.detail_key):
-        assert set(PLACEHOLDER.findall(template)) == set(incident.detail_params)
+    catalogue = _catalogue(language)
+    wording = _NOTIFY_VARIANTS.get(incident.detail_key) or incident.kind.value
+    notified = {
+        name
+        for template in _forms(catalogue, f"notify.{wording}.message")
+        for name in PLACEHOLDER.findall(template)
+    }
+    for template in _forms(catalogue, incident.detail_key):
+        asked = set(PLACEHOLDER.findall(template))
+        assert asked <= set(incident.detail_params)
+        assert set(incident.detail_params) <= asked | notified
 
 
 @pytest.mark.parametrize("incident", INCIDENTS, ids=_ids())

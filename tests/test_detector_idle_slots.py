@@ -119,7 +119,13 @@ def test_detail_reports_the_measured_idle_time():
     """
     incidents = detect_idle_slots([_tel({ADDR: 600.0})], _allocated(ADDR), set(), THRESHOLD, {})
     assert incidents[0].detail_key == "incident.ghost_slot.idle_detail"
-    assert incidents[0].detail_params == {"proxy": "proxy1", "seconds": "600"}
+    assert incidents[0].detail_params == {
+        "proxy": "proxy1",
+        "seconds": "600",
+        # What `detail` renders, so the published attribute stands still while
+        # the silence grows; the reading above is for the notification.
+        "threshold": str(int(THRESHOLD)),
+    }
     # Unrendered at detector level: prose is the coordinator's job.
     assert incidents[0].detail == ""
 
