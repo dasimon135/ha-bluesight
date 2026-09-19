@@ -29,8 +29,8 @@ body:
     id: integration-version
     attributes:
       label: BlueSight version
-      description: HACS -> BlueSight (e.g. 0.7.1)
-      placeholder: "0.7.1"
+      description: HACS -> BlueSight (e.g. 0.8.0)
+      placeholder: "0.8.0"
     validations:
       required: true
   - type: textarea
