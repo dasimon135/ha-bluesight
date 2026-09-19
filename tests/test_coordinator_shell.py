@@ -705,6 +705,56 @@ def test_forget_proxy_clears_the_counter_baseline(monkeypatch):
     assert c.storm_window.count(PERIPHERAL) == 2
 
 
+def _released_dead_device(monkeypatch, *, proxy_entries, proxy_states):
+    """Two snapshots: a dead device holds a slot on the proxy, then releases it.
+
+    ``allocated`` is a list the manager fake re-reads on every call, so
+    clearing it between the snapshots is the release.
+    """
+    allocated = [PERIPHERAL]
+    c = _telemetry_coordinator(
+        monkeypatch,
+        entries={
+            "dev_proxy": proxy_entries,
+            "dev_madoka": [_FakeEntry("climate.madoka")],
+        },
+        states={**proxy_states, "climate.madoka": _FakeState("unavailable")},
+        allocated=allocated,
+        extra_devices=[
+            _FakeDevice("dev_madoka", identifiers={("daikin_madoka", PERIPHERAL)})
+        ],
+    )
+    c._snapshot()
+    allocated.clear()
+    c._snapshot()
+    return c
+
+
+def test_a_release_is_still_inferred_on_a_proxy_without_smp_counters(monkeypatch):
+    """The control for the test below: same release, no firmware to measure it."""
+    c = _released_dead_device(
+        monkeypatch,
+        proxy_entries=[_FakeEntry("sensor.uptime", "Uptime")],
+        proxy_states={"sensor.uptime": _FakeState("42")},
+    )
+    assert c.storm_window.count(PERIPHERAL) == 1
+
+
+def test_a_release_is_not_inferred_on_a_proxy_that_counts_smp_failures(monkeypatch):
+    """Evidence is replaced per proxy, as the README and the design both say.
+
+    The firmware's counter did not move, so nothing failed to pair. Inferring a
+    failure from the release anyway is what made a flashed proxy count each
+    real failure twice into one window with one threshold.
+    """
+    c = _released_dead_device(
+        monkeypatch,
+        proxy_entries=[_FakeEntry("sensor.smp", SMP_NAME)],
+        proxy_states={"sensor.smp": _FakeState("d0cf130ec92a:4")},
+    )
+    assert c.storm_window.count(PERIPHERAL) == 0
+
+
 def _idle_slot_data(monkeypatch, *, entity_state=None, allocated=(PERIPHERAL,)):
     """A snapshot where the firmware reports a 600s-idle slot (threshold 300).
 
