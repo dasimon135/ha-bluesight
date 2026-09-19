@@ -92,3 +92,46 @@ def test_is_alive_is_asked_once_per_address_per_snapshot():
     calls.clear()
     assert sorted(t.update([], probe)) == ["AA", "BB"]
     assert sorted(calls) == ["AA", "BB"]
+
+
+# --- a proxy that measures its own failures --------------------------------
+
+def test_a_release_from_a_measuring_proxy_is_not_inferred():
+    """The firmware counts that failure itself; inferring it too counts it twice.
+
+    Both routes feed one window with one threshold, so a failed pairing on a
+    proxy running the ESPHome component -- SMP counter +1 *and* a slot released
+    with the device unavailable -- reached the storm threshold at half the
+    failures the user configured.
+    """
+    t = ReleaseTracker()
+    dead = _alive_except("AA")
+    t.update(["AA"], dead, measured={"AA"})
+    assert t.update([], dead) == []
+
+
+def test_measured_is_judged_where_the_slot_was_held_not_where_it_went():
+    """`measured` describes the snapshot the slot was *held* in.
+
+    A released address is in nobody's allocation list any more, so whether its
+    proxy measures has to be remembered from the snapshot before.
+    """
+    t = ReleaseTracker()
+    dead = _alive_except("AA", "BB")
+    t.update(["AA", "BB"], dead, measured={"AA"})
+    assert t.update([], dead, measured=set()) == ["BB"]
+
+
+def test_a_measured_release_gets_no_second_chance_either():
+    """Undecided releases are re-checked once; a measured one never was one."""
+    t = ReleaseTracker()
+    t.update(["AA"], ALL_ALIVE, measured={"AA"})
+    assert t.update([], ALL_ALIVE) == []
+    assert t.update([], _alive_except("AA")) == []
+
+
+def test_measured_addresses_are_normalized():
+    t = ReleaseTracker()
+    dead = _alive_except("AA:BB")
+    t.update(["AA:BB"], dead, measured={" aa:bb "})
+    assert t.update([], dead) == []

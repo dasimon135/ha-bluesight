@@ -249,7 +249,10 @@ class ProxyTelemetry:
     def has_signal(self) -> bool:
         """True when at least one of the three sensors is reporting.
 
-        Drives the per-proxy choice between SMP evidence and the heuristic.
+        Decides whether the proxy appears in ``BlueSightData.telemetry`` at
+        all. It does *not* choose between SMP evidence and the heuristic: that
+        is ``smp_failures`` alone (see ``coordinator._snapshot``), because a
+        proxy publishing only bonds or slots measures no failures.
         """
         return any(
             v is not None

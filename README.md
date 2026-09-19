@@ -383,7 +383,13 @@ BlueSight is honest about its edges:
   looks identical to a stuck one — which is why the idle threshold is a tunable
   with a floor rather than a constant. See
   [docs/esphome-component.md](docs/esphome-component.md).
-- **The measured path has edges of its own.** A device using a resolvable
+- **The measured path has edges of its own.** On a proxy that counts SMP
+  failures, those counts are the *only* thing feeding the storm window for the
+  devices it holds — a released slot is no longer read as a failure there,
+  because the same failed pairing would otherwise be counted twice. The price is
+  that a connection which fails before pairing is ever attempted (a timeout, a
+  device out of range) is not a storm event on that proxy: it is a **pairing**
+  storm that is measured, and only that. A device using a resolvable
   private address is reported by the bond store, and by the pairing-failure
   event, under its *identity* address — which may not be the address habluetooth
   knows it by. The two then fail to correlate and **bond lost** simply does not

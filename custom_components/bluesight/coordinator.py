@@ -341,8 +341,6 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         # normalize to internally.
         allocated = [a for p in proxies for a in p.allocated]
         availability = {normalize_address(a): alive(a) for a in allocated}
-        for address in self._release_tracker.update(allocated, alive):
-            self._window.record(address)
 
         # Proxy telemetry, read off each proxy's own Home Assistant device.
         # Sources come from the health snapshot first (every registered
@@ -363,6 +361,21 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
                 s.state if (s := self.hass.states.get(entity_id)) else None
             ),
         )
+
+        # Inferred failures, from every proxy that cannot measure its own.
+        # After the telemetry read and not before it, because the evidence is
+        # replaced *per proxy*: a proxy reporting SMP counters feeds the storm
+        # window from those (in `build_triage_data`), and inferring the same
+        # failure from the slot it released would count it twice into one
+        # window with one threshold. `smp_failures` specifically -- a proxy
+        # publishing only bonds or slots measures no failures, so the
+        # heuristic is still all there is for it.
+        measuring = {t.source for t in telemetry if t.smp_failures is not None}
+        measured = [
+            a for p in proxies if p.source in measuring for a in p.allocated
+        ]
+        for address in self._release_tracker.update(allocated, alive, measured):
+            self._window.record(address)
 
         return build_triage_data(
             proxies,
