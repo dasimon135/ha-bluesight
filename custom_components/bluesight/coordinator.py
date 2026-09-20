@@ -27,6 +27,7 @@ from .adapter import (
     SlotAdapter,
     current_proxy_health,
     current_proxy_slots,
+    current_signal_by_proxy,
 )
 from .availability import is_device_alive
 from .const import (
@@ -46,7 +47,8 @@ from .device_index import (
     build_proxy_index,
     resolve_proxy_names,
 )
-from .model import DeviceRef, ProxyHealth, normalize_address
+from .model import DeviceRef, ProxyHealth, ProxySlots, normalize_address
+from .path import PathTracker, path_attributes
 from .rendering import Catalogue
 from .saturation import SaturationWindow
 from .storm_signal import ReleaseTracker
@@ -180,6 +182,11 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         # rather than argued from this one. Lives as long as the coordinator
         # and is pruned only by ``forget_proxy``.
         self._saturation: dict[str, SaturationWindow] = {}
+        # The route each held slot took, read once as the slot appeared. Lives
+        # as long as the coordinator: the reading is unrepeatable, because a
+        # connected device stops advertising and every scanner forgets it
+        # minutes later.
+        self._path_tracker = PathTracker()
         # How long a slot may sit without GATT traffic before the firmware's
         # reading is treated as a stuck slot. Bounded by the options schema;
         # ``detect_idle_slots`` deliberately carries no internal guard.
@@ -390,6 +397,11 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         # What to *say* about each proxy, resolved once for every detector
         # that names one.
         display_names = self._display_names_for(index)
+        # Which proxy each connection went through, and which one heard the
+        # device best -- read as the slot appears, because a connected device
+        # stops advertising and the reading is gone minutes later. After
+        # `display_names`, which is what names the stronger proxy.
+        proxies = self._with_paths(proxies, display_names)
         # Memoized per snapshot: the release tracker asks about addresses that
         # are no longer allocated, so the answer set is wider than `proxies`.
         verdicts: dict[str, bool] = {}
@@ -533,6 +545,28 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
             return False
         self.forget_proxy(norm)
         return True
+
+    def _with_paths(
+        self, proxies: list[ProxySlots], proxy_names: dict[str, str]
+    ) -> list[ProxySlots]:
+        """The same proxies, each carrying the route of the slots it holds.
+
+        Attached here rather than filled in by ``current_proxy_slots``: the
+        route is read from habluetooth's *advertisement* view, which is a
+        different question from the allocation snapshot, and it needs the
+        resolved proxy names that only exist at this point.
+        """
+        paths = self._path_tracker.update(
+            proxies, lambda address: current_signal_by_proxy(self._manager, address)
+        )
+        if not paths:
+            return proxies
+        by_source: dict[str, dict[str, dict[str, object]]] = {}
+        for (source, address), path in paths.items():
+            by_source.setdefault(source, {})[address] = path_attributes(
+                path, proxy_names
+            )
+        return [replace(p, paths=by_source.get(p.source, {})) for p in proxies]
 
     def forget_proxy(self, source: str) -> bool:
         """Stop tracking a source, clearing any open ``proxy_offline`` incident.

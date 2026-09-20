@@ -95,13 +95,18 @@ class ProxySlots:
     #: out of a registry. Tests that care about them assert on
     #: :attr:`allocated_devices`, never on ``ProxySlots`` equality.
     devices: dict[str, DeviceRef] = field(default_factory=dict, compare=False)
+    #: Normalized address -> the route that connection took, already in its
+    #: published shape (see :func:`path.path_attributes`), for the slots whose
+    #: signal could be read when they appeared. Excluded from equality for the
+    #: reason ``devices`` is: it describes a slot, it is not the allocation.
+    paths: dict[str, dict[str, object]] = field(default_factory=dict, compare=False)
 
     @property
     def used(self) -> int:
         return self.slots - self.free
 
     @property
-    def allocated_devices(self) -> list[dict[str, str | None]]:
+    def allocated_devices(self) -> list[dict[str, object]]:
         """One entry per occupied slot: the address, its name, its device id.
 
         Published verbatim as the ``allocated_devices`` attribute of the slots
@@ -116,9 +121,10 @@ class ProxySlots:
         MAC with no name and no id; the card turns that into a translated
         marker, because only the card knows the viewer's language.
         """
-        entries: list[dict[str, str | None]] = []
+        entries: list[dict[str, object]] = []
         for address in self.allocated:
-            ref = self.devices.get(normalize_address(address))
+            norm = normalize_address(address)
+            ref = self.devices.get(norm)
             entries.append(
                 {
                     # From `allocated`, so `allocated_devices` says exactly the
@@ -126,6 +132,11 @@ class ProxySlots:
                     "address": address,
                     "name": ref.name if ref is not None else "",
                     "device_id": ref.device_id if ref is not None else None,
+                    # The route this connection took, or None when there was no
+                    # signal to read as the slot appeared. Always present: an
+                    # attribute that comes and goes is a second shape for every
+                    # template to handle.
+                    "path": self.paths.get(norm),
                 }
             )
         return entries

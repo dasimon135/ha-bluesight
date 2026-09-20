@@ -101,6 +101,42 @@ def current_proxy_slots(
     return proxies
 
 
+#: habluetooth's sentinel for "no RSSI". Mirrored by value: it is the absence
+#: of a reading, and must never be compared as though it were a very weak one.
+_NO_RSSI = -127
+
+
+def current_signal_by_proxy(manager: Any, address: str) -> dict[str, int]:
+    """What each connectable proxy last heard ``address`` at, in dBm.
+
+    One public habluetooth call and nothing private. The stack's own route
+    scoring also weighs per-scanner failure counts, but those live in a
+    private attribute; this module reads none of those, so the reading says
+    what was *heard*, not everything that was *weighed*.
+
+    Connectable scanners only: a passive scanner that hears the device well is
+    not a route it could have taken. A scanner that cannot be read is skipped,
+    as in :func:`current_proxy_health`.
+    """
+    lookup = getattr(manager, "async_scanner_devices_by_address", None)
+    if not callable(lookup):
+        return {}
+    signal: dict[str, int] = {}
+    for scanner_device in lookup(address, True) or []:
+        try:
+            rssi = scanner_device.advertisement.rssi
+            source = normalize_address(scanner_device.scanner.source)
+        except AttributeError:
+            _LOGGER.debug(
+                "Skipping unreadable scanner device %r", scanner_device, exc_info=True
+            )
+            continue
+        if rssi is None or rssi <= _NO_RSSI:
+            continue
+        signal[source] = int(rssi)
+    return signal
+
+
 class SlotAdapter:
     """Subscribe to habluetooth allocation-change pushes and fan out a
     plain ``on_change()`` to the coordinator.

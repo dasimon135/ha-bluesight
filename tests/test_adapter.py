@@ -92,8 +92,8 @@ def test_the_device_resolver_is_asked_for_each_allocated_address():
     slots = current_proxy_slots(mgr, name_for=lambda s: s, device_for=device_for)
     assert asked == ["11:22", "33:44"]
     assert slots[0].allocated_devices == [
-        {"address": "11:22", "name": "name-11:22", "device_id": "dev-11:22"},
-        {"address": "33:44", "name": "name-33:44", "device_id": "dev-33:44"},
+        {"address": "11:22", "name": "name-11:22", "device_id": "dev-11:22", "path": None},
+        {"address": "33:44", "name": "name-33:44", "device_id": "dev-33:44", "path": None},
     ]
 
 
@@ -144,8 +144,8 @@ def test_an_address_the_resolver_does_not_know_stays_unresolved():
         device_for=lambda a: DeviceRef("Madoka", "dev_1") if a == "33:44" else None,
     )
     assert slots[0].allocated_devices == [
-        {"address": "11:22", "name": "", "device_id": None},
-        {"address": "33:44", "name": "Madoka", "device_id": "dev_1"},
+        {"address": "11:22", "name": "", "device_id": None, "path": None},
+        {"address": "33:44", "name": "Madoka", "device_id": "dev_1", "path": None},
     ]
 
 
@@ -162,9 +162,9 @@ def test_a_resolver_that_raises_does_not_take_the_snapshot_down():
     slots = current_proxy_slots(mgr, name_for=lambda s: s, device_for=boom)
     assert slots[0].allocated == ["11:22", "33:44"]
     assert slots[0].allocated_devices == [
-        {"address": "11:22", "name": "", "device_id": None},
+        {"address": "11:22", "name": "", "device_id": None, "path": None},
         # ... and the failure of one address does not lose the others.
-        {"address": "33:44", "name": "Madoka", "device_id": "dev_1"},
+        {"address": "33:44", "name": "Madoka", "device_id": "dev_1", "path": None},
     ]
 
 
@@ -181,8 +181,8 @@ def test_the_same_address_on_two_proxies_is_named_on_both():
         mgr, name_for=lambda s: s, device_for=lambda a: DeviceRef("Madoka", "dev_1")
     )
     assert [p.allocated_devices for p in slots] == [
-        [{"address": "11:22", "name": "Madoka", "device_id": "dev_1"}],
-        [{"address": "11:22", "name": "Madoka", "device_id": "dev_1"}],
+        [{"address": "11:22", "name": "Madoka", "device_id": "dev_1", "path": None}],
+        [{"address": "11:22", "name": "Madoka", "device_id": "dev_1", "path": None}],
     ]
 
 
@@ -191,5 +191,5 @@ def test_the_device_resolver_is_optional():
     mgr = _FakeManager([_FakeAlloc("AA", 3, 2, ["11:22"])])
     slots = current_proxy_slots(mgr, name_for=lambda s: s)
     assert slots[0].allocated_devices == [
-        {"address": "11:22", "name": "", "device_id": None}
+        {"address": "11:22", "name": "", "device_id": None, "path": None}
     ]

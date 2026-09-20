@@ -45,8 +45,8 @@ def test_slots_used_native_value_and_attributes() -> None:
         "free": 1,
         "allocated": ["11:22", "33:44"],
         "allocated_devices": [
-            {"address": "11:22", "name": "", "device_id": None},
-            {"address": "33:44", "name": "", "device_id": None},
+            {"address": "11:22", "name": "", "device_id": None, "path": None},
+            {"address": "33:44", "name": "", "device_id": None, "path": None},
         ],
         "source": "AA:BB",
     }
@@ -184,9 +184,9 @@ def test_allocated_devices_names_the_slots_it_can_and_says_so_when_it_cannot():
     assert _slots_used_attrs(proxy)["allocated_devices"] == [
         # The saturated proxy from the field report: one of the three slots is
         # held by an address Home Assistant knows nothing about.
-        {"address": "C3:EB:49:65:67:55", "name": "", "device_id": None},
-        {"address": "1C:54:9E:8E:1D:2C", "name": "Madoka salon", "device_id": "dev_salon"},
-        {"address": "1C:54:9E:90:E3:0E", "name": "Madoka parents", "device_id": "dev_parents"},
+        {"address": "C3:EB:49:65:67:55", "name": "", "device_id": None, "path": None},
+        {"address": "1C:54:9E:8E:1D:2C", "name": "Madoka salon", "device_id": "dev_salon", "path": None},
+        {"address": "1C:54:9E:90:E3:0E", "name": "Madoka parents", "device_id": "dev_parents", "path": None},
     ]
 
 
@@ -208,7 +208,7 @@ def test_the_published_attributes_are_json_shaped() -> None:
         "AA:BB", "proxy-a", 3, 2, ["11:22"], {"11:22": DeviceRef("Madoka", "dev_1")}
     )
     assert json.loads(json.dumps(_slots_used_attrs(proxy)))["allocated_devices"] == [
-        {"address": "11:22", "name": "Madoka", "device_id": "dev_1"}
+        {"address": "11:22", "name": "Madoka", "device_id": "dev_1", "path": None}
     ]
 
 

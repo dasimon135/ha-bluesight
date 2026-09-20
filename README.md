@@ -83,6 +83,36 @@ It surfaces the state as:
 Everything is **read-only**. BlueSight never frees a slot, forces an unbond, or
 reflashes anything. It observes and reports.
 
+### Which proxy, and why
+
+Home Assistant picks the route to a device itself: by signal, minus penalties
+for a proxy that is busy connecting, that has failed before, or that is down to
+its last slot — and a proxy with **no** free slot is out of the running whatever
+it hears. So a device can end up connected through the far side of the house,
+and until now nothing said so.
+
+Each entry of `allocated_devices` carries a `path`: what the proxy holding the
+slot heard the device at, and — only when another proxy heard it *clearly*
+better — which one, at what signal, and whether that proxy was full at the time.
+The card draws it under the device's name:
+
+```
+Madoka salon
+-82 dBm · Proxy Salon heard it at -54, but was full
+```
+
+That last clause is the point: it turns an odd-looking route into an explained
+one. **The reading is taken as the slot appears, or not at all** — a connected
+device stops advertising, and every scanner forgets it minutes later, so there
+is nothing to read afterwards. A slot already held when Home Assistant started
+therefore has no `path`, and never will until it reconnects.
+
+"Clearly better" is habluetooth's own margin (16 dB), not a threshold of ours:
+signal wanders by several dB between two advertisements, and below that the
+Bluetooth stack does not act on the difference either. **Nothing is judged from
+this** — no incident is raised, for the reason [saturation](#saturation-is-measured-not-judged)
+raises none: what counts as a bad route is not knowable from one fleet.
+
 ## Proxy health
 
 The v1 detectors watch what flows *through* the proxies. v1.2 adds a layer that
@@ -256,7 +286,7 @@ per signal, so "no telemetry" never looks like "nothing to report"), and
 
 | Entity | Type | State | Key attributes |
 | --- | --- | --- | --- |
-| `sensor.<proxy>_slots_used` | sensor | slots allocated on that proxy | `total`, `free`, `allocated` (list of MACs), `allocated_devices` (list of `{address, name, device_id}`, same slots in the same order), `source` |
+| `sensor.<proxy>_slots_used` | sensor | slots allocated on that proxy | `total`, `free`, `allocated` (list of MACs), `allocated_devices` (list of `{address, name, device_id, path}`, same slots in the same order), `source` |
 | `sensor.<proxy>_slots_free` | sensor | slots still free on that proxy | — |
 | `binary_sensor.<proxy>_online` | binary_sensor (`connectivity`) | `on` while the proxy is a registered scanner | — |
 | `sensor.<proxy>_last_device_seen` | sensor (`duration`, seconds) | seconds since that proxy last heard an advertisement | `device_count`, `connectable`, `online` |

@@ -16,9 +16,12 @@
 // render path without a browser. Serialisation is deliberately crude — a tag,
 // its classes and its text — because that is what an assertion needs to see.
 //
-// No catalogue is served: `fetch` never resolves, so every string comes from
-// the card's embedded English, which `test_card_locale.py` already pins to the
-// shipped catalogue.
+// By default no catalogue is served: `fetch` never resolves, so every string
+// comes from the card's embedded English, which `test_card_locale.py` already
+// pins to the shipped catalogue. That is the cold-load path, and it is what
+// most scenarios want. A scenario asking for a `language` other than English
+// gets the SHIPPED catalogues served from disk instead and one turn of the
+// loop to apply them -- otherwise its assertions would be about English.
 
 "use strict";
 
@@ -158,7 +161,25 @@ global.removeEventListener = () => {};
 global.console = { ...console, info: () => {} };
 // The card fetches its string catalogue and repaints when it lands. Here it
 // never lands, which is the cold-load path: embedded English.
-global.fetch = () => new Promise(() => {});
+const localeDir = path.join(
+  __dirname, "..", "custom_components", "bluesight", "frontend", "www", "locale"
+);
+const servesCatalogues = (scenarioLanguage) =>
+  Boolean(scenarioLanguage) && scenarioLanguage !== "en";
+
+global.fetch = (url) => {
+  if (!servesCatalogues(JSON.parse(process.argv[2]).language)) {
+    return new Promise(() => {});
+  }
+  // `/bluesight/locale/incidents.<lang>.json?v=...`
+  const name = String(url).split("/").pop().split("?")[0];
+  const file = path.join(localeDir, name);
+  if (!fs.existsSync(file)) {
+    return Promise.resolve({ ok: false, json: () => Promise.resolve({}) });
+  }
+  const body = JSON.parse(fs.readFileSync(file, "utf8"));
+  return Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
+};
 
 const cardFile = path.join(
   __dirname,
@@ -175,6 +196,9 @@ const cardFile = path.join(
 const scenario = JSON.parse(process.argv[2]);
 const Card = registry["bluesight-card"];
 const card = new Card();
+main();
+
+async function main() {
 card.setConfig(scenario.config || {});
 card.hass = {
   language: scenario.language || "en",
@@ -210,6 +234,12 @@ const attrs = {};
   })
 );
 
+// One macrotask is enough to drain every catalogue promise: they all resolve
+// synchronously, and microtasks run to exhaustion before the next macrotask.
+if (servesCatalogues(scenario.language)) {
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
 process.stdout.write(
   JSON.stringify({
     html: serialise(card.shadowRoot),
@@ -219,3 +249,4 @@ process.stdout.write(
     focused: global.__focused ? global.__focused.className : null,
   })
 );
+}
