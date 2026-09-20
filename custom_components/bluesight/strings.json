@@ -51,5 +51,21 @@
         }
       }
     }
+  },
+  "issues": {
+    "proxy_retired": {
+      "title": "Proxy {proxy} has been offline for over an hour",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Was {proxy} retired?",
+            "description": "BlueSight has not seen {proxy} ({source}) as a Bluetooth scanner for over an hour.\n\nIf it is only down — unplugged, off the Wi-Fi, mid-update — do nothing here: fix the proxy, and this goes away by itself when it comes back.\n\nIf you retired or replaced it, submit. BlueSight stops tracking it, clears its **proxy offline** incident and deletes its BlueSight device. Should that proxy ever return, it is simply picked up again."
+          }
+        },
+        "abort": {
+          "proxy_online": "{proxy} is back online, so there is nothing to retire."
+        }
+      }
+    }
   }
 }

@@ -191,6 +191,16 @@ Open the integration's **Configure** dialog to tune:
 | --- | --- |
 | `bluesight.forget_proxy` | Stops tracking a proxy that is gone (field: `source`, its MAC): clears any open **proxy offline** incident and deletes the proxy's BlueSight device. A proxy seen online once is remembered for good — across restarts, from that device — so this is how you retire or replace one without leaving a permanent alert. Deleting the device from its page does the same. A proxy that is still a registered scanner cannot be retired either way. |
 
+### Repairs
+
+**Proxy offline** has two causes with opposite remedies: the proxy is down, or
+it is gone for good. The notification speaks to the first. Once a proxy has
+stayed offline for **an hour**, a Repair asks about the second — *was it
+retired?* — and its one button does what `bluesight.forget_proxy` does, by
+name, without you having to find a MAC address. Do nothing and it clears itself
+the moment the proxy comes back. An hour, and not the offline grace period,
+so that an OTA update or a router reboot never asks anyone that question.
+
 ### Events
 
 `bluesight_incident` is fired once when an incident opens and once when it

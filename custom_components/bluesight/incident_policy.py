@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from .const import DOMAIN
-from .model import Incident, IncidentKind, normalize_address
+from .model import Incident, IncidentKind, ProxyHealth, normalize_address
 from .rendering import Catalogue, plural_count, render
 
 
@@ -100,6 +100,26 @@ def reconcile(
     to_create = [i for i in incidents if i.key not in previous_keys]
     to_dismiss = sorted(previous_keys - current_keys)
     return to_create, to_dismiss
+
+
+def retirement_candidates(
+    proxies_health: list[ProxyHealth], after_s: float
+) -> list[ProxyHealth]:
+    """Proxies that have stayed offline long enough to ask about.
+
+    ``proxy_offline`` has two causes with opposite remedies -- the proxy is
+    down, or it is gone for good -- and only the user knows which. This picks
+    out the ones worth asking the second question about.
+
+    Only an *offline* entry qualifies: for those ``seconds_since_detection`` is
+    how long the proxy has been missing, while for an online one it is
+    advertisement silence, which is ``PROXY_STALLED``'s business and wants a
+    power cycle, not a retirement.
+    """
+    return [
+        h for h in proxies_health
+        if not h.online and h.seconds_since_detection >= after_s
+    ]
 
 
 def event_payload(

@@ -51,5 +51,21 @@
         }
       }
     }
+  },
+  "issues": {
+    "proxy_retired": {
+      "title": "Le proxy {proxy} est hors ligne depuis plus d'une heure",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "{proxy} a-t-il été retiré ?",
+            "description": "BlueSight ne voit plus {proxy} ({source}) comme scanner Bluetooth depuis plus d'une heure.\n\nS'il est seulement en panne — débranché, hors du Wi-Fi, en cours de mise à jour — ne faites rien ici : réparez le proxy, et ceci disparaîtra tout seul à son retour.\n\nSi vous l'avez retiré ou remplacé, validez. BlueSight cesse de le suivre, referme son incident **proxy hors ligne** et supprime son appareil BlueSight. Si ce proxy revenait un jour, il serait simplement repris en compte."
+          }
+        },
+        "abort": {
+          "proxy_online": "{proxy} est de nouveau en ligne : il n'y a rien à retirer."
+        }
+      }
+    }
   }
 }
