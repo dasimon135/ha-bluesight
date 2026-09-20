@@ -102,7 +102,7 @@ class _BaseSlotSensor(CoordinatorEntity[BlueSightCoordinator], SensorEntity):
 class SlotsUsedSensor(_BaseSlotSensor):
     """Number of GATT slots currently allocated on a proxy."""
 
-    _attr_name = "Slots Used"
+    _attr_translation_key = "slots_used"
     _attr_icon = "mdi:bluetooth-connect"
 
     def __init__(self, coordinator: BlueSightCoordinator, source: str) -> None:
@@ -139,7 +139,7 @@ class SlotsUsedSensor(_BaseSlotSensor):
 class SlotsFreeSensor(_BaseSlotSensor):
     """Number of GATT slots still free on a proxy."""
 
-    _attr_name = "Slots Free"
+    _attr_translation_key = "slots_free"
     _attr_icon = "mdi:bluetooth"
 
     def __init__(self, coordinator: BlueSightCoordinator, source: str) -> None:
@@ -160,7 +160,7 @@ class LastDeviceSeenSensor(CoordinatorEntity[BlueSightCoordinator], SensorEntity
     """
 
     _attr_has_entity_name = True
-    _attr_name = "Last device seen"
+    _attr_translation_key = "last_device_seen"
     _attr_icon = "mdi:bluetooth-audio"
     _attr_device_class = SensorDeviceClass.DURATION
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -223,7 +223,7 @@ class SaturationSensor(CoordinatorEntity[BlueSightCoordinator], SensorEntity):
     """
 
     _attr_has_entity_name = True
-    _attr_name = "Saturation (24h)"
+    _attr_translation_key = "saturation_24h"
     _attr_icon = "mdi:gauge"
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = PERCENTAGE
