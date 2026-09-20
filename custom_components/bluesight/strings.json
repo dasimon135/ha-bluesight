@@ -67,5 +67,29 @@
         }
       }
     }
+  },
+  "entity": {
+    "sensor": {
+      "slots_used": {
+        "name": "Slots Used"
+      },
+      "slots_free": {
+        "name": "Slots Free"
+      },
+      "last_device_seen": {
+        "name": "Last device seen"
+      },
+      "saturation_24h": {
+        "name": "Saturation (24h)"
+      }
+    },
+    "binary_sensor": {
+      "incident": {
+        "name": "Incident"
+      },
+      "online": {
+        "name": "Online"
+      }
+    }
   }
 }
