@@ -1,7 +1,7 @@
 // Runs the shipped card under Node with just enough DOM to render it.
 //
 // Usage: node card_harness.js '<scenario json>'
-// Scenario: { config, states, language?, tap?: true, key?: "Enter" }
+// Scenario: { config, states, entities?, devices?, language?, tap?, key?, close? }
 //   states  — the `hass.states` map to render against
 //   tap     — also fire the tile's tap handler, and serialise what it opened
 //   key     — press that key on the tile's row instead, through its listeners
@@ -179,6 +179,11 @@ card.setConfig(scenario.config || {});
 card.hass = {
   language: scenario.language || "en",
   states: scenario.states || {},
+  // The frontend's view of the entity and device registries. Left undefined
+  // unless the scenario gives them, which is what an older Home Assistant
+  // looks like to the card.
+  entities: scenario.entities,
+  devices: scenario.devices,
 };
 
 if (scenario.tap) {

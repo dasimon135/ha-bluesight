@@ -62,6 +62,15 @@ const CRITICAL_KINDS = new Set(["deadlock", "ghost_slot"]);
 // about the diagnostic itself, and is what turns the tile's dot grey.
 const SENSOR_SILENT_STATES = new Set(["unavailable", "unknown"]);
 
+// Which of a proxy device's BlueSight entities the card reads, by the
+// translation key the backend gives each one. The key is the entity's
+// identity in every language; its id and its name are not.
+const REGISTRY_ROLES = {
+  slots_used: "slots",
+  online: "online",
+  last_device_seen: "lastSeen",
+};
+
 // ---------------------------------------------------------------------------
 // Locale
 // ---------------------------------------------------------------------------
@@ -452,6 +461,18 @@ class BlueSightCard extends HTMLElement {
       return this._config.proxies.slice();
     }
     const states = hass && hass.states ? hass.states : {};
+    // By what the entity *is*, where the frontend has a registry to ask: Home
+    // Assistant builds a new entity's id from its translated name in some
+    // forty languages, so an id ending in `_slots_used` is an English install,
+    // not a BlueSight sensor. An entity with no state (disabled) draws nothing.
+    const registered = Object.keys(this._registryIndex(hass).bySlotSensor)
+      .filter((entityId) => states[entityId])
+      .sort();
+    if (registered.length) {
+      return registered;
+    }
+    // No registry (an older Home Assistant), or a backend too old to have
+    // given its entities a translation key: the suffix rule, as before.
     const found = [];
     for (const entityId of Object.keys(states)) {
       if (!entityId.startsWith("sensor.") || !entityId.endsWith("_slots_used")) {
@@ -469,8 +490,56 @@ class BlueSightCard extends HTMLElement {
     return found;
   }
 
-  /** Best-effort friendly proxy name, stripping the " Slots Used" suffix. */
+  /**
+   * The BlueSight entities the frontend's registry knows, grouped by device.
+   *
+   * `bySlotSensor` maps a slots-used entity id to its device's companions
+   * (`online`, `lastSeen`) and to the device id, which is where the proxy's
+   * name lives. Built once per registry object: Home Assistant replaces
+   * `hass.entities` when the registry changes and hands back the same object
+   * otherwise, while `set hass` runs on every state change in the house.
+   */
+  _registryIndex(hass) {
+    const entities = hass && hass.entities;
+    if (this._registrySource === entities && this._registryCache) {
+      return this._registryCache;
+    }
+    const byDevice = {};
+    if (entities && typeof entities === "object") {
+      for (const entityId of Object.keys(entities)) {
+        const entry = entities[entityId] || {};
+        if (entry.platform !== "bluesight" || !entry.device_id) continue;
+        const role = REGISTRY_ROLES[entry.translation_key];
+        if (!role) continue;
+        (byDevice[entry.device_id] = byDevice[entry.device_id] || {})[role] =
+          entityId;
+      }
+    }
+    const bySlotSensor = {};
+    for (const deviceId of Object.keys(byDevice)) {
+      const found = byDevice[deviceId];
+      if (found.slots) {
+        bySlotSensor[found.slots] = { ...found, deviceId };
+      }
+    }
+    this._registrySource = entities;
+    this._registryCache = { bySlotSensor };
+    return this._registryCache;
+  }
+
+  /**
+   * The proxy's name: its device's, as the user renamed it. Falls back to the
+   * slot sensor's friendly name with its English suffix cut off, which is all
+   * there is to go on without a registry.
+   */
   _proxyName(stateObj, entityId) {
+    const known = this._registryIndex(this._hass).bySlotSensor[entityId];
+    const devices = this._hass && this._hass.devices;
+    const device = known && devices ? devices[known.deviceId] : null;
+    const named = device && (device.name_by_user || device.name);
+    if (named) {
+      return String(named);
+    }
     const friendly =
       (stateObj && stateObj.attributes && stateObj.attributes.friendly_name) ||
       entityId;
@@ -483,6 +552,12 @@ class BlueSightCard extends HTMLElement {
    * without a second discovery pass. Either may legitimately be absent.
    */
   _healthEntities(entityId) {
+    const known = this._registryIndex(this._hass).bySlotSensor[entityId];
+    if (known) {
+      // Through the device, so a translated entity id costs nothing. A
+      // companion the registry does not list is simply absent, as before.
+      return { online: known.online, lastSeen: known.lastSeen };
+    }
     const slug = entityId.replace(/^sensor\./, "").replace(/_slots_used$/, "");
     return {
       online: `binary_sensor.${slug}_online`,
@@ -778,6 +853,9 @@ class BlueSightCard extends HTMLElement {
       }
       const a = s.attributes || {};
       parts.push(`${id}:${s.state}:${a.total}:${a.free}`);
+      // The name drawn comes from the device registry, so a rename moves
+      // nothing in `states` and has to be looked at here.
+      parts.push(`name:${this._proxyName(s, id)}`);
       // Which devices hold the slots, not just how many. `used/total` can sit
       // perfectly still while one device disconnects and another connects, or
       // while a device is renamed in the registry; left out here, the list
