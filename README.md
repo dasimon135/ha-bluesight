@@ -320,8 +320,8 @@ native fallback YAML — is in **[docs/card.md](docs/card.md)**.
 
 ## Languages
 
-Incident details, persistent notifications and the custom Lovelace card are
-translated. **English and French** ship today; anything else falls back to
+Incident details, persistent notifications, the custom Lovelace card and the
+entity names are translated. **English and French** ship today; anything else falls back to
 English, key by key, so a partial translation is never worse than no
 translation. Adding a language is one JSON file and no code — see
 **[docs/translations.md](docs/translations.md)**.
@@ -330,7 +330,7 @@ Which language a surface speaks depends on *whose* it is:
 
 | Surface | Language it uses |
 | --- | --- |
-| The `detail` field on each incident, and persistent notifications | the **installation's** — `hass.config.language` |
+| The `detail` field on each incident, persistent notifications, and entity names (`Slots Used`, `Online`, …) | the **installation's** — `hass.config.language` |
 | The custom Lovelace card | the **viewer's** — their Home Assistant profile language |
 
 So two people can read one dashboard in two languages at the same time. The
@@ -341,6 +341,15 @@ the card prints it as it arrives rather than re-translating it.
 
 Incident `kind` values (`deadlock`, `ghost_slot`, …) are machine identifiers and
 are never translated — only the labels the card puts on them.
+
+One consequence of translated entity names is Home Assistant's, not BlueSight's:
+on an install in one of some forty languages, French among them, a **newly
+created** entity gets its id from the translated name —
+`sensor.proxy_salon_slots_utilises` rather than `..._slots_used`. Entities that
+already exist keep the id they have. The card does not care either way: it finds
+a proxy's entities through the entity registry, by what they are, and only falls
+back to the `_slots_used` suffix on a Home Assistant too old to offer one. If you
+list entities by hand with `proxies:`, use whatever ids your install gave them.
 
 ## How it works
 
