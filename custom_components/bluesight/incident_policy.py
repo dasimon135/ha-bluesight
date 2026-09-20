@@ -102,6 +102,35 @@ def reconcile(
     return to_create, to_dismiss
 
 
+def event_payload(
+    action: str,
+    incident: Incident,
+    device_names: dict[str, str],
+    proxy_names: dict[str, str],
+) -> dict[str, object]:
+    """What a ``bluesight_incident`` event carries, for one incident.
+
+    The same fields ``binary_sensor.bluesight_incident`` publishes per entry,
+    named the same and filled by the same rules -- ``""`` for a device Home
+    Assistant cannot name, the source address for a proxy it cannot -- so an
+    automation moving from the attribute to the event rewrites its trigger and
+    nothing else. Three more come with it: ``action`` (``opened`` or
+    ``resolved``), ``evidence``, and ``key``, the identity that stays put while
+    an incident's numbers move.
+    """
+    return {
+        "action": action,
+        "kind": incident.kind.value,
+        "address": incident.address,
+        "device_name": device_names.get(normalize_address(incident.address), ""),
+        "sources": list(incident.sources),
+        "source_names": [proxy_names.get(s, s) for s in incident.sources],
+        "detail": incident.detail,
+        "evidence": incident.evidence,
+        "key": incident.key,
+    }
+
+
 def _ghost_proxy(incident: Incident, catalogue: Catalogue) -> str:
     """Name the proxy holding the ghost slot, as the user knows it.
 

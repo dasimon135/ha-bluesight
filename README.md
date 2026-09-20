@@ -191,6 +191,43 @@ Open the integration's **Configure** dialog to tune:
 | --- | --- |
 | `bluesight.forget_proxy` | Stops tracking a proxy that is gone (field: `source`, its MAC): clears any open **proxy offline** incident and deletes the proxy's BlueSight device. A proxy seen online once is remembered for good — across restarts, from that device — so this is how you retire or replace one without leaving a permanent alert. Deleting the device from its page does the same. A proxy that is still a registered scanner cannot be retired either way. |
 
+### Events
+
+`bluesight_incident` is fired once when an incident opens and once when it
+resolves, so an automation is told instead of having to watch
+`binary_sensor.bluesight_incident` and work out what changed in its attributes.
+
+| Field | |
+| --- | --- |
+| `action` | `opened` or `resolved` |
+| `kind` | `deadlock`, `ghost_slot`, `storm`, `bond_lost`, `proxy_offline`, `proxy_stalled`, `proxy_reboot_storm` |
+| `address` | the device's address — or the proxy's, for the three `proxy_*` kinds |
+| `device_name` | what Home Assistant calls that device, `""` if it cannot name it |
+| `sources`, `source_names` | the proxies involved, as addresses and as the names you gave them |
+| `detail` | the same sentence the incident sensor publishes, in the installation's language |
+| `evidence` | `smp` when a proxy measured it, `heuristic` when it was inferred |
+| `key` | the incident's identity: it stays the same while the numbers in `detail` move |
+
+```yaml
+triggers:
+  - trigger: event
+    event_type: bluesight_incident
+    event_data:
+      action: opened
+      kind: bond_lost
+actions:
+  - action: notify.mobile_app_phone
+    data:
+      title: "{{ trigger.event.data.device_name or trigger.event.data.address }}"
+      message: "{{ trigger.event.data.detail }}"
+```
+
+The precedence rules apply first, exactly as for the notifications: a missing
+pairing key is one event, not a `bond_lost` and the `storm` it causes. A
+`resolved` event carries the incident as it was last seen. Reloading the
+integration resolves nothing and fires nothing; the incidents still open
+afterwards are reported as `opened` again, because to the new run they are.
+
 ### Diagnostics
 
 The integration's **⋮ → Download diagnostics** dumps the exact slot
