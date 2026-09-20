@@ -121,6 +121,8 @@ const EMBEDDED_EN = {
   "card.proxy.offline": "offline",
   "card.proxy.scan_only": "scan only — no connection slots",
   "card.proxy.unknown_device": "unknown to Home Assistant",
+  "card.slot.path": "{rssi} dBm · {proxy} heard it at {stronger}",
+  "card.slot.path_full": "{rssi} dBm · {proxy} heard it at {stronger}, but was full",
   "card.proxy.last_advert": "last advert {age} ago",
   "card.proxy.last_advert_with_devices.one": "last advert {age} ago · {count} device seen",
   "card.proxy.last_advert_with_devices.other": "last advert {age} ago · {count} devices seen",
@@ -865,7 +867,14 @@ class BlueSightCard extends HTMLElement {
         : [];
       parts.push(
         `dev:${allocated
-          .map((d) => `${(d || {}).address}=${(d || {}).name}`)
+          .map((d) => {
+            const entry = d || {};
+            const p = entry.path || {};
+            return (
+              `${entry.address}=${entry.name}` +
+              `@${p.rssi}/${p.stronger_name}/${p.stronger_rssi}/${p.stronger_was_full}`
+            );
+          })
           .join(",")}`
       );
       // The health companions are drawn too, so they belong in the signature.
@@ -1201,6 +1210,11 @@ class BlueSightCard extends HTMLElement {
     label.textContent = name || address;
     cell.appendChild(label);
 
+    const path = this._renderPath(entry.path);
+    if (path) {
+      cell.appendChild(path);
+    }
+
     if (!entry.device_id) {
       // Its own line, under the address rather than after it: the address is
       // already long enough to wrap on a phone, and a marker that wraps into
@@ -1212,6 +1226,33 @@ class BlueSightCard extends HTMLElement {
     }
 
     return cell;
+  }
+
+  /**
+   * Why this slot is on this proxy, or `null` when there is nothing to say.
+   *
+   * Only drawn when the backend named a proxy that heard the device clearly
+   * better -- it applies habluetooth's own switch margin, so a route nobody
+   * would question carries no `stronger_name` and gets no line. That a
+   * stronger proxy was *full* is the case worth the pixels: Home Assistant
+   * rules a proxy with no free slot out whatever it hears, so the odd-looking
+   * route is explained rather than merely reported.
+   */
+  _renderPath(path) {
+    if (!path || !path.stronger_name) {
+      return null;
+    }
+    const line = document.createElement("span");
+    line.className = "slot-path";
+    line.textContent = this._t(
+      path.stronger_was_full ? "card.slot.path_full" : "card.slot.path",
+      {
+        rssi: String(path.rssi),
+        proxy: String(path.stronger_name),
+        stronger: String(path.stronger_rssi),
+      }
+    );
+    return line;
   }
 
   _renderIncidents(incidentEntity, incidentState) {
@@ -1475,6 +1516,11 @@ class BlueSightCard extends HTMLElement {
       }
       .device-unknown {
         font-style: italic;
+      }
+      .slot-path {
+        font-size: 0.8rem;
+        opacity: 0.8;
+        font-variant-numeric: tabular-nums;
       }
       .pip-hint {
         margin-top: 8px;

@@ -106,6 +106,30 @@ a card that turns entirely red stops meaning anything.
 
 It is a single vanilla-JS file — no build step, no dependencies.
 
+#### Why this proxy
+
+Under a slot's device name, when there is something to say:
+
+```
+Madoka salon
+-82 dBm · Proxy Salon heard it at -54, but was full
+```
+
+What the proxy holding the slot heard the device at, and which proxy heard it
+clearly better — drawn only when the backend names one, which it does only past
+habluetooth's own 16 dB switch margin. A route nobody would question gets no
+line, so the rack stays quiet.
+
+"but was full" is the clause worth the pixels. Home Assistant rules a proxy with
+no free slot out of the running whatever it hears, so that phrase turns an
+odd-looking route into an explained one — and points at saturation rather than
+at placement.
+
+The reading is taken as the slot appears and never again: a connected device
+stops advertising, and every scanner forgets it minutes later. A slot already
+held when Home Assistant started shows no line, and will not until it
+reconnects. See the README for the full rule.
+
 #### `layout: tile` — the whole fleet on one line
 
 ```yaml

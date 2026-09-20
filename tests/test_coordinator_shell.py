@@ -20,6 +20,7 @@ from custom_components.bluesight import coordinator as coordinator_module
 from custom_components.bluesight.coordinator import BlueSightCoordinator
 from custom_components.bluesight.device_index import DeviceIndex
 from custom_components.bluesight.model import IncidentKind
+from custom_components.bluesight.path import PathTracker
 from custom_components.bluesight.storm_signal import ReleaseTracker
 from custom_components.bluesight.telemetry import CounterDeltas
 from custom_components.bluesight.telemetry_reader import (
@@ -56,6 +57,7 @@ def _bare_coordinator() -> BlueSightCoordinator:
     # for the same reason the real coordinator starts empty: a proxy has no
     # pressure history until it has been seen.
     c._saturation = {}
+    c._path_tracker = PathTracker()
     return c
 
 
@@ -1215,8 +1217,8 @@ def test_snapshot_names_the_device_holding_each_slot(monkeypatch):
         states={"climate.salon": _FakeState("off")},
     )
     assert c._snapshot().proxies[0].allocated_devices == [
-        {"address": UNKNOWN, "name": "", "device_id": None},
-        {"address": SALON, "name": "Madoka salon", "device_id": "dev_salon"},
+        {"address": UNKNOWN, "name": "", "device_id": None, "path": None},
+        {"address": SALON, "name": "Madoka salon", "device_id": "dev_salon", "path": None},
     ]
 
 
@@ -1241,7 +1243,7 @@ def test_a_slot_named_through_a_wifi_mac_is_not_named_at_all(monkeypatch):
         states={},
     )
     named = c._snapshot().proxies[0].allocated_devices
-    assert named[0] == {"address": UNKNOWN, "name": "", "device_id": None}
+    assert named[0] == {"address": UNKNOWN, "name": "", "device_id": None, "path": None}
 
 
 def test_naming_walks_the_device_registry_once_per_snapshot(monkeypatch):
@@ -1344,3 +1346,47 @@ def test_a_broken_registry_costs_the_rename_and_nothing_else(monkeypatch):
     assert c._display_names_for(c._build_device_index()) == {
         "AA:BB:CC:DD:EE:FF": "Kitchen proxy"
     }
+
+
+# --- the route each connection took ----------------------------------------
+
+
+class _HeardDevice:
+    """What `manager.async_scanner_devices_by_address` yields, per scanner."""
+
+    def __init__(self, source, rssi):
+        self.scanner = type("_S", (), {"source": source})()
+        self.advertisement = type("_A", (), {"rssi": rssi})()
+
+
+def test_a_slots_route_is_read_as_it_appears_and_published(monkeypatch):
+    """Through the shell: habluetooth is asked once, when the slot shows up, and
+    the answer rides on the slot's `allocated_devices` entry under the name the
+    user gave the proxy that heard the device better."""
+    near = "D0:CF:13:0E:C9:2A"
+    c = _telemetry_coordinator(
+        monkeypatch, entries={}, states={}, allocated=[PERIPHERAL]
+    )
+    c._names = {near: "Proxy Salon"}
+    asked = []
+
+    def _heard(address, connectable):
+        asked.append(address)
+        return [_HeardDevice(PROXY, -82), _HeardDevice(near, -54)]
+
+    c._manager.async_scanner_devices_by_address = _heard
+
+    [entry] = c._snapshot().proxies[0].allocated_devices
+    assert entry["path"] == {
+        "rssi": -82,
+        "stronger_source": near,
+        "stronger_name": "Proxy Salon",
+        "stronger_rssi": -54,
+        "stronger_was_full": False,
+    }
+
+    # By the next snapshot the device is connected and silent; the route stays.
+    c._manager.async_scanner_devices_by_address = lambda a, connectable: []
+    assert c._snapshot().proxies[0].allocated_devices[0]["path"]["rssi"] == -82
+    assert asked == [PERIPHERAL]
+
