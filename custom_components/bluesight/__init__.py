@@ -21,6 +21,7 @@ from homeassistant.loader import async_get_integration
 from .const import ATTR_SOURCE, DOMAIN, OPTION_DEFAULTS, SERVICE_FORGET_PROXY
 from .coordinator import BlueSightCoordinator
 from .device_index import looks_like_mac, own_proxy_records
+from .events import IncidentEvents
 from .frontend import JSModuleRegistration
 from .locale import read_catalogues
 from .model import normalize_address
@@ -83,13 +84,22 @@ async def async_setup_entry(
     # dismiss whatever is still up when the entry unloads, so a removed or
     # reloaded integration leaves no stale notification behind.
     manager = NotificationManager(hass, catalogue)
-    manager.async_update(coordinator.data.incidents)
-    entry.async_on_unload(manager.async_shutdown)
-    entry.async_on_unload(
-        coordinator.async_add_listener(
-            lambda: manager.async_update(coordinator.data.incidents)
+    # The same list on the bus, as `bluesight_incident` events, so an
+    # automation is told an incident opened instead of having to notice.
+    events = IncidentEvents(hass)
+
+    @callback
+    def _publish_incidents() -> None:
+        data = coordinator.data
+        manager.async_update(data.incidents)
+        events.async_update(
+            data.incidents, data.device_names, data.proxy_display_names
         )
-    )
+
+    _publish_incidents()
+    entry.async_on_unload(manager.async_shutdown)
+    entry.async_on_unload(events.async_shutdown)
+    entry.async_on_unload(coordinator.async_add_listener(_publish_incidents))
 
     # Reload the entry when the user edits options so new tunables take effect.
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
