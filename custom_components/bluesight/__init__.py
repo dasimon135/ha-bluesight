@@ -26,6 +26,7 @@ from .frontend import JSModuleRegistration
 from .locale import read_catalogues
 from .model import normalize_address
 from .notify import NotificationManager
+from .proxy_retirement import RetirementIssues, async_retire_proxy
 from .rendering import Catalogue
 
 FORGET_PROXY_SCHEMA = vol.Schema({vol.Required(ATTR_SOURCE): cv.string})
@@ -87,6 +88,8 @@ async def async_setup_entry(
     # The same list on the bus, as `bluesight_incident` events, so an
     # automation is told an incident opened instead of having to notice.
     events = IncidentEvents(hass)
+    # And, for a proxy that has stayed offline, a Repair offering to retire it.
+    retirements = RetirementIssues(hass)
 
     @callback
     def _publish_incidents() -> None:
@@ -95,10 +98,12 @@ async def async_setup_entry(
         events.async_update(
             data.incidents, data.device_names, data.proxy_display_names
         )
+        retirements.async_update(data.proxies_health, data.proxy_display_names)
 
     _publish_incidents()
     entry.async_on_unload(manager.async_shutdown)
     entry.async_on_unload(events.async_shutdown)
+    entry.async_on_unload(retirements.async_shutdown)
     entry.async_on_unload(coordinator.async_add_listener(_publish_incidents))
 
     # Reload the entry when the user edits options so new tunables take effect.
@@ -156,26 +161,13 @@ def _async_register_services(hass: HomeAssistant) -> None:
         incident can never resolve on its own. This is the escape hatch.
         """
         source = normalize_address(call.data[ATTR_SOURCE])
+        if await async_retire_proxy(hass, source):
+            return
+        # Still a registered scanner: forgotten as before, and seen again by
+        # the refresh. Its device stays -- its entities are reporting.
         for entry in hass.config_entries.async_loaded_entries(DOMAIN):
-            coordinator: BlueSightCoordinator = entry.runtime_data
-            if coordinator.retire_proxy(source):
-                # Its device is this integration's memory of it; left in place
-                # it would bring the proxy, and its alert, back at the next
-                # restart.
-                registry = dr.async_get(hass)
-                for device in dr.async_entries_for_config_entry(
-                    registry, entry.entry_id
-                ):
-                    if (DOMAIN, source) in {
-                        (domain, normalize_address(value))
-                        for domain, value in device.identifiers
-                    }:
-                        registry.async_remove_device(device.id)
-            else:
-                # Still a registered scanner: forgotten as before, and seen
-                # again by the refresh below.
-                coordinator.forget_proxy(source)
-            await coordinator.async_request_refresh()
+            entry.runtime_data.forget_proxy(source)
+            await entry.runtime_data.async_request_refresh()
 
     hass.services.async_register(
         DOMAIN, SERVICE_FORGET_PROXY, _forget_proxy, schema=FORGET_PROXY_SCHEMA
