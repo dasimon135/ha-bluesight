@@ -129,7 +129,7 @@ Interface and notifications follow your language; English and French ship. The b
 
 ### Installing
 
-Not in the HACS default store yet — add `https://github.com/dasimon135/ha-bluesight` as a **custom repository, category Integration**, then restart and add the integration from Settings → Devices & Services.
+In the HACS default store — open HACS, search for **BlueSight**, download it, then restart and add the integration from Settings → Devices & Services. No custom repository to add.
 
 The card ships with the integration and registers its own dashboard resource, so there is nothing to copy and no resource to add by hand. (That was two manual steps until 0.4.0, and both failed silently — nothing errored, the card simply never appeared. If you would rather not run custom JavaScript at all, [docs/card.md](https://github.com/dasimon135/ha-bluesight/blob/main/docs/card.md) has a native-card equivalent you can paste.)
 
