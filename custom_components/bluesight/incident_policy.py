@@ -127,6 +127,7 @@ def event_payload(
     incident: Incident,
     device_names: dict[str, str],
     proxy_names: dict[str, str],
+    initial: bool = False,
 ) -> dict[str, object]:
     """What a ``bluesight_incident`` event carries, for one incident.
 
@@ -137,6 +138,14 @@ def event_payload(
     nothing else. Three more come with it: ``action`` (``opened`` or
     ``resolved``), ``evidence``, and ``key``, the identity that stays put while
     an incident's numbers move.
+
+    ``initial`` says the incident was already open when BlueSight started
+    looking, rather than having just happened. Setup publishes its first
+    snapshot before anything is known, so every open incident fires ``opened``
+    -- on every restart and on every options edit, which reloads the entry.
+    Without this an automation notifying on ``opened`` would notify again each
+    time for a fault that never stopped, and nothing from the outside tells the
+    two apart.
     """
     return {
         "action": action,
@@ -148,6 +157,7 @@ def event_payload(
         "detail": incident.detail,
         "evidence": incident.evidence,
         "key": incident.key,
+        "initial": initial,
     }
 
 

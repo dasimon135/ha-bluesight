@@ -50,6 +50,9 @@ def test_the_payload_carries_the_fields_already_apart():
         "detail": "Slot held on Kitchen",
         "evidence": "heuristic",
         "key": f"ghost_slot:{ADDR}:{PROXY}",
+        # False unless the incident was already open when BlueSight started
+        # looking; see the tests at the end of this module.
+        "initial": False,
     }
 
 
@@ -127,3 +130,41 @@ def test_unloading_resolves_nothing():
     events.async_update([_ghost()], {}, {})
     events.async_shutdown()
     assert [d["action"] for _t, d in fired] == ["opened"]
+
+
+# --- what is new, and what was merely already there -------------------------
+
+
+def test_incidents_already_open_at_the_first_update_are_marked():
+    """Setup publishes before anything is known, so every open incident fires
+    `opened`. An automation that notifies on it would notify again on every
+    restart and on every options edit, for a fault that never stopped. The
+    event says which it is instead of leaving the automation to guess."""
+    events, fired = _events()
+    events.async_update([_ghost()], {}, {})
+    assert fired[0][1]["initial"] is True
+
+
+def test_an_incident_that_opens_later_is_not_initial():
+    events, fired = _events()
+    events.async_update([], {}, {})
+    events.async_update([_ghost()], {}, {})
+    assert fired[0][1]["initial"] is False
+
+
+def test_the_first_update_marks_only_what_it_found():
+    """A second incident arriving in the same snapshot as the first update is
+    still part of that first picture; one arriving later is not."""
+    events, fired = _events()
+    events.async_update([_ghost(), _storm()], {}, {})
+    assert [d["initial"] for _t, d in fired] == [True, True]
+
+
+def test_a_resolved_event_keeps_the_flag_it_opened_with():
+    events, fired = _events()
+    events.async_update([_ghost()], {}, {})
+    events.async_update([], {}, {})
+    assert [(d["action"], d["initial"]) for _t, d in fired] == [
+        ("opened", True),
+        ("resolved", True),
+    ]
