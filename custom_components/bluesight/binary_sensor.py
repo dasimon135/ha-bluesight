@@ -49,6 +49,12 @@ async def async_setup_entry(
                 continue
             known_sources.add(source)
             new_entities.append(ProxyOnlineBinarySensor(coordinator, source))
+        # Forget what the snapshots no longer mention. A proxy that is merely
+        # offline stays in the health snapshot, so this only drops a *retired*
+        # one -- whose device, and with it every entity below, Home Assistant
+        # has just deleted. Without this the source stayed remembered forever
+        # and a proxy that came back got no entities until the next reload.
+        known_sources.intersection_update(sources)
         if new_entities:
             async_add_entities(new_entities)
 
