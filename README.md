@@ -247,6 +247,7 @@ resolves, so an automation is told instead of having to watch
 | `detail` | the same sentence the incident sensor publishes, in the installation's language |
 | `evidence` | `smp` when a proxy measured it, `heuristic` when it was inferred |
 | `key` | the incident's identity: it stays the same while the numbers in `detail` move |
+| `initial` | `true` when the incident was already open before BlueSight started looking |
 
 ```yaml
 triggers:
@@ -264,9 +265,21 @@ actions:
 
 The precedence rules apply first, exactly as for the notifications: a missing
 pairing key is one event, not a `bond_lost` and the `storm` it causes. A
-`resolved` event carries the incident as it was last seen. Reloading the
-integration resolves nothing and fires nothing; the incidents still open
-afterwards are reported as `opened` again, because to the new run they are.
+`resolved` event carries the incident as it was last seen, including the
+`initial` flag it opened with.
+
+Reloading the integration resolves nothing and fires nothing. The incidents
+still open afterwards are reported as `opened` again, because to the new run
+they are, and **that is what `initial` is for**: a restart, or an options edit,
+re-announces every open incident, and without the flag an automation would
+notify again each time for a fault that never stopped. Match on it if you only
+want the news:
+
+```yaml
+    event_data:
+      action: opened
+      initial: false
+```
 
 ### Diagnostics
 

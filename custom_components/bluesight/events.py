@@ -30,6 +30,9 @@ class IncidentEvents:
 
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
+        # Whether the next update is the first. Everything open then was open
+        # before BlueSight looked, and is flagged as such; see `event_payload`.
+        self._first = True
         # key -> the payload it opened with, minus the action. A resolved
         # incident is gone from the snapshot, and so may be the registry names
         # it was reported under, so what it *was* has to be kept here.
@@ -44,6 +47,7 @@ class IncidentEvents:
     ) -> None:
         """Fire ``opened`` for what appeared and ``resolved`` for what went."""
         current = {i.key: i for i in dedupe_incidents(incidents)}
+        initial, self._first = self._first, False
         for key in sorted(self._open.keys() - current.keys()):
             self.hass.bus.async_fire(
                 EVENT_INCIDENT, {**self._open.pop(key), "action": "resolved"}
@@ -51,7 +55,9 @@ class IncidentEvents:
         for key, incident in current.items():
             if key in self._open:
                 continue
-            payload = event_payload("opened", incident, device_names, proxy_names)
+            payload = event_payload(
+                "opened", incident, device_names, proxy_names, initial
+            )
             self._open[key] = payload
             self.hass.bus.async_fire(EVENT_INCIDENT, payload)
 
@@ -59,3 +65,4 @@ class IncidentEvents:
     def async_shutdown(self) -> None:
         """Forget what is open, firing nothing: unloading resolves no fault."""
         self._open = {}
+        self._first = True
