@@ -76,17 +76,24 @@ class RetirementIssues:
 
     @callback
     def async_update(
-        self, proxies_health: list[ProxyHealth], proxy_names: dict[str, str]
+        self,
+        proxies_health: list[ProxyHealth],
+        proxy_names: dict[str, str],
+        offline_for: dict[str, float],
     ) -> None:
         """Reconcile the Repairs against the latest health snapshot.
 
         ``proxy_names`` is ``BlueSightData.proxy_display_names``: what the
         card, the sensors and the incident text call each proxy, so the Repair
-        does not introduce a second name for it.
+        does not introduce a second name for it. ``offline_for`` is the
+        coordinator's wall-clock map, for the reason
+        :func:`.incident_policy.retirement_candidates` gives.
         """
         wanted = {
             issue_id_for(h.source): h
-            for h in retirement_candidates(proxies_health, RETIRE_AFTER_S)
+            for h in retirement_candidates(
+                proxies_health, offline_for, RETIRE_AFTER_S
+            )
         }
         for issue_id in sorted(self._raised - wanted.keys()):
             ir.async_delete_issue(self.hass, DOMAIN, issue_id)

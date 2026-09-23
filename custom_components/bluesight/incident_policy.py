@@ -103,7 +103,9 @@ def reconcile(
 
 
 def retirement_candidates(
-    proxies_health: list[ProxyHealth], after_s: float
+    proxies_health: list[ProxyHealth],
+    offline_for: dict[str, float],
+    after_s: float,
 ) -> list[ProxyHealth]:
     """Proxies that have stayed offline long enough to ask about.
 
@@ -111,14 +113,21 @@ def retirement_candidates(
     down, or it is gone for good -- and only the user knows which. This picks
     out the ones worth asking the second question about.
 
-    Only an *offline* entry qualifies: for those ``seconds_since_detection`` is
-    how long the proxy has been missing, while for an online one it is
-    advertisement silence, which is ``PROXY_STALLED``'s business and wants a
-    power cycle, not a retirement.
+    ``offline_for`` maps a source to how long it has been missing in **wall
+    clock, across restarts**, and is deliberately not the entry's own
+    ``seconds_since_detection``. That one is measured from this run's start and
+    a restart puts it back to nearly zero, so the question "is this proxy gone
+    for good?" could never be reached on an instance that restarts often --
+    which is every instance being worked on. A source the map says nothing
+    about is not a candidate: nothing is known, so nothing is asked.
+
+    Only an *offline* entry qualifies. For an online one the silence is about
+    advertisements, which is ``PROXY_STALLED``'s business and wants a power
+    cycle rather than a retirement.
     """
     return [
         h for h in proxies_health
-        if not h.online and h.seconds_since_detection >= after_s
+        if not h.online and offline_for.get(h.source, 0.0) >= after_s
     ]
 
 

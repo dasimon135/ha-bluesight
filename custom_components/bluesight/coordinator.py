@@ -17,8 +17,10 @@ from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from . import adapter
@@ -82,6 +84,14 @@ _CONF_SOURCE_DEVICE_ID = "source_device_id"
 # and every snapshot walks the whole device registry. A quarter of a second is
 # invisible on a diagnostic card and turns that burst into one walk.
 _PUSH_SETTLE_S = 0.25
+
+# Where the wall-clock "last seen online" map is kept, and how long a change
+# waits before it is written. The map only decides whether the retirement
+# Repair may be asked, so a few lost minutes after a hard power cut cost
+# nothing, and a 24/7 loop must not write to disk on every snapshot.
+_STORE_KEY = f"{DOMAIN}.proxies"
+_STORE_VERSION = 1
+_STORE_SAVE_DELAY_S = 300
 
 
 def _registry_devices(registry: dr.DeviceRegistry) -> list[dr.DeviceEntry]:
@@ -155,6 +165,16 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         # the grace period (an OTA update drops a proxy for ~20-30s).
         self._last_online: dict[str, float] = {}
         self._offline_grace_s = offline_grace_s
+        # The same fact on the other clock: when each proxy was last seen
+        # online, in wall time, persisted. `_last_online` is monotonic and
+        # restarts with the process, which is right for the offline incident
+        # (a proxy is given a fresh grace period to reconnect at startup) and
+        # wrong for the retirement Repair, whose whole question is whether a
+        # proxy has been gone for a long time.
+        self._last_seen_wall: dict[str, float] = {}
+        self._store: Store[dict[str, dict[str, float]]] = Store(
+            hass, _STORE_VERSION, _STORE_KEY
+        )
         # Last friendly name observed per source, so a proxy that drops out of
         # the health snapshot keeps its name instead of reverting to its MAC.
         self._names: dict[str, str] = {}
@@ -243,10 +263,52 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         (ConfigEntryNotReady), the habluetooth callback was never registered,
         so there is no subscription to leak and no push can interleave with
         setup. HA retries setup from a clean slate.
+
+        The stored last-seen map is read first, so the very first snapshot
+        already knows which proxies have been gone for a long time.
         """
+        await self._async_load_last_seen()
         await self.async_config_entry_first_refresh()
         self._adapter.start()
         self._scanner_adapter.start()
+
+    async def _async_load_last_seen(self) -> None:
+        """Read the persisted last-seen map, tolerating anything on disk.
+
+        A corrupt or hand-edited file costs the retirement Repair its memory
+        and nothing else, so it is read defensively rather than allowed to
+        fail setup.
+        """
+        try:
+            stored = await self._store.async_load() or {}
+            last_seen = stored.get("last_seen", {})
+            self._last_seen_wall = {
+                normalize_address(source): float(seen)
+                for source, seen in last_seen.items()
+            }
+        except (ValueError, TypeError, AttributeError, HomeAssistantError):
+            _LOGGER.debug(
+                "Could not read %s; starting fresh", _STORE_KEY, exc_info=True
+            )
+            self._last_seen_wall = {}
+
+    def offline_seconds(self) -> dict[str, float]:
+        """How long each known proxy has been missing, in wall clock.
+
+        Across restarts, unlike the ``offline_for`` the offline *incident* is
+        judged on. See :func:`.incident_policy.retirement_candidates`.
+        """
+        now = time.time()
+        return {
+            source: max(0.0, now - seen)
+            for source, seen in self._last_seen_wall.items()
+        }
+
+    def _save_last_seen(self) -> None:
+        """Ask for a debounced write of the last-seen map."""
+        self._store.async_delay_save(
+            lambda: {"last_seen": dict(self._last_seen_wall)}, _STORE_SAVE_DELAY_S
+        )
 
     def _record_reboot(self, source: str) -> None:
         """Record a proxy REMOVED event as a reboot signal. Scheduled on the
@@ -325,7 +387,10 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
                 self._names[h.source] = h.name
             if h.online:
                 self._last_online[h.source] = now
+                self._last_seen_wall[h.source] = time.time()
                 self._connectable[h.source] = h.connectable
+        if health:
+            self._save_last_seen()
         offline_for = {src: now - seen for src, seen in self._last_online.items()}
         # A proxy seen before and gone now is *reported* offline, not omitted.
         # `health` itself stays the registered scanners: it is also the list of
@@ -512,9 +577,14 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         observed beats what was stored.
         """
         now = time.monotonic()
+        wall = time.time()
         for source, name in records:
             norm = normalize_address(source)
             self._last_online.setdefault(norm, now)
+            # Only where the store knows nothing: an upgrade, or a proxy whose
+            # device predates this map. Its retirement clock then starts here,
+            # which is late rather than wrong.
+            self._last_seen_wall.setdefault(norm, wall)
             if name:
                 self._names.setdefault(norm, name)
 
@@ -578,6 +648,8 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         norm = normalize_address(source)
         self._names.pop(norm, None)
         self._connectable.pop(norm, None)
+        if self._last_seen_wall.pop(norm, None) is not None:
+            self._save_last_seen()
         # A retired proxy must not keep a counter baseline. A replacement that
         # reuses the MAC would otherwise inherit a stranger's counter and
         # replay the whole difference as a burst of measured failures.

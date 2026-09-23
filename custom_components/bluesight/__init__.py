@@ -98,7 +98,11 @@ async def async_setup_entry(
         events.async_update(
             data.incidents, data.device_names, data.proxy_display_names
         )
-        retirements.async_update(data.proxies_health, data.proxy_display_names)
+        retirements.async_update(
+            data.proxies_health,
+            data.proxy_display_names,
+            coordinator.offline_seconds(),
+        )
 
     _publish_incidents()
     entry.async_on_unload(manager.async_shutdown)
