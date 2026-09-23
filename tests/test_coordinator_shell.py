@@ -31,9 +31,33 @@ from custom_components.bluesight.telemetry_reader import (
 from custom_components.bluesight.window import FailureWindow
 
 
+class _FakeStore:
+    """Stands in for ``homeassistant.helpers.storage.Store``.
+
+    The real one debounces writes to disk; here the last asked-for payload is
+    simply kept, which is what the tests assert on.
+    """
+
+    def __init__(self, loaded=None) -> None:
+        self._loaded = loaded
+        self.saved: dict | None = None
+        self.delays: list[float] = []
+
+    async def async_load(self):
+        return self._loaded
+
+    def async_delay_save(self, payload, delay) -> None:
+        self.saved = payload()
+        self.delays.append(delay)
+
+
 def _bare_coordinator() -> BlueSightCoordinator:
     """A coordinator instance without HA wiring (no hass, no habluetooth)."""
     c = object.__new__(BlueSightCoordinator)
+    # When each proxy was last seen online, in wall clock and persisted: the
+    # retirement Repair's clock, which must survive a restart.
+    c._last_seen_wall = {}
+    c._store = _FakeStore()
     c._window = FailureWindow(window_s=300, threshold=5, clock=lambda: 0.0)
     c._release_tracker = ReleaseTracker()
     c._availability_degraded = False
@@ -1389,4 +1413,70 @@ def test_a_slots_route_is_read_as_it_appears_and_published(monkeypatch):
     c._manager.async_scanner_devices_by_address = lambda a, connectable: []
     assert c._snapshot().proxies[0].allocated_devices[0]["path"]["rssi"] == -82
     assert asked == [PERIPHERAL]
+
+
+# --- the clock the retirement Repair reads ---------------------------------
+
+
+def test_the_last_seen_map_is_read_back_at_setup():
+    c = _bare_coordinator()
+    c._store = _FakeStore({"last_seen": {PROXY.lower(): 1_000.0}})
+    asyncio.run(c._async_load_last_seen())
+    assert c._last_seen_wall == {PROXY: 1_000.0}
+
+
+def test_a_corrupt_store_costs_the_memory_and_nothing_else():
+    """Setup must not fail over a file the Repair alone depends on."""
+    c = _bare_coordinator()
+    c._store = _FakeStore({"last_seen": {PROXY: "yesterday"}})
+    asyncio.run(c._async_load_last_seen())
+    assert c._last_seen_wall == {}
+
+
+def test_how_long_each_proxy_has_been_gone_is_measured_in_wall_clock(monkeypatch):
+    c = _bare_coordinator()
+    c._last_seen_wall = {PROXY: 500.0}
+    monkeypatch.setattr(coordinator_module.time, "time", lambda: 4_100.0)
+    assert c.offline_seconds() == {PROXY: 3_600.0}
+
+
+def test_a_clock_that_jumped_backwards_reads_as_zero(monkeypatch):
+    """Wall time is the only clock that survives a restart, and it can move.
+    A negative age would read as "seen in the future", not as "long gone"."""
+    c = _bare_coordinator()
+    c._last_seen_wall = {PROXY: 9_000.0}
+    monkeypatch.setattr(coordinator_module.time, "time", lambda: 1_000.0)
+    assert c.offline_seconds() == {PROXY: 0.0}
+
+
+def test_a_remembered_proxy_keeps_what_the_store_knew(monkeypatch):
+    """The registry says a proxy exists; the store says since when it has been
+    missing. Stamping it now would restart the Repair's clock at every boot,
+    which is the whole defect this map exists to fix."""
+    c = _bare_coordinator()
+    c._last_seen_wall = {PROXY: 500.0}
+    monkeypatch.setattr(coordinator_module.time, "time", lambda: 9_000.0)
+    monkeypatch.setattr(coordinator_module.time, "monotonic", lambda: 10.0)
+    c.remember_proxies([(PROXY, "Kitchen"), (PERIPHERAL, "Other")])
+    assert c._last_seen_wall[PROXY] == 500.0
+    # One the store had never heard of starts its clock here: late, not wrong.
+    assert c._last_seen_wall[PERIPHERAL] == 9_000.0
+
+
+def test_forgetting_a_proxy_forgets_when_it_was_last_seen():
+    c = _bare_coordinator()
+    c._last_online = {PROXY: 0.0}
+    c._last_seen_wall = {PROXY: 500.0}
+    assert c.forget_proxy(PROXY.lower()) is True
+    assert c._last_seen_wall == {}
+    assert c._store.saved == {"last_seen": {}}
+
+
+def test_the_map_is_written_back_when_a_proxy_is_seen(monkeypatch):
+    c = _telemetry_coordinator(monkeypatch, entries={}, states={})
+    monkeypatch.setattr(coordinator_module.time, "time", lambda: 7_000.0)
+    c._snapshot()
+    assert c._store.saved == {"last_seen": {PROXY: 7_000.0}}
+    # Debounced: a 24/7 loop must not write to disk on every snapshot.
+    assert c._store.delays == [coordinator_module._STORE_SAVE_DELAY_S]
 

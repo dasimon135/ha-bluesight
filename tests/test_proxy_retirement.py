@@ -33,20 +33,38 @@ def _health(source, *, online, age, name="Kitchen"):
 
 
 def test_a_proxy_offline_for_long_enough_is_a_candidate():
-    health = [_health(PROXY, online=False, age=RETIRE_AFTER_S)]
-    assert retirement_candidates(health, RETIRE_AFTER_S) == health
+    health = [_health(PROXY, online=False, age=1.0)]
+    offline = {PROXY: RETIRE_AFTER_S}
+    assert retirement_candidates(health, offline, RETIRE_AFTER_S) == health
 
 
 def test_a_proxy_that_just_dropped_off_is_not():
-    health = [_health(PROXY, online=False, age=RETIRE_AFTER_S - 1)]
-    assert retirement_candidates(health, RETIRE_AFTER_S) == []
+    health = [_health(PROXY, online=False, age=1.0)]
+    offline = {PROXY: RETIRE_AFTER_S - 1}
+    assert retirement_candidates(health, offline, RETIRE_AFTER_S) == []
+
+
+def test_the_clock_is_the_one_that_survives_a_restart():
+    """`seconds_since_detection` is measured from this run's start, and a
+    restart puts it back to nearly zero. The Repair asks whether a proxy is
+    gone for good, and that question does not restart when Home Assistant
+    does, so it reads the wall-clock map instead."""
+    health = [_health(PROXY, online=False, age=2.0)]   # this run just began
+    offline = {PROXY: RETIRE_AFTER_S * 24}             # gone since yesterday
+    assert retirement_candidates(health, offline, RETIRE_AFTER_S) == health
+
+
+def test_a_proxy_nothing_is_known_about_is_not_a_candidate():
+    health = [_health(PROXY, online=False, age=RETIRE_AFTER_S * 10)]
+    assert retirement_candidates(health, {}, RETIRE_AFTER_S) == []
 
 
 def test_an_online_proxy_never_is_however_long_it_has_been_deaf():
     """`seconds_since_detection` is advertisement silence for an online proxy;
     that is PROXY_STALLED's business, and its remedy is a power cycle."""
     health = [_health(PROXY, online=True, age=RETIRE_AFTER_S * 10)]
-    assert retirement_candidates(health, RETIRE_AFTER_S) == []
+    offline = {PROXY: RETIRE_AFTER_S * 10}
+    assert retirement_candidates(health, offline, RETIRE_AFTER_S) == []
 
 
 def test_the_issue_id_round_trips_to_the_source():
@@ -82,7 +100,9 @@ def _issues(monkeypatch):
 
 def test_a_candidate_gets_a_fixable_issue_named_after_the_proxy(monkeypatch):
     issues, fake = _issues(monkeypatch)
-    issues.async_update([_health(PROXY, online=False, age=RETIRE_AFTER_S)], {})
+    issues.async_update(
+        [_health(PROXY, online=False, age=1.0)], {}, {PROXY: RETIRE_AFTER_S}
+    )
     issue = fake.created[issue_id_for(PROXY)]
     assert issue["domain"] == "bluesight"
     assert issue["is_fixable"] is True
@@ -94,19 +114,23 @@ def test_a_candidate_gets_a_fixable_issue_named_after_the_proxy(monkeypatch):
 
 def test_a_standing_issue_is_not_recreated_every_snapshot(monkeypatch):
     issues, fake = _issues(monkeypatch)
-    health = [_health(PROXY, online=False, age=RETIRE_AFTER_S)]
-    issues.async_update(health, {})
+    health = [_health(PROXY, online=False, age=1.0)]
+    issues.async_update(health, {}, {PROXY: RETIRE_AFTER_S})
     fake.created.clear()
-    issues.async_update([_health(PROXY, online=False, age=RETIRE_AFTER_S + 30)], {})
+    issues.async_update(
+        [_health(PROXY, online=False, age=1.0)], {}, {PROXY: RETIRE_AFTER_S + 30}
+    )
     assert fake.created == {}
 
 
 def test_the_issue_goes_when_the_proxy_comes_back_or_is_forgotten(monkeypatch):
     issues, fake = _issues(monkeypatch)
-    issues.async_update([_health(PROXY, online=False, age=RETIRE_AFTER_S)], {})
-    issues.async_update([_health(PROXY, online=True, age=1.0)], {})
+    issues.async_update(
+        [_health(PROXY, online=False, age=1.0)], {}, {PROXY: RETIRE_AFTER_S}
+    )
+    issues.async_update([_health(PROXY, online=True, age=1.0)], {}, {})
     assert fake.deleted == [issue_id_for(PROXY)]
-    issues.async_update([], {})                  # forgotten: nothing left to say
+    issues.async_update([], {}, {})              # forgotten: nothing left to say
     assert fake.deleted == [issue_id_for(PROXY)]  # and nothing deleted twice
 
 
@@ -114,10 +138,11 @@ def test_unloading_takes_its_issues_with_it(monkeypatch):
     issues, fake = _issues(monkeypatch)
     issues.async_update(
         [
-            _health(PROXY, online=False, age=RETIRE_AFTER_S),
-            _health(OTHER, online=False, age=RETIRE_AFTER_S),
+            _health(PROXY, online=False, age=1.0),
+            _health(OTHER, online=False, age=1.0),
         ],
         {},
+        {PROXY: RETIRE_AFTER_S, OTHER: RETIRE_AFTER_S},
     )
     issues.async_shutdown()
     assert sorted(fake.deleted) == sorted([issue_id_for(PROXY), issue_id_for(OTHER)])
@@ -129,8 +154,9 @@ def test_the_repair_calls_the_proxy_what_the_user_calls_it(monkeypatch):
     and a Repair that named it differently would read as a different proxy."""
     issues, fake = _issues(monkeypatch)
     issues.async_update(
-        [_health(PROXY, online=False, age=RETIRE_AFTER_S, name=f"atom ({PROXY})")],
+        [_health(PROXY, online=False, age=1.0, name=f"atom ({PROXY})")],
         {PROXY: "Proxy Buanderie"},
+        {PROXY: RETIRE_AFTER_S},
     )
     issue = fake.created[issue_id_for(PROXY)]
     assert issue["translation_placeholders"]["proxy"] == "Proxy Buanderie"

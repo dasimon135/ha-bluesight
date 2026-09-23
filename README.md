@@ -231,6 +231,12 @@ name, without you having to find a MAC address. Do nothing and it clears itself
 the moment the proxy comes back. An hour, and not the offline grace period,
 so that an OTA update or a router reboot never asks anyone that question.
 
+That hour is counted in wall time and survives restarts: BlueSight remembers
+when it last saw each proxy. The **proxy offline** incident is judged on a
+separate clock that *does* restart with Home Assistant, on purpose, because a
+proxy taking two minutes to reconnect after a reboot is not offline in any
+useful sense. The two questions are different, so they are timed differently.
+
 ### Events
 
 `bluesight_incident` is fired once when an incident opens and once when it
