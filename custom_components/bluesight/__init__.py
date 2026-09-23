@@ -193,7 +193,13 @@ async def async_remove_config_entry_device(
         for domain, value in device.identifiers
         if domain == DOMAIN and looks_like_mac(value)
     ]
-    if not sources or not all(coordinator.retire_proxy(s) for s in sources):
+    if not sources:
+        return False
+    # Every source judged before the verdict is taken: `retire_proxy` forgets
+    # as it answers, and a short-circuiting `all()` over the calls themselves
+    # would forget the first and then refuse the deletion because of a second.
+    retired = [coordinator.retire_proxy(source) for source in sources]
+    if not all(retired):
         return False
     await coordinator.async_request_refresh()
     return True

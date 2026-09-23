@@ -8,7 +8,8 @@
   "dependencies": [
     "bluetooth",
     "frontend",
-    "http"
+    "http",
+    "repairs"
   ],
   "documentation": "https://github.com/dasimon135/ha-bluesight",
   "iot_class": "local_push",
