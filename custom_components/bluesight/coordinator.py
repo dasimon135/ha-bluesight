@@ -14,6 +14,7 @@ import time
 from collections.abc import Iterable
 from dataclasses import replace
 from datetime import timedelta
+from math import inf
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -85,13 +86,19 @@ _CONF_SOURCE_DEVICE_ID = "source_device_id"
 # invisible on a diagnostic card and turns that burst into one walk.
 _PUSH_SETTLE_S = 0.25
 
-# Where the wall-clock "last seen online" map is kept, and how long a change
-# waits before it is written. The map only decides whether the retirement
-# Repair may be asked, so a few lost minutes after a hard power cut cost
-# nothing, and a 24/7 loop must not write to disk on every snapshot.
+# Where the wall-clock "last seen online" map is kept, and how rarely it is
+# written. The map only decides whether the retirement Repair may be asked, so
+# a few lost minutes after a hard power cut cost nothing, and a 24/7 loop must
+# not write to disk on every snapshot.
+#
+# This spaces out the *asks* rather than leaning on `async_delay_save`'s own
+# delay, because that delay is not a debounce: every call pushes the pending
+# timer back. Asked again at each snapshot it would never fire while the loop
+# runs, and the map would reach the disk only through the final-write listener
+# at shutdown -- the one moment a hard power cut does not offer.
 _STORE_KEY = f"{DOMAIN}.proxies"
 _STORE_VERSION = 1
-_STORE_SAVE_DELAY_S = 300
+_STORE_SAVE_INTERVAL_S = 300
 
 
 def _registry_devices(registry: dr.DeviceRegistry) -> list[dr.DeviceEntry]:
@@ -172,6 +179,7 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         # wrong for the retirement Repair, whose whole question is whether a
         # proxy has been gone for a long time.
         self._last_seen_wall: dict[str, float] = {}
+        self._last_save_at = -inf
         self._store: Store[dict[str, dict[str, float]]] = Store(
             hass, _STORE_VERSION, _STORE_KEY
         )
@@ -304,10 +312,18 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
             for source, seen in self._last_seen_wall.items()
         }
 
-    def _save_last_seen(self) -> None:
-        """Ask for a debounced write of the last-seen map."""
+    def _save_last_seen(self, *, force: bool = False) -> None:
+        """Write the last-seen map out, at most once per interval.
+
+        ``force`` is for a change a restart must not undo -- retiring a proxy
+        -- which cannot wait behind the interval.
+        """
+        now = time.monotonic()
+        if not force and now - self._last_save_at < _STORE_SAVE_INTERVAL_S:
+            return
+        self._last_save_at = now
         self._store.async_delay_save(
-            lambda: {"last_seen": dict(self._last_seen_wall)}, _STORE_SAVE_DELAY_S
+            lambda: {"last_seen": dict(self._last_seen_wall)}
         )
 
     def _record_reboot(self, source: str) -> None:
@@ -649,7 +665,7 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         self._names.pop(norm, None)
         self._connectable.pop(norm, None)
         if self._last_seen_wall.pop(norm, None) is not None:
-            self._save_last_seen()
+            self._save_last_seen(force=True)
         # A retired proxy must not keep a counter baseline. A replacement that
         # reuses the MAC would otherwise inherit a stranger's counter and
         # replay the whole difference as a burst of measured failures.

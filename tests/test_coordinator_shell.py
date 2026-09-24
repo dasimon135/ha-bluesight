@@ -34,8 +34,10 @@ from custom_components.bluesight.window import FailureWindow
 class _FakeStore:
     """Stands in for ``homeassistant.helpers.storage.Store``.
 
-    The real one debounces writes to disk; here the last asked-for payload is
-    simply kept, which is what the tests assert on.
+    The real one writes to disk after a delay; here the last asked-for payload
+    is simply kept, and every ask is counted, which is what the tests assert
+    on -- how often the map is written out is the coordinator's business, not
+    the delay's. See ``_save_last_seen``.
     """
 
     def __init__(self, loaded=None) -> None:
@@ -46,7 +48,7 @@ class _FakeStore:
     async def async_load(self):
         return self._loaded
 
-    def async_delay_save(self, payload, delay) -> None:
+    def async_delay_save(self, payload, delay=0) -> None:
         self.saved = payload()
         self.delays.append(delay)
 
@@ -58,6 +60,7 @@ def _bare_coordinator() -> BlueSightCoordinator:
     # retirement Repair's clock, which must survive a restart.
     c._last_seen_wall = {}
     c._store = _FakeStore()
+    c._last_save_at = float("-inf")
     c._window = FailureWindow(window_s=300, threshold=5, clock=lambda: 0.0)
     c._release_tracker = ReleaseTracker()
     c._availability_degraded = False
@@ -1477,6 +1480,37 @@ def test_the_map_is_written_back_when_a_proxy_is_seen(monkeypatch):
     monkeypatch.setattr(coordinator_module.time, "time", lambda: 7_000.0)
     c._snapshot()
     assert c._store.saved == {"last_seen": {PROXY: 7_000.0}}
-    # Debounced: a 24/7 loop must not write to disk on every snapshot.
-    assert c._store.delays == [coordinator_module._STORE_SAVE_DELAY_S]
+
+
+def test_the_map_is_not_asked_to_be_written_on_every_snapshot(monkeypatch):
+    """Home Assistant's ``async_delay_save`` pushes its own timer back on every
+    call. Asked again at each 30 s snapshot with a 300 s delay, the write would
+    never land while the loop runs, only at shutdown -- which is the one moment
+    a hard power cut does not offer. So the *asks* are what is spaced out, and
+    each one is immediate."""
+    c = _telemetry_coordinator(monkeypatch, entries={}, states={})
+    clock = {"t": 1_000.0}
+    monkeypatch.setattr(coordinator_module.time, "monotonic", lambda: clock["t"])
+    c._snapshot()
+    assert len(c._store.delays) == 1
+    assert c._store.delays == [0]          # immediate: the spacing is upstream
+    clock["t"] += coordinator_module._STORE_SAVE_INTERVAL_S - 1
+    c._snapshot()
+    assert len(c._store.delays) == 1       # still inside the window
+    clock["t"] += 2
+    c._snapshot()
+    assert len(c._store.delays) == 2
+
+
+def test_forgetting_a_proxy_is_written_out_at_once(monkeypatch):
+    """Retiring a proxy must not sit in memory behind the spacing window: the
+    user asked for it to be gone, and a restart in the next five minutes would
+    bring it back."""
+    c = _telemetry_coordinator(monkeypatch, entries={}, states={})
+    clock = {"t": 1_000.0}
+    monkeypatch.setattr(coordinator_module.time, "monotonic", lambda: clock["t"])
+    c._snapshot()
+    asked = len(c._store.delays)
+    assert c.forget_proxy(PROXY) is True
+    assert len(c._store.delays) == asked + 1
 
