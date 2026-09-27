@@ -193,6 +193,15 @@ it is working are in **[docs/esphome-component.md](docs/esphome-component.md)**.
 
 BlueSight is a HACS custom repository.
 
+**From HACS (recommended).** This button opens the repository in your own Home
+Assistant. HACS asks whether to add it as a custom repository: accept, then
+download **BlueSight** and restart Home Assistant. Then
+carry on from step 4 below.
+
+[![Open the BlueSight repository inside your Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=dasimon135&repository=ha-bluesight&category=integration)
+
+If the button does not reach your instance, add the repository by hand:
+
 1. In HACS, open the three-dot menu → **Custom repositories**.
 2. Add `https://github.com/dasimon135/ha-bluesight` with category
    **Integration**.
