@@ -43,12 +43,52 @@
   "services": {
     "forget_proxy": {
       "name": "Forget proxy",
-      "description": "Stop tracking a proxy, clearing any open 'proxy offline' incident. Use it after retiring or replacing a proxy — otherwise it stays remembered and keeps alerting as offline.",
+      "description": "Stop tracking a proxy that is gone: clears any open 'proxy offline' incident and deletes the proxy's BlueSight device. Use it after retiring or replacing a proxy — otherwise it stays remembered, across restarts, and keeps alerting as offline. Deleting the device from its page does the same.",
       "fields": {
         "source": {
           "name": "Source",
           "description": "MAC address of the proxy to forget, as shown on its BlueSight device."
         }
+      }
+    }
+  },
+  "issues": {
+    "proxy_retired": {
+      "title": "Proxy {proxy} has been offline for over an hour",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Was {proxy} retired?",
+            "description": "BlueSight has not seen {proxy} ({source}) as a Bluetooth scanner for over an hour.\n\nIf it is only down — unplugged, off the Wi-Fi, mid-update — do nothing here: fix the proxy, and this goes away by itself when it comes back.\n\nIf you retired or replaced it, submit. BlueSight stops tracking it, clears its **proxy offline** incident and deletes its BlueSight device. Should that proxy ever return, it is simply picked up again."
+          }
+        },
+        "abort": {
+          "proxy_online": "{proxy} is back online, so there is nothing to retire."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "slots_used": {
+        "name": "Slots Used"
+      },
+      "slots_free": {
+        "name": "Slots Free"
+      },
+      "last_device_seen": {
+        "name": "Last device seen"
+      },
+      "saturation_24h": {
+        "name": "Saturation (24h)"
+      }
+    },
+    "binary_sensor": {
+      "incident": {
+        "name": "Incident"
+      },
+      "online": {
+        "name": "Online"
       }
     }
   }

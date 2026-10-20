@@ -20,6 +20,7 @@ from custom_components.bluesight import coordinator as coordinator_module
 from custom_components.bluesight.coordinator import BlueSightCoordinator
 from custom_components.bluesight.device_index import DeviceIndex
 from custom_components.bluesight.model import IncidentKind
+from custom_components.bluesight.path import PathTracker
 from custom_components.bluesight.storm_signal import ReleaseTracker
 from custom_components.bluesight.telemetry import CounterDeltas
 from custom_components.bluesight.telemetry_reader import (
@@ -30,19 +31,48 @@ from custom_components.bluesight.telemetry_reader import (
 from custom_components.bluesight.window import FailureWindow
 
 
+class _FakeStore:
+    """Stands in for ``homeassistant.helpers.storage.Store``.
+
+    The real one writes to disk after a delay; here the last asked-for payload
+    is simply kept, and every ask is counted, which is what the tests assert
+    on -- how often the map is written out is the coordinator's business, not
+    the delay's. See ``_save_last_seen``.
+    """
+
+    def __init__(self, loaded=None) -> None:
+        self._loaded = loaded
+        self.saved: dict | None = None
+        self.delays: list[float] = []
+
+    async def async_load(self):
+        return self._loaded
+
+    def async_delay_save(self, payload, delay=0) -> None:
+        self.saved = payload()
+        self.delays.append(delay)
+
+
 def _bare_coordinator() -> BlueSightCoordinator:
     """A coordinator instance without HA wiring (no hass, no habluetooth)."""
     c = object.__new__(BlueSightCoordinator)
+    # When each proxy was last seen online, in wall clock and persisted: the
+    # retirement Repair's clock, which must survive a restart.
+    c._last_seen_wall = {}
+    c._store = _FakeStore()
+    c._last_save_at = float("-inf")
     c._window = FailureWindow(window_s=300, threshold=5, clock=lambda: 0.0)
     c._release_tracker = ReleaseTracker()
     c._availability_degraded = False
     c._stopped = False
+    c._push_handle = None
     # Proxy-health wiring (Task 7).
     c._stalled_threshold_s = 180.0
     c._reboot_window = FailureWindow(window_s=600, threshold=3, clock=lambda: 0.0)
     c._last_online = {}
     c._offline_grace_s = 0.0
     c._names = {}
+    c._connectable = {}
     # Proxy telemetry (v1.5). The deltas object outlives the snapshot, so a
     # bare coordinator needs its own rather than sharing one.
     c._counter_deltas = CounterDeltas()
@@ -54,6 +84,7 @@ def _bare_coordinator() -> BlueSightCoordinator:
     # for the same reason the real coordinator starts empty: a proxy has no
     # pressure history until it has been seen.
     c._saturation = {}
+    c._path_tracker = PathTracker()
     return c
 
 
@@ -69,6 +100,19 @@ class _FakeAdapter:
 
     def stop(self) -> None:
         self.stopped = True
+
+
+def test_every_tunable_is_a_constructor_argument():
+    """`async_setup_entry` builds the coordinator with
+    `**{name: opts[name] for name in OPTION_DEFAULTS}`, and no local test runs
+    that line. A tunable added to the table and not to the constructor -- or
+    renamed on one side -- would be a TypeError at setup on a real install."""
+    import inspect
+
+    from custom_components.bluesight.const import OPTION_DEFAULTS
+
+    parameters = inspect.signature(BlueSightCoordinator.__init__).parameters
+    assert set(OPTION_DEFAULTS) <= set(parameters)
 
 
 def test_name_for_falls_back_to_source():
@@ -117,6 +161,46 @@ def test_snapshot_flags_ghost_slot(monkeypatch):
     data = c._snapshot()
     assert [p.name for p in data.proxies] == ["AA"]   # _name_for fallback
     assert any(i.kind is IncidentKind.GHOST_SLOT for i in data.incidents)
+
+
+def _saturation_after_one_snapshot(monkeypatch, *, slots, free):
+    """The saturation window for proxy "AA" after one snapshot, or None."""
+    c = _bare_coordinator()
+
+    class _FakeAlloc:
+        source, allocated = "AA", []
+
+    _FakeAlloc.slots, _FakeAlloc.free = slots, free
+
+    class _FakeMgr:
+        def async_current_allocations(self, source=None):
+            return [_FakeAlloc()]
+
+        def async_current_scanners(self):
+            return []
+
+    c._manager = _FakeMgr()
+    c.hass = object()
+    c._build_device_index = lambda: DeviceIndex({}, {})
+    monkeypatch.setattr(coordinator_module.er, "async_get", lambda hass: None)
+    c._snapshot()
+    return c.saturation_for("AA")
+
+
+def test_a_full_proxy_is_recorded_as_saturated(monkeypatch):
+    window = _saturation_after_one_snapshot(monkeypatch, slots=3, free=0)
+    assert window is not None
+    assert window.episodes() == 1
+
+
+def test_a_scan_only_proxy_has_no_saturation_reading(monkeypatch):
+    """habluetooth registers a non-connectable scanner with slots=0, free=0.
+
+    "No free slot" is true of it and means nothing: it has no slots to run out
+    of. Recording it made every passive scanner read 100 % saturated, forever.
+    No window at all, so the sensor reads unknown -- zero would be a claim too.
+    """
+    assert _saturation_after_one_snapshot(monkeypatch, slots=0, free=0) is None
 
 
 # --- Registry-backed availability: fakes for dr/er/states ---------------
@@ -227,6 +311,36 @@ def test_build_device_index_scans_identifiers_and_connections(monkeypatch):
     # The non-MAC identifier did not land in the index.
     assert "ACCOUNT-12345" not in index
     assert len(index) == 2
+
+
+class _IterableDeviceRegistry:
+    """The registry as newer Home Assistant exposes it: iterating `devices`
+    yields the entries, and the mapping methods are deprecated (they log a
+    warning today and stop working in 2027.9)."""
+
+    class _Devices:
+        def __init__(self, devices):
+            self._devices = list(devices)
+
+        def __iter__(self):
+            return iter(self._devices)
+
+        def values(self):
+            pytest.fail("the deprecated mapping API was used")
+
+    def __init__(self, devices):
+        self.devices = self._Devices(devices)
+
+
+def test_build_device_index_reads_a_registry_that_iterates_entries(monkeypatch):
+    c = _bare_coordinator()
+    c.hass = object()
+    registry = _IterableDeviceRegistry(
+        [_FakeDevice("dev", identifiers={("daikin_madoka", "1C:54:9E:8E:1D:2C")})]
+    )
+    monkeypatch.setattr(coordinator_module.dr, "async_get", lambda hass: registry)
+    assert c._build_device_index().peripherals == {"1C:54:9E:8E:1D:2C": "dev"}
+    assert c._availability_degraded is False
 
 
 def test_build_device_index_ignores_non_bluetooth_connections(monkeypatch):
@@ -442,6 +556,68 @@ def test_push_snapshot_no_ops_once_stopped():
     c._snapshot = lambda: pytest.fail("snapshot taken after shutdown")
     c.async_set_updated_data = lambda data: pytest.fail("published after shutdown")
     c._push_snapshot()
+
+
+class _TimerLoopHass:
+    """hass fake whose loop runs thread-safe calls at once and *holds* timers,
+    so a burst of pushes and the one snapshot they earn are both observable."""
+
+    class _Handle:
+        def __init__(self, fn):
+            self.fn, self.cancelled = fn, False
+
+        def cancel(self):
+            self.cancelled = True
+
+    class _Loop:
+        def __init__(self):
+            self.timers = []
+
+        def call_soon_threadsafe(self, fn, *args):
+            fn(*args)
+
+        def call_later(self, delay, fn, *args):
+            handle = _TimerLoopHass._Handle(lambda: fn(*args))
+            self.timers.append((delay, handle))
+            return handle
+
+    def __init__(self):
+        self.loop = self._Loop()
+        self.is_stopping = False
+
+
+def _pushed_coordinator():
+    c = _bare_coordinator()
+    c.hass = _TimerLoopHass()
+    c._push_handle = None
+    published = []
+    c._snapshot = lambda: "snapshot"
+    c.async_set_updated_data = published.append
+    return c, published
+
+
+def test_a_burst_of_pushes_earns_one_snapshot():
+    """habluetooth pushes once per allocation change, and a proxy reconnecting
+    its devices changes several in a row. Each snapshot walks the whole device
+    registry, so N pushes were N registry walks for one picture."""
+    c, published = _pushed_coordinator()
+    for _ in range(5):
+        c._handle_push()
+    [(delay, handle)] = c.hass.loop.timers
+    assert 0 < delay <= 1.0            # a diagnostic card, not a control loop
+    assert published == []             # nothing yet: the burst may not be over
+    handle.fn()
+    assert published == ["snapshot"]
+
+
+def test_a_push_after_the_snapshot_earns_another():
+    c, published = _pushed_coordinator()
+    c._handle_push()
+    c.hass.loop.timers[0][1].fn()
+    c._handle_push()
+    assert len(c.hass.loop.timers) == 2
+    c.hass.loop.timers[1][1].fn()
+    assert published == ["snapshot", "snapshot"]
 
 
 def _offline_coordinator(monkeypatch, *, grace_s, elapsed):
@@ -705,6 +881,179 @@ def test_forget_proxy_clears_the_counter_baseline(monkeypatch):
     assert c.storm_window.count(PERIPHERAL) == 2
 
 
+def _proxy_that_drops_off(monkeypatch):
+    """Two snapshots: the proxy is a registered scanner, then it is not."""
+    c = _telemetry_coordinator(
+        monkeypatch,
+        entries={"dev_proxy": [_FakeEntry("sensor.smp", SMP_NAME)]},
+        states={"sensor.smp": _FakeState("")},
+    )
+    c._snapshot()
+    c._manager.async_current_scanners = lambda: []
+    return c, c._snapshot()
+
+
+def test_a_proxy_that_drops_off_is_reported_offline_not_omitted(monkeypatch):
+    """`ProxyHealth.online` had one value, so the Online sensor had two states
+    -- on and unavailable -- and an automation waiting for `off` never ran.
+    The detectors and the sensor already read `online=False`; nothing made one.
+    """
+    _c, data = _proxy_that_drops_off(monkeypatch)
+    [health] = data.proxies_health
+    assert (health.source, health.online) == (PROXY, False)
+    # It keeps the name its entities were created with, not its MAC.
+    assert health.name == "Kitchen proxy"
+    # Going offline does not make a connectable proxy a passive scanner; it
+    # sees nobody, and that is all that changed.
+    assert health.connectable is True
+    assert health.device_count == 0
+
+
+def test_an_offline_proxy_is_not_asked_for_telemetry(monkeypatch):
+    """Nobody can ask it anything, so it must not read as *silent* either: the
+    diagnostics would send the reader after the telemetry chain for a proxy
+    whose real problem is already reported as PROXY_OFFLINE."""
+    _c, data = _proxy_that_drops_off(monkeypatch)
+    assert data.telemetry == []
+    assert [i.kind for i in data.incidents] == [IncidentKind.PROXY_OFFLINE]
+
+
+def test_a_forgotten_proxy_is_not_reported_offline(monkeypatch):
+    c, _data = _proxy_that_drops_off(monkeypatch)
+    assert c.forget_proxy(PROXY) is True
+    assert c._snapshot().proxies_health == []
+
+
+def _clock(monkeypatch, start=1000.0):
+    """Drive the coordinator's monotonic clock by hand."""
+    now = [start]
+    monkeypatch.setattr(coordinator_module.time, "monotonic", lambda: now[0])
+    return now
+
+
+def _empty_fleet(monkeypatch, *, grace_s):
+    """A coordinator that finds no scanner and no allocation at all."""
+    c = _telemetry_coordinator(monkeypatch, entries={}, states={})
+    c._manager.async_current_scanners = lambda: []
+    c._offline_grace_s = grace_s
+    return c
+
+
+def test_a_proxy_known_from_the_registry_is_offline_if_it_never_shows_up(monkeypatch):
+    """The README's "remembered for good" lasted until the next restart, and an
+    options edit is a restart: a dead proxy's incident was one click from gone.
+    """
+    now = _clock(monkeypatch)
+    c = _empty_fleet(monkeypatch, grace_s=90.0)
+    c.remember_proxies([(PROXY, "Kitchen proxy")])
+
+    assert c._snapshot().incidents == []          # inside the grace period
+    now[0] += 91.0
+    data = c._snapshot()
+
+    assert [i.kind for i in data.incidents] == [IncidentKind.PROXY_OFFLINE]
+    assert [(h.name, h.online) for h in data.proxies_health] == [
+        ("Kitchen proxy", False)
+    ]
+
+
+def test_remembering_a_proxy_never_ages_one_already_seen(monkeypatch):
+    now = _clock(monkeypatch)
+    c = _empty_fleet(monkeypatch, grace_s=90.0)
+    c._last_online = {PROXY: now[0] - 500.0}
+    c._names = {PROXY: "Kitchen proxy"}
+    c.remember_proxies([(PROXY, "a stale registry name")])
+    assert c._last_online[PROXY] == now[0] - 500.0
+    assert c._names[PROXY] == "Kitchen proxy"
+
+
+def test_the_grace_period_starts_when_home_assistant_has_started(monkeypatch):
+    """BlueSight can be set up minutes before an ESPHome proxy reconnects.
+    Counting that wait against the proxy would raise an offline alert on
+    every restart of a large install."""
+    now = _clock(monkeypatch)
+    c = _empty_fleet(monkeypatch, grace_s=90.0)
+    c.remember_proxies([(PROXY, "Kitchen proxy")])
+    now[0] += 300.0                                # a slow startup
+    c.restart_offline_clock()
+    assert c._snapshot().incidents == []
+    now[0] += 91.0
+    assert [i.kind for i in c._snapshot().incidents] == [IncidentKind.PROXY_OFFLINE]
+
+
+def test_only_a_proxy_that_is_gone_may_be_retired(monkeypatch):
+    """Deleting the device of a proxy that is still a registered scanner would
+    orphan entities that are reporting, and the next reload would recreate the
+    device anyway. A retired one is forgotten along with its device."""
+    c = _telemetry_coordinator(monkeypatch, entries={}, states={})
+    c.data = c._snapshot()
+    assert c.retire_proxy(PROXY.lower()) is False      # online: refused
+    assert c.tracked_sources == {PROXY}
+
+    c._manager.async_current_scanners = lambda: []
+    c.data = c._snapshot()
+    assert c.retire_proxy(PROXY.lower()) is True
+    assert c.tracked_sources == set()
+
+
+def test_a_proxy_bluesight_never_tracked_may_be_retired(monkeypatch):
+    """A device left over from a proxy long gone: nothing to forget, and no
+    reason to keep the user from deleting it."""
+    c = _empty_fleet(monkeypatch, grace_s=0.0)
+    c.data = c._snapshot()
+    assert c.retire_proxy(PROXY) is True
+
+
+def _released_dead_device(monkeypatch, *, proxy_entries, proxy_states):
+    """Two snapshots: a dead device holds a slot on the proxy, then releases it.
+
+    ``allocated`` is a list the manager fake re-reads on every call, so
+    clearing it between the snapshots is the release.
+    """
+    allocated = [PERIPHERAL]
+    c = _telemetry_coordinator(
+        monkeypatch,
+        entries={
+            "dev_proxy": proxy_entries,
+            "dev_madoka": [_FakeEntry("climate.madoka")],
+        },
+        states={**proxy_states, "climate.madoka": _FakeState("unavailable")},
+        allocated=allocated,
+        extra_devices=[
+            _FakeDevice("dev_madoka", identifiers={("daikin_madoka", PERIPHERAL)})
+        ],
+    )
+    c._snapshot()
+    allocated.clear()
+    c._snapshot()
+    return c
+
+
+def test_a_release_is_still_inferred_on_a_proxy_without_smp_counters(monkeypatch):
+    """The control for the test below: same release, no firmware to measure it."""
+    c = _released_dead_device(
+        monkeypatch,
+        proxy_entries=[_FakeEntry("sensor.uptime", "Uptime")],
+        proxy_states={"sensor.uptime": _FakeState("42")},
+    )
+    assert c.storm_window.count(PERIPHERAL) == 1
+
+
+def test_a_release_is_not_inferred_on_a_proxy_that_counts_smp_failures(monkeypatch):
+    """Evidence is replaced per proxy, as the README and the design both say.
+
+    The firmware's counter did not move, so nothing failed to pair. Inferring a
+    failure from the release anyway is what made a flashed proxy count each
+    real failure twice into one window with one threshold.
+    """
+    c = _released_dead_device(
+        monkeypatch,
+        proxy_entries=[_FakeEntry("sensor.smp", SMP_NAME)],
+        proxy_states={"sensor.smp": _FakeState("d0cf130ec92a:4")},
+    )
+    assert c.storm_window.count(PERIPHERAL) == 0
+
+
 def _idle_slot_data(monkeypatch, *, entity_state=None, allocated=(PERIPHERAL,)):
     """A snapshot where the firmware reports a 600s-idle slot (threshold 300).
 
@@ -895,8 +1244,8 @@ def test_snapshot_names_the_device_holding_each_slot(monkeypatch):
         states={"climate.salon": _FakeState("off")},
     )
     assert c._snapshot().proxies[0].allocated_devices == [
-        {"address": UNKNOWN, "name": "", "device_id": None},
-        {"address": SALON, "name": "Madoka salon", "device_id": "dev_salon"},
+        {"address": UNKNOWN, "name": "", "device_id": None, "path": None},
+        {"address": SALON, "name": "Madoka salon", "device_id": "dev_salon", "path": None},
     ]
 
 
@@ -921,7 +1270,7 @@ def test_a_slot_named_through_a_wifi_mac_is_not_named_at_all(monkeypatch):
         states={},
     )
     named = c._snapshot().proxies[0].allocated_devices
-    assert named[0] == {"address": UNKNOWN, "name": "", "device_id": None}
+    assert named[0] == {"address": UNKNOWN, "name": "", "device_id": None, "path": None}
 
 
 def test_naming_walks_the_device_registry_once_per_snapshot(monkeypatch):
@@ -1024,3 +1373,144 @@ def test_a_broken_registry_costs_the_rename_and_nothing_else(monkeypatch):
     assert c._display_names_for(c._build_device_index()) == {
         "AA:BB:CC:DD:EE:FF": "Kitchen proxy"
     }
+
+
+# --- the route each connection took ----------------------------------------
+
+
+class _HeardDevice:
+    """What `manager.async_scanner_devices_by_address` yields, per scanner."""
+
+    def __init__(self, source, rssi):
+        self.scanner = type("_S", (), {"source": source})()
+        self.advertisement = type("_A", (), {"rssi": rssi})()
+
+
+def test_a_slots_route_is_read_as_it_appears_and_published(monkeypatch):
+    """Through the shell: habluetooth is asked once, when the slot shows up, and
+    the answer rides on the slot's `allocated_devices` entry under the name the
+    user gave the proxy that heard the device better."""
+    near = "D0:CF:13:0E:C9:2A"
+    c = _telemetry_coordinator(
+        monkeypatch, entries={}, states={}, allocated=[PERIPHERAL]
+    )
+    c._names = {near: "Proxy Salon"}
+    asked = []
+
+    def _heard(address, connectable):
+        asked.append(address)
+        return [_HeardDevice(PROXY, -82), _HeardDevice(near, -54)]
+
+    c._manager.async_scanner_devices_by_address = _heard
+
+    [entry] = c._snapshot().proxies[0].allocated_devices
+    assert entry["path"] == {
+        "rssi": -82,
+        "stronger_source": near,
+        "stronger_name": "Proxy Salon",
+        "stronger_rssi": -54,
+        "stronger_was_full": False,
+    }
+
+    # By the next snapshot the device is connected and silent; the route stays.
+    c._manager.async_scanner_devices_by_address = lambda a, connectable: []
+    assert c._snapshot().proxies[0].allocated_devices[0]["path"]["rssi"] == -82
+    assert asked == [PERIPHERAL]
+
+
+# --- the clock the retirement Repair reads ---------------------------------
+
+
+def test_the_last_seen_map_is_read_back_at_setup():
+    c = _bare_coordinator()
+    c._store = _FakeStore({"last_seen": {PROXY.lower(): 1_000.0}})
+    asyncio.run(c._async_load_last_seen())
+    assert c._last_seen_wall == {PROXY: 1_000.0}
+
+
+def test_a_corrupt_store_costs_the_memory_and_nothing_else():
+    """Setup must not fail over a file the Repair alone depends on."""
+    c = _bare_coordinator()
+    c._store = _FakeStore({"last_seen": {PROXY: "yesterday"}})
+    asyncio.run(c._async_load_last_seen())
+    assert c._last_seen_wall == {}
+
+
+def test_how_long_each_proxy_has_been_gone_is_measured_in_wall_clock(monkeypatch):
+    c = _bare_coordinator()
+    c._last_seen_wall = {PROXY: 500.0}
+    monkeypatch.setattr(coordinator_module.time, "time", lambda: 4_100.0)
+    assert c.offline_seconds() == {PROXY: 3_600.0}
+
+
+def test_a_clock_that_jumped_backwards_reads_as_zero(monkeypatch):
+    """Wall time is the only clock that survives a restart, and it can move.
+    A negative age would read as "seen in the future", not as "long gone"."""
+    c = _bare_coordinator()
+    c._last_seen_wall = {PROXY: 9_000.0}
+    monkeypatch.setattr(coordinator_module.time, "time", lambda: 1_000.0)
+    assert c.offline_seconds() == {PROXY: 0.0}
+
+
+def test_a_remembered_proxy_keeps_what_the_store_knew(monkeypatch):
+    """The registry says a proxy exists; the store says since when it has been
+    missing. Stamping it now would restart the Repair's clock at every boot,
+    which is the whole defect this map exists to fix."""
+    c = _bare_coordinator()
+    c._last_seen_wall = {PROXY: 500.0}
+    monkeypatch.setattr(coordinator_module.time, "time", lambda: 9_000.0)
+    monkeypatch.setattr(coordinator_module.time, "monotonic", lambda: 10.0)
+    c.remember_proxies([(PROXY, "Kitchen"), (PERIPHERAL, "Other")])
+    assert c._last_seen_wall[PROXY] == 500.0
+    # One the store had never heard of starts its clock here: late, not wrong.
+    assert c._last_seen_wall[PERIPHERAL] == 9_000.0
+
+
+def test_forgetting_a_proxy_forgets_when_it_was_last_seen():
+    c = _bare_coordinator()
+    c._last_online = {PROXY: 0.0}
+    c._last_seen_wall = {PROXY: 500.0}
+    assert c.forget_proxy(PROXY.lower()) is True
+    assert c._last_seen_wall == {}
+    assert c._store.saved == {"last_seen": {}}
+
+
+def test_the_map_is_written_back_when_a_proxy_is_seen(monkeypatch):
+    c = _telemetry_coordinator(monkeypatch, entries={}, states={})
+    monkeypatch.setattr(coordinator_module.time, "time", lambda: 7_000.0)
+    c._snapshot()
+    assert c._store.saved == {"last_seen": {PROXY: 7_000.0}}
+
+
+def test_the_map_is_not_asked_to_be_written_on_every_snapshot(monkeypatch):
+    """Home Assistant's ``async_delay_save`` pushes its own timer back on every
+    call. Asked again at each 30 s snapshot with a 300 s delay, the write would
+    never land while the loop runs, only at shutdown -- which is the one moment
+    a hard power cut does not offer. So the *asks* are what is spaced out, and
+    each one is immediate."""
+    c = _telemetry_coordinator(monkeypatch, entries={}, states={})
+    clock = {"t": 1_000.0}
+    monkeypatch.setattr(coordinator_module.time, "monotonic", lambda: clock["t"])
+    c._snapshot()
+    assert len(c._store.delays) == 1
+    assert c._store.delays == [0]          # immediate: the spacing is upstream
+    clock["t"] += coordinator_module._STORE_SAVE_INTERVAL_S - 1
+    c._snapshot()
+    assert len(c._store.delays) == 1       # still inside the window
+    clock["t"] += 2
+    c._snapshot()
+    assert len(c._store.delays) == 2
+
+
+def test_forgetting_a_proxy_is_written_out_at_once(monkeypatch):
+    """Retiring a proxy must not sit in memory behind the spacing window: the
+    user asked for it to be gone, and a restart in the next five minutes would
+    bring it back."""
+    c = _telemetry_coordinator(monkeypatch, entries={}, states={})
+    clock = {"t": 1_000.0}
+    monkeypatch.setattr(coordinator_module.time, "monotonic", lambda: clock["t"])
+    c._snapshot()
+    asked = len(c._store.delays)
+    assert c.forget_proxy(PROXY) is True
+    assert len(c._store.delays) == asked + 1
+

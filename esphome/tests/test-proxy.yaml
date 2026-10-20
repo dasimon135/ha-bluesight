@@ -1,0 +1,41 @@
+# Compile-check configuration: BlueSight on a node that carries the BLE
+# *client* stack -- which is what every Bluetooth proxy looks like, and the
+# case essentially every user is in.
+#
+# `esp32_ble_tracker` is what emits USE_ESP32_BLE_CLIENT, so this is the
+# codegen path where `to_code` registers the GATTC handler and creates the
+# "BlueSight slots" text sensor. The scan-only path is the sibling file.
+#
+# This file exists so `esphome config` / `esphome compile` can prove the
+# external component still builds. It is not a deployable configuration:
+# there is no wifi/api/ota block.
+
+esphome:
+  name: bluesight-proxy
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [bluesight]
+
+# A hard dependency of the component, never auto-created: see DEPENDENCIES in
+# components/bluesight/__init__.py and the reason given there.
+esp32_ble:
+
+# The BLE client stack. Present on every proxy (bluetooth_proxy pulls it in
+# through esp32_ble_client); its presence is the whole difference between this
+# configuration and test-scan-only.yaml.
+esp32_ble_tracker:
+
+# Bare, as documented. The three sensor names are set in codegen and refused if
+# overridden, so there is nothing to write here.
+bluesight:

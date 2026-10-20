@@ -1,0 +1,122 @@
+name: ESPHome
+
+# The ESPHome external component under esphome/components/bluesight is C++ and
+# is not covered by validate.yml: hassfest, HACS, ruff and pytest all stop at
+# custom_components/, so nothing there ever compiles the firmware half. A
+# broken build could only be discovered by a user flashing an ESP32 -- and this
+# component's failure mode is a proxy that boots cleanly and goes dark, which
+# is the kind nobody reports quickly. This workflow builds it.
+#
+# Sibling of daikin_madoka's .github/workflows/esphome.yml; keep the two in
+# step when either is changed.
+#
+# Only triggered by changes under esphome/ (and to this file): a full ESP-IDF
+# firmware build is expensive and has nothing to say about a change to
+# custom_components/ or the tests.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "esphome/**"
+      - ".github/workflows/esphome.yml"
+  pull_request:
+    paths:
+      - "esphome/**"
+      - ".github/workflows/esphome.yml"
+  workflow_dispatch:
+    inputs:
+      esphome_version:
+        description: >-
+          ESPHome version to build against. Leave empty to use the pin below.
+          Set it to answer "does the ESPHome release we have not moved to yet
+          still build this component?" -- the answer is this run being green or
+          red, and the pin is not touched either way.
+        required: false
+        default: ""
+
+env:
+  # Pinned so an ESPHome release cannot turn an unrelated PR red. Bump
+  # deliberately, with any resulting component fixes in the same PR. The
+  # dispatch input above overrides it for a single run and changes nothing in
+  # the tree; on push and pull_request that context is empty and the pin wins.
+  ESPHOME_VERSION: ${{ github.event.inputs.esphome_version || '2026.7.2' }}
+  # ESPHome supports >=3.12,<3.15. validate.yml's Python legs run on 3.14
+  # because Home Assistant requires it; nothing in this workflow imports Home
+  # Assistant, so it pins the version daikin_madoka builds its own ESPHome
+  # component with and the two firmware builds stay on one toolchain.
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  config:
+    # Fast leg: YAML schema validation only. Does NOT run to_code(), so it
+    # cannot catch a codegen/C++ mismatch - that is the `compile` job below.
+    name: esphome config (YAML schema)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install ESPHome
+        run: |
+          echo "Building against ESPHome ${ESPHOME_VERSION}"
+          python -m pip install --upgrade pip
+          pip install "esphome==${ESPHOME_VERSION}"
+
+      - name: Validate test configurations
+        run: |
+          for cfg in esphome/tests/*.yaml; do
+            echo "::group::${cfg}"
+            esphome config "${cfg}"
+            echo "::endgroup::"
+          done
+
+  compile:
+    # Slow leg: runs the Python codegen (to_code) and builds the generated C++
+    # for a real ESP32 target. This is what proves esphome/components/bluesight
+    # actually compiles. Both test configurations are built because they take
+    # different codegen paths: with the BLE client stack (GATTC handler and the
+    # slots sensor) and without it.
+    name: esphome compile (ESP32 firmware)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # The ESP-IDF framework and the xtensa toolchain are several hundred MB
+      # and are downloaded on the first build; cache them or every run pays it.
+      - name: Cache PlatformIO toolchains
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: platformio-${{ runner.os }}-esphome-${{ env.ESPHOME_VERSION }}
+          restore-keys: |
+            platformio-${{ runner.os }}-esphome-
+
+      - name: Install ESPHome
+        run: |
+          echo "Building against ESPHome ${ESPHOME_VERSION}"
+          python -m pip install --upgrade pip
+          pip install "esphome==${ESPHOME_VERSION}"
+
+      - name: Compile firmware for both codegen paths
+        run: |
+          for cfg in esphome/tests/*.yaml; do
+            echo "::group::${cfg}"
+            esphome compile "${cfg}"
+            echo "::endgroup::"
+          done

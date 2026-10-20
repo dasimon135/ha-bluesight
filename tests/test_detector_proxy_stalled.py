@@ -11,7 +11,9 @@ def test_online_but_stale_is_stalled():
     assert incs[0].kind is IncidentKind.PROXY_STALLED and incs[0].address == "AA"
     assert incs[0].detail_key == "incident.proxy_stalled.detail"
     # Truncated, not rounded -- same conversion the prose used to do inline.
-    assert incs[0].detail_params == {"seconds": "200"}
+    # The threshold is what `detail` renders; the reading is for the
+    # notification (see test_detail_is_stable).
+    assert incs[0].detail_params == {"seconds": "200", "threshold": "180"}
 
 
 def test_online_and_fresh_is_fine():

@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from .const import DOMAIN
-from .model import Incident, IncidentKind, normalize_address
+from .model import Incident, IncidentKind, ProxyHealth, normalize_address
 from .rendering import Catalogue, plural_count, render
 
 
@@ -100,6 +100,74 @@ def reconcile(
     to_create = [i for i in incidents if i.key not in previous_keys]
     to_dismiss = sorted(previous_keys - current_keys)
     return to_create, to_dismiss
+
+
+def retirement_candidates(
+    proxies_health: list[ProxyHealth],
+    offline_for: dict[str, float],
+    after_s: float,
+) -> list[ProxyHealth]:
+    """Proxies that have stayed offline long enough to ask about.
+
+    ``proxy_offline`` has two causes with opposite remedies -- the proxy is
+    down, or it is gone for good -- and only the user knows which. This picks
+    out the ones worth asking the second question about.
+
+    ``offline_for`` maps a source to how long it has been missing in **wall
+    clock, across restarts**, and is deliberately not the entry's own
+    ``seconds_since_detection``. That one is measured from this run's start and
+    a restart puts it back to nearly zero, so the question "is this proxy gone
+    for good?" could never be reached on an instance that restarts often --
+    which is every instance being worked on. A source the map says nothing
+    about is not a candidate: nothing is known, so nothing is asked.
+
+    Only an *offline* entry qualifies. For an online one the silence is about
+    advertisements, which is ``PROXY_STALLED``'s business and wants a power
+    cycle rather than a retirement.
+    """
+    return [
+        h for h in proxies_health
+        if not h.online and offline_for.get(h.source, 0.0) >= after_s
+    ]
+
+
+def event_payload(
+    action: str,
+    incident: Incident,
+    device_names: dict[str, str],
+    proxy_names: dict[str, str],
+    initial: bool = False,
+) -> dict[str, object]:
+    """What a ``bluesight_incident`` event carries, for one incident.
+
+    The same fields ``binary_sensor.bluesight_incident`` publishes per entry,
+    named the same and filled by the same rules -- ``""`` for a device Home
+    Assistant cannot name, the source address for a proxy it cannot -- so an
+    automation moving from the attribute to the event rewrites its trigger and
+    nothing else. Three more come with it: ``action`` (``opened`` or
+    ``resolved``), ``evidence``, and ``key``, the identity that stays put while
+    an incident's numbers move.
+
+    ``initial`` says the incident was already open when BlueSight started
+    looking, rather than having just happened. Setup publishes its first
+    snapshot before anything is known, so every open incident fires ``opened``
+    -- on every restart and on every options edit, which reloads the entry.
+    Without this an automation notifying on ``opened`` would notify again each
+    time for a fault that never stopped, and nothing from the outside tells the
+    two apart.
+    """
+    return {
+        "action": action,
+        "kind": incident.kind.value,
+        "address": incident.address,
+        "device_name": device_names.get(normalize_address(incident.address), ""),
+        "sources": list(incident.sources),
+        "source_names": [proxy_names.get(s, s) for s in incident.sources],
+        "detail": incident.detail,
+        "evidence": incident.evidence,
+        "key": incident.key,
+        "initial": initial,
+    }
 
 
 def _ghost_proxy(incident: Incident, catalogue: Catalogue) -> str:

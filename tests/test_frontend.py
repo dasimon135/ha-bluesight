@@ -86,12 +86,21 @@ def _reg(hass: _FakeHass) -> JSModuleRegistration:
     return JSModuleRegistration(hass, VERSION)
 
 
+async def _register(hass: _FakeHass) -> None:
+    """Both halves, in the order setup runs them. The integration calls them
+    apart -- the file at setup, the resource once Home Assistant has started --
+    so there is no production method that does both."""
+    registration = _reg(hass)
+    await registration.async_register_path()
+    await registration.async_register_resource()
+
+
 async def test_storage_mode_serves_the_file_and_creates_the_resource() -> None:
     """The whole point: the user adds nothing by hand."""
     lovelace = _FakeLovelace()
     hass = _FakeHass(lovelace)
 
-    await _reg(hass).async_register()
+    await _register(hass)
 
     assert len(hass.http.calls) == 1
     assert lovelace.resources.created == [{"res_type": "module", "url": EXPECTED_URL}]
@@ -106,7 +115,7 @@ async def test_yaml_mode_still_serves_the_file_but_registers_no_resource() -> No
     lovelace = _FakeLovelace(mode="yaml")
     hass = _FakeHass(lovelace)
 
-    await _reg(hass).async_register()
+    await _register(hass)
 
     assert len(hass.http.calls) == 1
     assert lovelace.resources.created == []
@@ -118,7 +127,7 @@ async def test_existing_resource_at_the_same_version_is_left_alone() -> None:
     resources = _FakeResources([{"id": "abc", "type": "module", "url": EXPECTED_URL}])
     hass = _FakeHass(_FakeLovelace(resources=resources))
 
-    await _reg(hass).async_register()
+    await _register(hass)
 
     assert resources.created == []
     assert resources.updated == []
@@ -131,7 +140,7 @@ async def test_existing_resource_at_an_older_version_is_updated_in_place() -> No
     )
     hass = _FakeHass(_FakeLovelace(resources=resources))
 
-    await _reg(hass).async_register()
+    await _register(hass)
 
     assert resources.created == []
     assert resources.updated == [("abc", {"res_type": "module", "url": EXPECTED_URL})]
@@ -143,7 +152,7 @@ async def test_unrelated_resources_are_not_touched() -> None:
     resources = _FakeResources([other])
     hass = _FakeHass(_FakeLovelace(resources=resources))
 
-    await _reg(hass).async_register()
+    await _register(hass)
 
     assert resources.updated == []
     assert resources.created == [{"res_type": "module", "url": EXPECTED_URL}]
@@ -161,7 +170,7 @@ async def test_a_hand_added_local_copy_is_adopted_rather_than_duplicated() -> No
     )
     hass = _FakeHass(_FakeLovelace(resources=resources))
 
-    await _reg(hass).async_register()
+    await _register(hass)
 
     assert resources.created == []
     assert resources.updated == [("old", {"res_type": "module", "url": EXPECTED_URL})]
@@ -176,7 +185,7 @@ async def test_unloaded_resource_collection_is_loaded_first() -> None:
     resources = _FakeResources(loaded=False)
     hass = _FakeHass(_FakeLovelace(resources=resources))
 
-    await _reg(hass).async_register()
+    await _register(hass)
 
     assert resources.load_calls == 1
     assert resources.created == [{"res_type": "module", "url": EXPECTED_URL}]
@@ -186,14 +195,14 @@ async def test_already_registered_static_path_is_not_fatal() -> None:
     """HA raises RuntimeError when a path is registered twice (reload)."""
     hass = _FakeHass(_FakeLovelace(), http=_FakeHttp(raises=RuntimeError("dup")))
 
-    await _reg(hass).async_register()  # must not raise
+    await _register(hass)  # must not raise
 
 
 async def test_missing_lovelace_still_serves_the_file() -> None:
     """A Lovelace-less setup must degrade, not break integration setup."""
     hass = _FakeHass()
 
-    await _reg(hass).async_register()
+    await _register(hass)
 
     assert len(hass.http.calls) == 1
 
@@ -202,7 +211,7 @@ async def test_resource_write_failure_is_swallowed() -> None:
     """A card that fails to register must never take the integration down."""
     hass = _FakeHass(_FakeLovelace(resources=_ExplodingResources()))
 
-    await _reg(hass).async_register()  # must not raise
+    await _register(hass)  # must not raise
 
 
 async def test_the_file_is_served_before_lovelace_exists() -> None:
@@ -245,7 +254,7 @@ async def test_static_path_uses_the_real_home_assistant_config() -> None:
     from homeassistant.components.http import StaticPathConfig
 
     hass = _FakeHass(_FakeLovelace())
-    await _reg(hass).async_register()
+    await _register(hass)
 
     (configs,) = hass.http.calls
     (config,) = configs
@@ -253,3 +262,16 @@ async def test_static_path_uses_the_real_home_assistant_config() -> None:
     assert config.url_path == "/bluesight"
     assert config.path.name == "www"
     assert not list(config.path.glob("*.py"))
+
+
+async def test_the_resource_mode_decides_not_the_dashboard_mode() -> None:
+    """Where both exist, `mode` is how the *dashboards* are stored and
+    `resource_mode` how the *resources* are. YAML dashboards over a storage
+    resource list is a supported setup, and asking the wrong one left its card
+    unregistered with nothing to show for it."""
+    lovelace = _FakeLovelace(mode="yaml")
+    lovelace.resource_mode = "storage"
+    hass = _FakeHass(lovelace)
+    await _reg(hass).async_register_resource()
+    assert lovelace.resources.created == [{"res_type": "module", "url": EXPECTED_URL}]
+

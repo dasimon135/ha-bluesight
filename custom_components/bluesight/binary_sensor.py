@@ -49,6 +49,12 @@ async def async_setup_entry(
                 continue
             known_sources.add(source)
             new_entities.append(ProxyOnlineBinarySensor(coordinator, source))
+        # Forget what the snapshots no longer mention. A proxy that is merely
+        # offline stays in the health snapshot, so this only drops a *retired*
+        # one -- whose device, and with it every entity below, Home Assistant
+        # has just deleted. Without this the source stayed remembered forever
+        # and a proxy that came back got no entities until the next reload.
+        known_sources.intersection_update(sources)
         if new_entities:
             async_add_entities(new_entities)
 
@@ -62,7 +68,7 @@ class IncidentBinarySensor(
     """On whenever the coordinator is tracking one or more incidents."""
 
     _attr_has_entity_name = True
-    _attr_name = "Incident"
+    _attr_translation_key = "incident"
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
     _attr_icon = "mdi:bluetooth-alert"
 
@@ -123,7 +129,7 @@ class ProxyOnlineBinarySensor(
     """On while a proxy is a current BLE scanner (per its health snapshot)."""
 
     _attr_has_entity_name = True
-    _attr_name = "Online"
+    _attr_translation_key = "online"
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
 
     def __init__(self, coordinator: BlueSightCoordinator, source: str) -> None:

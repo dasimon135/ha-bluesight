@@ -42,20 +42,32 @@ class ReleaseTracker:
     """
 
     def __init__(self) -> None:
-        # Addresses allocated at the previous snapshot.
+        # Addresses allocated at the previous snapshot, minus the measured ones.
         self._previous: set[str] = set()
         # Released addresses that still looked alive when released; each gets
         # exactly one re-check on the next snapshot, then is dropped either way.
         self._pending: set[str] = set()
 
     def update(
-        self, allocated: Iterable[str], is_alive: Callable[[str], bool]
+        self,
+        allocated: Iterable[str],
+        is_alive: Callable[[str], bool],
+        measured: Iterable[str] = (),
     ) -> list[str]:
         """Advance one snapshot; return the addresses that counted as failures.
 
         ``is_alive`` is called at most once per address per snapshot and only
         for addresses under judgement, so the caller can keep it lazy.
+
+        ``measured`` are the allocated addresses held by a proxy that counts
+        its own SMP failures. Their releases are never inferred: the firmware
+        reports that failure itself, into the same window, so inferring it too
+        would count one failure twice. They are left out of ``_previous``
+        rather than flagged in it, because a released address is in nobody's
+        allocation list any more -- what decides is where the slot was *held*,
+        which is the snapshot before.
         """
+        skipped = {normalize_address(a) for a in measured}
         current = {normalize_address(a) for a in allocated}
         failures: list[str] = []
 
@@ -75,5 +87,5 @@ class ReleaseTracker:
                 # Undecided: entity states may not have settled yet.
                 self._pending.add(address)
 
-        self._previous = current
+        self._previous = current - skipped
         return failures

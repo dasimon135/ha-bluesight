@@ -142,6 +142,18 @@ def test_dump_carries_the_esphome_telemetry():
     assert dump["telemetry"]["silent_sources"] == ["AA:BB:CC:DD:EE:FF"]
 
 
+def test_an_offline_proxy_is_not_listed_as_silent():
+    """Nobody asked it for telemetry, so its absence says nothing about the
+    telemetry chain -- and its real problem is already a PROXY_OFFLINE."""
+    data = BlueSightData(
+        proxies_health=[
+            ProxyHealth("AA:BB:CC:DD:EE:FF", "salon", True, True, 2.0, 7),
+            ProxyHealth("D0:CF:13:0E:C9:2A", "garage", False, False, 400.0, 0),
+        ],
+    )
+    assert _dump(data)["telemetry"]["silent_sources"] == ["AA:BB:CC:DD:EE:FF"]
+
+
 def test_dump_carries_the_counter_baselines():
     """A baseline captured too high swallows real failures with nothing to
     show for it on any entity, so the dump is the only place it can be seen."""

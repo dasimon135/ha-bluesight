@@ -63,11 +63,6 @@ class JSModuleRegistration:
         """
         return f"{URL_BASE}/{CARD_FILENAME}?v={self.version}"
 
-    async def async_register(self) -> None:
-        """Serve the card and, in storage mode, register its resource."""
-        await self.async_register_path()
-        await self.async_register_resource()
-
     async def async_register_resource(self) -> None:
         """Register the Lovelace resource, if we may.
 
@@ -81,9 +76,11 @@ class JSModuleRegistration:
             _LOGGER.debug("Lovelace not loaded; card served but not registered")
             return
 
-        # `mode` on older cores, `resource_mode` on newer ones. Default to
-        # "yaml" when neither is readable: not writing is the safe failure.
-        mode = getattr(lovelace, "mode", getattr(lovelace, "resource_mode", "yaml"))
+        # `resource_mode` first: where both exist, `mode` is how the dashboards
+        # are stored, which is a different question. `mode` alone is an older
+        # core. Default to "yaml" when neither is readable: not writing is the
+        # safe failure.
+        mode = getattr(lovelace, "resource_mode", getattr(lovelace, "mode", "yaml"))
         if mode != "storage":
             _LOGGER.debug("Lovelace in %s mode; resource left to the user", mode)
             return

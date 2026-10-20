@@ -52,6 +52,12 @@ async def async_setup_entry(
             new_entities.append(SlotsFreeSensor(coordinator, source))
             new_entities.append(LastDeviceSeenSensor(coordinator, source))
             new_entities.append(SaturationSensor(coordinator, source))
+        # Forget what the snapshots no longer mention. A proxy that is merely
+        # offline stays in the health snapshot, so this only drops a *retired*
+        # one -- whose device, and with it every entity below, Home Assistant
+        # has just deleted. Without this the source stayed remembered forever
+        # and a proxy that came back got no entities until the next reload.
+        known_sources.intersection_update(sources)
         if new_entities:
             async_add_entities(new_entities)
 
@@ -70,9 +76,19 @@ class _BaseSlotSensor(CoordinatorEntity[BlueSightCoordinator], SensorEntity):
         super().__init__(coordinator)
         self._source = source
         proxy = self._proxy
+        # A proxy that is offline right now is in the health snapshot only.
+        # Its name there is the one the health sensors use, and every entity
+        # on a device has to hand the registry the same one.
+        name = proxy.name if proxy is not None else next(
+            (
+                h.name
+                for h in coordinator.data.proxies_health
+                if h.source == source
+            ),
+            source,
+        )
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, source)},
-            name=proxy.name if proxy is not None else source,
+            identifiers={(DOMAIN, source)}, name=name
         )
 
     @property
@@ -92,7 +108,7 @@ class _BaseSlotSensor(CoordinatorEntity[BlueSightCoordinator], SensorEntity):
 class SlotsUsedSensor(_BaseSlotSensor):
     """Number of GATT slots currently allocated on a proxy."""
 
-    _attr_name = "Slots Used"
+    _attr_translation_key = "slots_used"
     _attr_icon = "mdi:bluetooth-connect"
 
     def __init__(self, coordinator: BlueSightCoordinator, source: str) -> None:
@@ -129,7 +145,7 @@ class SlotsUsedSensor(_BaseSlotSensor):
 class SlotsFreeSensor(_BaseSlotSensor):
     """Number of GATT slots still free on a proxy."""
 
-    _attr_name = "Slots Free"
+    _attr_translation_key = "slots_free"
     _attr_icon = "mdi:bluetooth"
 
     def __init__(self, coordinator: BlueSightCoordinator, source: str) -> None:
@@ -150,7 +166,7 @@ class LastDeviceSeenSensor(CoordinatorEntity[BlueSightCoordinator], SensorEntity
     """
 
     _attr_has_entity_name = True
-    _attr_name = "Last device seen"
+    _attr_translation_key = "last_device_seen"
     _attr_icon = "mdi:bluetooth-audio"
     _attr_device_class = SensorDeviceClass.DURATION
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -213,7 +229,7 @@ class SaturationSensor(CoordinatorEntity[BlueSightCoordinator], SensorEntity):
     """
 
     _attr_has_entity_name = True
-    _attr_name = "Saturation (24h)"
+    _attr_translation_key = "saturation_24h"
     _attr_icon = "mdi:gauge"
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = PERCENTAGE

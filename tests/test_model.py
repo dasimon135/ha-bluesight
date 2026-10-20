@@ -216,8 +216,8 @@ def test_devices_defaults_empty_and_yields_a_bare_entry_per_slot():
     p = ProxySlots("AA:BB", "Salon", 3, 1, ["11:22", "33:44"])
     assert p.devices == {}
     assert p.allocated_devices == [
-        {"address": "11:22", "name": "", "device_id": None},
-        {"address": "33:44", "name": "", "device_id": None},
+        {"address": "11:22", "name": "", "device_id": None, "path": None},
+        {"address": "33:44", "name": "", "device_id": None, "path": None},
     ]
 
 
@@ -242,6 +242,7 @@ def test_allocated_devices_resolves_through_the_normalized_address():
             "address": "c3:eb:49:65:67:aa",
             "name": "Madoka salon",
             "device_id": "dev_1",
+            "path": None,
         }
     ]
 
@@ -255,7 +256,7 @@ def test_an_address_the_registry_does_not_know_keeps_its_raw_mac():
         {"11:22:33:44:55:66": DeviceRef("Elsewhere", "dev_9")},
     )
     assert p.allocated_devices == [
-        {"address": "C3:EB:49:65:67:55", "name": "", "device_id": None}
+        {"address": "C3:EB:49:65:67:55", "name": "", "device_id": None, "path": None}
     ]
 
 

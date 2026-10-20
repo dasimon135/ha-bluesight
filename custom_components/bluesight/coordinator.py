@@ -8,15 +8,20 @@ Assistant. Keep it deliberately minimal.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
+from collections.abc import Iterable
 from dataclasses import replace
 from datetime import timedelta
+from math import inf
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from . import adapter
@@ -25,6 +30,7 @@ from .adapter import (
     SlotAdapter,
     current_proxy_health,
     current_proxy_slots,
+    current_signal_by_proxy,
 )
 from .availability import is_device_alive
 from .const import (
@@ -44,7 +50,8 @@ from .device_index import (
     build_proxy_index,
     resolve_proxy_names,
 )
-from .model import DeviceRef, normalize_address
+from .model import DeviceRef, ProxyHealth, ProxySlots, normalize_address
+from .path import PathTracker, path_attributes
 from .rendering import Catalogue
 from .saturation import SaturationWindow
 from .storm_signal import ReleaseTracker
@@ -72,6 +79,42 @@ _AVAILABILITY_ERRORS = (RuntimeError, KeyError, AttributeError, TypeError)
 _BLUETOOTH_DOMAIN = "bluetooth"
 _CONF_SOURCE = "source"
 _CONF_SOURCE_DEVICE_ID = "source_device_id"
+
+# How long a push waits for the rest of its burst. habluetooth pushes once per
+# allocation change, a proxy reconnecting its devices changes several in a row,
+# and every snapshot walks the whole device registry. A quarter of a second is
+# invisible on a diagnostic card and turns that burst into one walk.
+_PUSH_SETTLE_S = 0.25
+
+# Where the wall-clock "last seen online" map is kept, and how rarely it is
+# written. The map only decides whether the retirement Repair may be asked, so
+# a few lost minutes after a hard power cut cost nothing, and a 24/7 loop must
+# not write to disk on every snapshot.
+#
+# This spaces out the *asks* rather than leaning on `async_delay_save`'s own
+# delay, because that delay is not a debounce: every call pushes the pending
+# timer back. Asked again at each snapshot it would never fire while the loop
+# runs, and the map would reach the disk only through the final-write listener
+# at shutdown -- the one moment a hard power cut does not offer.
+_STORE_KEY = f"{DOMAIN}.proxies"
+_STORE_VERSION = 1
+_STORE_SAVE_INTERVAL_S = 300
+
+
+def _registry_devices(registry: dr.DeviceRegistry) -> list[dr.DeviceEntry]:
+    """Every device entry, on either side of Home Assistant's registry change.
+
+    Newer cores iterate ``registry.devices`` as the entries themselves and
+    deprecate its mapping methods (a logged warning now, removal in 2027.9).
+    Older ones -- still within what this integration supports -- expose a
+    mapping, which iterates as *ids*. Iterating is the one form both accept;
+    the lookup below only ever runs on a core where it is not deprecated.
+    """
+    devices = registry.devices
+    items = list(devices)
+    if items and isinstance(items[0], str):
+        return [devices[device_id] for device_id in items]
+    return items
 
 
 class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
@@ -129,9 +172,23 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         # the grace period (an OTA update drops a proxy for ~20-30s).
         self._last_online: dict[str, float] = {}
         self._offline_grace_s = offline_grace_s
+        # The same fact on the other clock: when each proxy was last seen
+        # online, in wall time, persisted. `_last_online` is monotonic and
+        # restarts with the process, which is right for the offline incident
+        # (a proxy is given a fresh grace period to reconnect at startup) and
+        # wrong for the retirement Repair, whose whole question is whether a
+        # proxy has been gone for a long time.
+        self._last_seen_wall: dict[str, float] = {}
+        self._last_save_at = -inf
+        self._store: Store[dict[str, dict[str, float]]] = Store(
+            hass, _STORE_VERSION, _STORE_KEY
+        )
         # Last friendly name observed per source, so a proxy that drops out of
         # the health snapshot keeps its name instead of reverting to its MAC.
         self._names: dict[str, str] = {}
+        # Whether each source was a connectable scanner when last seen, so a
+        # proxy reported offline is not also reported as a passive scanner.
+        self._connectable: dict[str, bool] = {}
         self._scanner_adapter = ScannerAdapter(
             self._manager,
             on_change=self._handle_push,
@@ -153,6 +210,11 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         # rather than argued from this one. Lives as long as the coordinator
         # and is pruned only by ``forget_proxy``.
         self._saturation: dict[str, SaturationWindow] = {}
+        # The route each held slot took, read once as the slot appeared. Lives
+        # as long as the coordinator: the reading is unrepeatable, because a
+        # connected device stops advertising and every scanner forgets it
+        # minutes later.
+        self._path_tracker = PathTracker()
         # How long a slot may sit without GATT traffic before the firmware's
         # reading is treated as a stuck slot. Bounded by the options schema;
         # ``detect_idle_slots`` deliberately carries no internal guard.
@@ -164,6 +226,8 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         # Set at shutdown so a push already queued on the loop cannot snapshot
         # a torn-down coordinator.
         self._stopped = False
+        # The armed snapshot of the current push burst, if any.
+        self._push_handle: asyncio.TimerHandle | None = None
 
     @property
     def storm_window(self) -> FailureWindow:
@@ -207,10 +271,60 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         (ConfigEntryNotReady), the habluetooth callback was never registered,
         so there is no subscription to leak and no push can interleave with
         setup. HA retries setup from a clean slate.
+
+        The stored last-seen map is read first, so the very first snapshot
+        already knows which proxies have been gone for a long time.
         """
+        await self._async_load_last_seen()
         await self.async_config_entry_first_refresh()
         self._adapter.start()
         self._scanner_adapter.start()
+
+    async def _async_load_last_seen(self) -> None:
+        """Read the persisted last-seen map, tolerating anything on disk.
+
+        A corrupt or hand-edited file costs the retirement Repair its memory
+        and nothing else, so it is read defensively rather than allowed to
+        fail setup.
+        """
+        try:
+            stored = await self._store.async_load() or {}
+            last_seen = stored.get("last_seen", {})
+            self._last_seen_wall = {
+                normalize_address(source): float(seen)
+                for source, seen in last_seen.items()
+            }
+        except (ValueError, TypeError, AttributeError, HomeAssistantError):
+            _LOGGER.debug(
+                "Could not read %s; starting fresh", _STORE_KEY, exc_info=True
+            )
+            self._last_seen_wall = {}
+
+    def offline_seconds(self) -> dict[str, float]:
+        """How long each known proxy has been missing, in wall clock.
+
+        Across restarts, unlike the ``offline_for`` the offline *incident* is
+        judged on. See :func:`.incident_policy.retirement_candidates`.
+        """
+        now = time.time()
+        return {
+            source: max(0.0, now - seen)
+            for source, seen in self._last_seen_wall.items()
+        }
+
+    def _save_last_seen(self, *, force: bool = False) -> None:
+        """Write the last-seen map out, at most once per interval.
+
+        ``force`` is for a change a restart must not undo -- retiring a proxy
+        -- which cannot wait behind the interval.
+        """
+        now = time.monotonic()
+        if not force and now - self._last_save_at < _STORE_SAVE_INTERVAL_S:
+            return
+        self._last_save_at = now
+        self._store.async_delay_save(
+            lambda: {"last_seen": dict(self._last_seen_wall)}
+        )
 
     def _record_reboot(self, source: str) -> None:
         """Record a proxy REMOVED event as a reboot signal. Scheduled on the
@@ -240,12 +354,23 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         an executor thread, so hop back onto the loop before touching
         coordinator state via ``async_set_updated_data``.
         """
-        # M3 (deferred): each push produces its own snapshot; coalescing rapid
-        # bursts into a single snapshot is an efficiency-only concern, out of
-        # scope for v1.
         if self._stopped:
             return
-        self.hass.loop.call_soon_threadsafe(self._push_snapshot)
+        self.hass.loop.call_soon_threadsafe(self._schedule_push_snapshot)
+
+    @callback
+    def _schedule_push_snapshot(self) -> None:
+        """Arm one snapshot for the burst this push belongs to.
+
+        On the loop, so the handle needs no lock. A push arriving while a
+        snapshot is already armed is absorbed by it: the snapshot reads the
+        manager when it runs, so it sees that push's change too.
+        """
+        if self._stopped or self._push_handle is not None:
+            return
+        self._push_handle = self.hass.loop.call_later(
+            _PUSH_SETTLE_S, self._push_snapshot
+        )
 
     @callback
     def _push_snapshot(self) -> None:
@@ -254,6 +379,7 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         The stopped check is repeated here because ``async_shutdown`` may run
         between the ``call_soon_threadsafe`` scheduling and this callback.
         """
+        self._push_handle = None
         if self._stopped:
             return
         self.async_set_updated_data(self._snapshot())
@@ -277,7 +403,26 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
                 self._names[h.source] = h.name
             if h.online:
                 self._last_online[h.source] = now
+                self._last_seen_wall[h.source] = time.time()
+                self._connectable[h.source] = h.connectable
+        if health:
+            self._save_last_seen()
         offline_for = {src: now - seen for src, seen in self._last_online.items()}
+        # A proxy seen before and gone now is *reported* offline, not omitted.
+        # `health` itself stays the registered scanners: it is also the list of
+        # proxies worth asking for telemetry, and these cannot answer.
+        registered = {h.source for h in health}
+        dropped_off = [
+            ProxyHealth(
+                source=src,
+                name=self._names.get(src, src),
+                connectable=self._connectable.get(src, False),
+                online=False,
+                seconds_since_detection=offline_for[src],
+                device_count=0,
+            )
+            for src in sorted(self._last_online.keys() - registered)
+        ]
 
         # Resolve availability from the device's HA entities rather than its
         # advertising presence: a connected device (holding a slot) stops
@@ -319,13 +464,25 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         # the rename would restore the rename. See `_display_names_for`.
         proxies = current_proxy_slots(self._manager, self._name_for, device_for)
         for proxy in proxies:
-            self._saturation.setdefault(
-                proxy.source,
-                SaturationWindow(SATURATION_WINDOW_S, time.monotonic),
-            ).record(proxy.free == 0)
+            # habluetooth registers a passive scanner with slots=0, free=0:
+            # "no free slot" is true of it and means nothing, so it gets no
+            # window at all and its sensor reads unknown rather than 100 %.
+            if not proxy.is_connectable:
+                continue
+            window = self._saturation.get(proxy.source)
+            if window is None:
+                window = self._saturation[proxy.source] = SaturationWindow(
+                    SATURATION_WINDOW_S, time.monotonic
+                )
+            window.record(proxy.is_full)
         # What to *say* about each proxy, resolved once for every detector
         # that names one.
         display_names = self._display_names_for(index)
+        # Which proxy each connection went through, and which one heard the
+        # device best -- read as the slot appears, because a connected device
+        # stops advertising and the reading is gone minutes later. After
+        # `display_names`, which is what names the stronger proxy.
+        proxies = self._with_paths(proxies, display_names)
         # Memoized per snapshot: the release tracker asks about addresses that
         # are no longer allocated, so the answer set is wider than `proxies`.
         verdicts: dict[str, bool] = {}
@@ -341,8 +498,6 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         # normalize to internally.
         allocated = [a for p in proxies for a in p.allocated]
         availability = {normalize_address(a): alive(a) for a in allocated}
-        for address in self._release_tracker.update(allocated, alive):
-            self._window.record(address)
 
         # Proxy telemetry, read off each proxy's own Home Assistant device.
         # Sources come from the health snapshot first (every registered
@@ -364,11 +519,26 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
             ),
         )
 
+        # Inferred failures, from every proxy that cannot measure its own.
+        # After the telemetry read and not before it, because the evidence is
+        # replaced *per proxy*: a proxy reporting SMP counters feeds the storm
+        # window from those (in `build_triage_data`), and inferring the same
+        # failure from the slot it released would count it twice into one
+        # window with one threshold. `smp_failures` specifically -- a proxy
+        # publishing only bonds or slots measures no failures, so the
+        # heuristic is still all there is for it.
+        measuring = {t.source for t in telemetry if t.smp_failures is not None}
+        measured = [
+            a for p in proxies if p.source in measuring for a in p.allocated
+        ]
+        for address in self._release_tracker.update(allocated, alive, measured):
+            self._window.record(address)
+
         return build_triage_data(
             proxies,
             availability,
             self._window,
-            proxies_health=health,
+            proxies_health=health + dropped_off,
             known_sources=set(self._last_online),
             reboot_window=self._reboot_window,
             stalled_threshold_s=self._stalled_threshold_s,
@@ -409,6 +579,81 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
             },
         )
 
+    def remember_proxies(self, records: Iterable[tuple[str, str]]) -> None:
+        """Start tracking proxies known from a previous run.
+
+        ``records`` are ``(source, name)`` pairs read back from the device
+        registry (:func:`.device_index.own_proxy_records`). Without this, "seen
+        online once, remembered for good" held only until the next restart --
+        and an options edit reloads the entry, so a dead proxy's incident was
+        one click from disappearing.
+
+        A remembered proxy is stamped *now*, so it gets the full grace period
+        to show up, and one already seen in this run is left alone: what was
+        observed beats what was stored.
+        """
+        now = time.monotonic()
+        wall = time.time()
+        for source, name in records:
+            norm = normalize_address(source)
+            self._last_online.setdefault(norm, now)
+            # Only where the store knows nothing: an upgrade, or a proxy whose
+            # device predates this map. Its retirement clock then starts here,
+            # which is late rather than wrong.
+            self._last_seen_wall.setdefault(norm, wall)
+            if name:
+                self._names.setdefault(norm, name)
+
+    def restart_offline_clock(self) -> None:
+        """Give every tracked proxy a fresh grace period, from now.
+
+        Called once Home Assistant has finished starting. This integration can
+        be set up minutes before an ESPHome proxy reconnects, and counting that
+        wait against the proxy would raise an offline alert on every restart.
+        A proxy that is online is restamped by every snapshot anyway, so this
+        only ever moves the ones still missing.
+        """
+        now = time.monotonic()
+        for source in self._last_online:
+            self._last_online[source] = now
+
+    def retire_proxy(self, source: str) -> bool:
+        """Forget ``source`` if it is gone; say whether its device may go too.
+
+        False for a proxy that is still a registered scanner: deleting its
+        device would orphan entities that are reporting, and the next reload
+        would recreate it anyway. True otherwise -- including for a source
+        never tracked in this run, which is what a device left over from a
+        long-retired proxy looks like.
+        """
+        norm = normalize_address(source)
+        if any(h.online and h.source == norm for h in self.data.proxies_health):
+            return False
+        self.forget_proxy(norm)
+        return True
+
+    def _with_paths(
+        self, proxies: list[ProxySlots], proxy_names: dict[str, str]
+    ) -> list[ProxySlots]:
+        """The same proxies, each carrying the route of the slots it holds.
+
+        Attached here rather than filled in by ``current_proxy_slots``: the
+        route is read from habluetooth's *advertisement* view, which is a
+        different question from the allocation snapshot, and it needs the
+        resolved proxy names that only exist at this point.
+        """
+        paths = self._path_tracker.update(
+            proxies, lambda address: current_signal_by_proxy(self._manager, address)
+        )
+        if not paths:
+            return proxies
+        by_source: dict[str, dict[str, dict[str, object]]] = {}
+        for (source, address), path in paths.items():
+            by_source.setdefault(source, {})[address] = path_attributes(
+                path, proxy_names
+            )
+        return [replace(p, paths=by_source.get(p.source, {})) for p in proxies]
+
     def forget_proxy(self, source: str) -> bool:
         """Stop tracking a source, clearing any open ``proxy_offline`` incident.
 
@@ -418,6 +663,9 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         """
         norm = normalize_address(source)
         self._names.pop(norm, None)
+        self._connectable.pop(norm, None)
+        if self._last_seen_wall.pop(norm, None) is not None:
+            self._save_last_seen(force=True)
         # A retired proxy must not keep a counter baseline. A replacement that
         # reuses the MAC would otherwise inherit a stranger's counter and
         # replay the whole difference as a burst of measured failures.
@@ -492,7 +740,7 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         """
         try:
             return build_device_index(
-                dr.async_get(self.hass).devices.values(),
+                _registry_devices(dr.async_get(self.hass)),
                 bluetooth_connection=dr.CONNECTION_BLUETOOTH,
                 network_connection=dr.CONNECTION_NETWORK_MAC,
                 # Also read back what the user renamed *our own* per-proxy
@@ -580,6 +828,9 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         loop no-ops instead of snapshotting a torn-down coordinator.
         """
         self._stopped = True
+        if self._push_handle is not None:
+            self._push_handle.cancel()
+            self._push_handle = None
         self._scanner_adapter.stop()
         self._adapter.stop()
         await super().async_shutdown()

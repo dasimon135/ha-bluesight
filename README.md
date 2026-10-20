@@ -83,6 +83,36 @@ It surfaces the state as:
 Everything is **read-only**. BlueSight never frees a slot, forces an unbond, or
 reflashes anything. It observes and reports.
 
+### Which proxy, and why
+
+Home Assistant picks the route to a device itself: by signal, minus penalties
+for a proxy that is busy connecting, that has failed before, or that is down to
+its last slot — and a proxy with **no** free slot is out of the running whatever
+it hears. So a device can end up connected through the far side of the house,
+and until now nothing said so.
+
+Each entry of `allocated_devices` carries a `path`: what the proxy holding the
+slot heard the device at, and — only when another proxy heard it *clearly*
+better — which one, at what signal, and whether that proxy was full at the time.
+The card draws it under the device's name:
+
+```
+Madoka salon
+-82 dBm · Proxy Salon heard it at -54, but was full
+```
+
+That last clause is the point: it turns an odd-looking route into an explained
+one. **The reading is taken as the slot appears, or not at all** — a connected
+device stops advertising, and every scanner forgets it minutes later, so there
+is nothing to read afterwards. A slot already held when Home Assistant started
+therefore has no `path`, and never will until it reconnects.
+
+"Clearly better" is habluetooth's own margin (16 dB), not a threshold of ours:
+signal wanders by several dB between two advertisements, and below that the
+Bluetooth stack does not act on the difference either. **Nothing is judged from
+this** — no incident is raised, for the reason [saturation](#saturation-is-measured-not-judged)
+raises none: what counts as a bad route is not knowable from one fleet.
+
 ## Proxy health
 
 The v1 detectors watch what flows *through* the proxies. v1.2 adds a layer that
@@ -99,7 +129,9 @@ and raises three more incidents:
 It surfaces per-proxy health as two extra entities on each proxy device:
 
 - `binary_sensor.<proxy>_online` (device class `connectivity`) — `on` while the
-  proxy is a registered scanner.
+  proxy is a registered scanner, `off` the moment it is not. There is no grace
+  period here: the sensor reports the fact, the **proxy offline** incident
+  applies the patience — so an OTA update is a brief `off` and no alert.
 - `sensor.<proxy>_last_device_seen` — seconds since the last advertisement that
   proxy heard, the signal behind the stalled detector.
 
@@ -160,9 +192,12 @@ it is working are in **[docs/esphome-component.md](docs/esphome-component.md)**.
 ## Installation
 
 BlueSight is in the default HACS store, so there is no custom repository to
-add.
+add. This button opens it in HACS on your own Home Assistant:
 
-1. Open HACS, search for **BlueSight**, and download it.
+[![Open the BlueSight repository inside your Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=dasimon135&repository=ha-bluesight&category=integration)
+
+1. Download **BlueSight** from that page. If the button does not reach your
+   instance, open HACS and search for **BlueSight** instead.
 2. Restart Home Assistant.
 3. Go to **Settings → Devices & Services → Add Integration** and add
    **BlueSight**. It is single-instance and needs no configuration to start.
@@ -186,7 +221,73 @@ Open the integration's **Configure** dialog to tune:
 
 | Action | What it does |
 | --- | --- |
-| `bluesight.forget_proxy` | Stops tracking a proxy (field: `source`, its MAC) and clears any open **proxy offline** incident. A proxy seen online once is remembered for good, so this is how you retire or replace one without leaving a permanent alert. |
+| `bluesight.forget_proxy` | Stops tracking a proxy that is gone (field: `source`, its MAC): clears any open **proxy offline** incident and deletes the proxy's BlueSight device. A proxy seen online once is remembered for good — across restarts, from that device — so this is how you retire or replace one without leaving a permanent alert. Deleting the device from its page does the same. A proxy that is still a registered scanner cannot be retired either way. |
+
+### Repairs
+
+**Proxy offline** has two causes with opposite remedies: the proxy is down, or
+it is gone for good. The notification speaks to the first. Once a proxy has
+stayed offline for **an hour**, a Repair asks about the second — *was it
+retired?* — and its one button does what `bluesight.forget_proxy` does, by
+name, without you having to find a MAC address. Do nothing and it clears itself
+the moment the proxy comes back. An hour, and not the offline grace period,
+so that an OTA update or a router reboot never asks anyone that question.
+
+That hour is counted in wall time and survives restarts: BlueSight remembers
+when it last saw each proxy. The **proxy offline** incident is judged on a
+separate clock that *does* restart with Home Assistant, on purpose, because a
+proxy taking two minutes to reconnect after a reboot is not offline in any
+useful sense. The two questions are different, so they are timed differently.
+
+### Events
+
+`bluesight_incident` is fired once when an incident opens and once when it
+resolves, so an automation is told instead of having to watch
+`binary_sensor.bluesight_incident` and work out what changed in its attributes.
+
+| Field | |
+| --- | --- |
+| `action` | `opened` or `resolved` |
+| `kind` | `deadlock`, `ghost_slot`, `storm`, `bond_lost`, `proxy_offline`, `proxy_stalled`, `proxy_reboot_storm` |
+| `address` | the device's address — or the proxy's, for the three `proxy_*` kinds |
+| `device_name` | what Home Assistant calls that device, `""` if it cannot name it |
+| `sources`, `source_names` | the proxies involved, as addresses and as the names you gave them |
+| `detail` | the same sentence the incident sensor publishes, in the installation's language |
+| `evidence` | `smp` when a proxy measured it, `heuristic` when it was inferred |
+| `key` | the incident's identity: it stays the same while the numbers in `detail` move |
+| `initial` | `true` when the incident was already open before BlueSight started looking |
+
+```yaml
+triggers:
+  - trigger: event
+    event_type: bluesight_incident
+    event_data:
+      action: opened
+      kind: bond_lost
+actions:
+  - action: notify.mobile_app_phone
+    data:
+      title: "{{ trigger.event.data.device_name or trigger.event.data.address }}"
+      message: "{{ trigger.event.data.detail }}"
+```
+
+The precedence rules apply first, exactly as for the notifications: a missing
+pairing key is one event, not a `bond_lost` and the `storm` it causes. A
+`resolved` event carries the incident as it was last seen, including the
+`initial` flag it opened with.
+
+Reloading the integration resolves nothing and fires nothing. The incidents
+still open afterwards are reported as `opened` again, because to the new run
+they are, and **that is what `initial` is for**: a restart, or an options edit,
+re-announces every open incident, and without the flag an automation would
+notify again each time for a fault that never stopped. Match on it if you only
+want the news:
+
+```yaml
+    event_data:
+      action: opened
+      initial: false
+```
 
 ### Diagnostics
 
@@ -206,7 +307,7 @@ per signal, so "no telemetry" never looks like "nothing to report"), and
 
 | Entity | Type | State | Key attributes |
 | --- | --- | --- | --- |
-| `sensor.<proxy>_slots_used` | sensor | slots allocated on that proxy | `total`, `free`, `allocated` (list of MACs), `allocated_devices` (list of `{address, name, device_id}`, same slots in the same order), `source` |
+| `sensor.<proxy>_slots_used` | sensor | slots allocated on that proxy | `total`, `free`, `allocated` (list of MACs), `allocated_devices` (list of `{address, name, device_id, path}`, same slots in the same order), `source` |
 | `sensor.<proxy>_slots_free` | sensor | slots still free on that proxy | — |
 | `binary_sensor.<proxy>_online` | binary_sensor (`connectivity`) | `on` while the proxy is a registered scanner | — |
 | `sensor.<proxy>_last_device_seen` | sensor (`duration`, seconds) | seconds since that proxy last heard an advertisement | `device_count`, `connectable`, `online` |
@@ -254,6 +355,13 @@ native fallback YAML — is in **[docs/card.md](docs/card.md)**.
 > a single line and drops the names. See
 > [docs/card.md](docs/card.md#show_devices-false--the-squares-on-one-line).
 
+> **`layout: tile` is the whole fleet on one line** — a coloured dot, the slots
+> in use, the open incidents — and tapping it opens the full card in a popup.
+> Green means nothing is wrong, amber and red are the incident feed's own
+> colours, and grey means the diagnostic itself is not answering. For a
+> dashboard where BlueSight is something you check rather than something you
+> watch. See [docs/card.md](docs/card.md#layout-tile--the-whole-fleet-on-one-line).
+
 > Since 0.4.0 the card ships **inside the integration**, so HACS delivers it
 > along with everything else and the integration serves and registers it
 > itself — no copying, no resource to declare. YAML-mode dashboards still
@@ -263,8 +371,8 @@ native fallback YAML — is in **[docs/card.md](docs/card.md)**.
 
 ## Languages
 
-Incident details, persistent notifications and the custom Lovelace card are
-translated. **English and French** ship today; anything else falls back to
+Incident details, persistent notifications, the custom Lovelace card and the
+entity names are translated. **English and French** ship today; anything else falls back to
 English, key by key, so a partial translation is never worse than no
 translation. Adding a language is one JSON file and no code — see
 **[docs/translations.md](docs/translations.md)**.
@@ -273,7 +381,7 @@ Which language a surface speaks depends on *whose* it is:
 
 | Surface | Language it uses |
 | --- | --- |
-| The `detail` field on each incident, and persistent notifications | the **installation's** — `hass.config.language` |
+| The `detail` field on each incident, persistent notifications, and entity names (`Slots Used`, `Online`, …) | the **installation's** — `hass.config.language` |
 | The custom Lovelace card | the **viewer's** — their Home Assistant profile language |
 
 So two people can read one dashboard in two languages at the same time. The
@@ -284,6 +392,15 @@ the card prints it as it arrives rather than re-translating it.
 
 Incident `kind` values (`deadlock`, `ghost_slot`, …) are machine identifiers and
 are never translated — only the labels the card puts on them.
+
+One consequence of translated entity names is Home Assistant's, not BlueSight's:
+on an install in one of some forty languages, French among them, a **newly
+created** entity gets its id from the translated name —
+`sensor.proxy_salon_slots_utilises` rather than `..._slots_used`. Entities that
+already exist keep the id they have. The card does not care either way: it finds
+a proxy's entities through the entity registry, by what they are, and only falls
+back to the `_slots_used` suffix on a Home Assistant too old to offer one. If you
+list entities by hand with `proxies:`, use whatever ids your install gave them.
 
 ## How it works
 
@@ -375,7 +492,13 @@ BlueSight is honest about its edges:
   looks identical to a stuck one — which is why the idle threshold is a tunable
   with a floor rather than a constant. See
   [docs/esphome-component.md](docs/esphome-component.md).
-- **The measured path has edges of its own.** A device using a resolvable
+- **The measured path has edges of its own.** On a proxy that counts SMP
+  failures, those counts are the *only* thing feeding the storm window for the
+  devices it holds — a released slot is no longer read as a failure there,
+  because the same failed pairing would otherwise be counted twice. The price is
+  that a connection which fails before pairing is ever attempted (a timeout, a
+  device out of range) is not a storm event on that proxy: it is a **pairing**
+  storm that is measured, and only that. A device using a resolvable
   private address is reported by the bond store, and by the pairing-failure
   event, under its *identity* address — which may not be the address habluetooth
   knows it by. The two then fail to correlate and **bond lost** simply does not
@@ -417,7 +540,8 @@ To get a useful answer on the first exchange, include:
 
 ### Staying informed
 
-New versions are announced here and nowhere else. To hear about one:
+New versions are announced here first. A short note may follow in the forum
+thread, but this page is the only complete record. To hear about one:
 
 - **HACS already offers you the update**, release notes included — nothing to do;
 - subscribe to `https://github.com/dasimon135/ha-bluesight/releases.atom` in any

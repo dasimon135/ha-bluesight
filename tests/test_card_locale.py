@@ -201,7 +201,16 @@ def test_the_card_draws_the_backends_resolved_names(card_source):
     """
     body = _method_body(card_source, "_renderProxyTile")
     assert "allocated_devices" in body
-    assert "hass.devices" not in _code_only(card_source)
+    # The ban is on resolving a *peripheral* from an address. The proxy's own
+    # name is another matter: it is read off the device its entity belongs to,
+    # by the device id the registry hands over, with no address correlated --
+    # see `test_card_discovery`. So the device registry may be touched in
+    # `_proxyName` and nowhere else, and never where a slot's occupant is drawn.
+    for method in ("_renderProxyTile", "_renderConnectedDevice", "_renderSlot"):
+        assert ".devices" not in _code_only(_method_body(card_source, method))
+    code = _code_only(card_source)
+    assert code.count("hass.devices") == code.count("this._hass.devices") == 1
+    assert "this._hass.devices" in _method_body(card_source, "_proxyName")
 
 
 def test_an_unresolved_address_is_marked_in_the_viewers_language(card_source):
