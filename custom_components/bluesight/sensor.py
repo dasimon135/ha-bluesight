@@ -36,6 +36,7 @@ async def async_setup_entry(
     are drawn from the union of both lists.
     """
     coordinator = entry.runtime_data
+    async_add_entities([ConnectionsSensor(coordinator)])
     known_sources: set[str] = set()
 
     @callback
@@ -275,4 +276,72 @@ class SaturationSensor(CoordinatorEntity[BlueSightCoordinator], SensorEntity):
             "observed_s": round(window.observed_s(), 1),
             "window_s": window.window_s,
             "source": self._source,
+        }
+
+
+#: How many devices the connections sensor lists, busiest first. The state is
+#: the whole fleet's total; the list is for reading, and a fleet of sensors that
+#: each wake every few minutes would otherwise publish an attribute that grows
+#: with the house.
+CONNECTIONS_LISTED = 20
+
+
+class ConnectionsSensor(CoordinatorEntity[BlueSightCoordinator], SensorEntity):
+    """Slots taken across the fleet over the last day, and by whom.
+
+    Published, not judged: see :mod:`.history`. A sensor that wakes every five
+    minutes connects 288 times a day by design, so no number here is a fault
+    on its own. What the list makes visible is the device that should be
+    holding one long connection and is instead taking a new one every few
+    minutes -- or doing so through a different proxy each time.
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "connections_24h"
+    _attr_icon = "mdi:bluetooth-transfer"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "connections"
+    # The list moves with every connection anywhere in the house; recording it
+    # would write a fresh copy into the database each time for no history
+    # anyone reads. The total is what is worth a graph.
+    _unrecorded_attributes = frozenset({"devices"})
+
+    def __init__(self, coordinator: BlueSightCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{DOMAIN}_connections_24h"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, "service")},
+            name="BlueSight",
+        )
+
+    @property
+    def native_value(self) -> int | None:
+        """``None`` until a snapshot past the baseline, for saturation's reason."""
+        history = self.coordinator.connection_history
+        if history.observed_s() <= 0:
+            return None
+        return sum(h.connections for h in history.all().values())
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        history = self.coordinator.connection_history
+        data = self.coordinator.data
+        proxy_names = data.proxy_display_names
+        ranked = sorted(
+            history.all().items(),
+            key=lambda item: (-item[1].connections, -item[1].proxy_changes, item[0]),
+        )
+        return {
+            "devices": [
+                {
+                    "address": address,
+                    "name": data.device_names.get(address, ""),
+                    "connections": reading.connections,
+                    "proxy_changes": reading.proxy_changes,
+                    "proxies": [proxy_names.get(s, s) for s in reading.proxies],
+                }
+                for address, reading in ranked[:CONNECTIONS_LISTED]
+            ],
+            "observed_s": round(history.observed_s(), 1),
+            "window_s": history.window_s,
         }

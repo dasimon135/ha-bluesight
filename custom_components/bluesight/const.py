@@ -88,5 +88,10 @@ OPTION_DEFAULTS = {
 # answerable at all, since a fleet's load follows a daily rhythm.
 SATURATION_WINDOW_S = 86400.0
 
+# Window over which each device's connections and proxy changes are counted.
+# A day, for the same reason as saturation, and not a tunable either: nothing
+# detects on it.
+CONNECTION_HISTORY_WINDOW_S = 86400.0
+
 SERVICE_FORGET_PROXY = "forget_proxy"
 ATTR_SOURCE = "source"

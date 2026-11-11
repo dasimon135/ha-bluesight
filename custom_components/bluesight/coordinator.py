@@ -34,6 +34,7 @@ from .adapter import (
 )
 from .availability import is_device_alive
 from .const import (
+    CONNECTION_HISTORY_WINDOW_S,
     DEFAULT_BOND_THRESHOLD,
     DEFAULT_IDLE_SLOT_THRESHOLD_S,
     DEFAULT_OFFLINE_GRACE_S,
@@ -50,6 +51,7 @@ from .device_index import (
     build_proxy_index,
     resolve_proxy_names,
 )
+from .history import ConnectionHistory, history_attributes
 from .model import DeviceRef, ProxyHealth, ProxySlots, normalize_address
 from .path import PathTracker, path_attributes
 from .rendering import Catalogue
@@ -215,6 +217,13 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         # connected device stops advertising and every scanner forgets it
         # minutes later.
         self._path_tracker = PathTracker()
+        # Every slot appearance per device over the last day: how often each
+        # one reconnects, and through how many proxies. Published, not judged;
+        # see :mod:`.history`. In memory only, like the saturation windows, and
+        # `observed_s` says how much of the day a restart has left to go on.
+        self._history = ConnectionHistory(
+            CONNECTION_HISTORY_WINDOW_S, time.monotonic
+        )
         # How long a slot may sit without GATT traffic before the firmware's
         # reading is treated as a stuck slot. Bounded by the options schema;
         # ``detect_idle_slots`` deliberately carries no internal guard.
@@ -258,6 +267,11 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         copied precisely because a writer could.
         """
         return self._saturation.get(normalize_address(source))
+
+    @property
+    def connection_history(self) -> ConnectionHistory:
+        """Per-device connections over the last day (read-only use)."""
+        return self._history
 
     @property
     def tracked_sources(self) -> set[str]:
@@ -483,6 +497,7 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         # stops advertising and the reading is gone minutes later. After
         # `display_names`, which is what names the stronger proxy.
         proxies = self._with_paths(proxies, display_names)
+        proxies = self._with_history(proxies)
         # Memoized per snapshot: the release tracker asks about addresses that
         # are no longer allocated, so the answer set is wider than `proxies`.
         verdicts: dict[str, bool] = {}
@@ -653,6 +668,21 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
                 path, proxy_names
             )
         return [replace(p, paths=by_source.get(p.source, {})) for p in proxies]
+
+    def _with_history(self, proxies: list[ProxySlots]) -> list[ProxySlots]:
+        """Count this snapshot's new slots, and hand each held one its day."""
+        self._history.update(
+            (p.source, address) for p in proxies for address in p.allocated
+        )
+        out = []
+        for proxy in proxies:
+            histories = {}
+            for address in proxy.allocated:
+                published = history_attributes(self._history.for_address(address))
+                if published is not None:
+                    histories[normalize_address(address)] = published
+            out.append(replace(proxy, histories=histories) if histories else proxy)
+        return out
 
     def forget_proxy(self, source: str) -> bool:
         """Stop tracking a source, clearing any open ``proxy_offline`` incident.

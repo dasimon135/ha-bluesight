@@ -128,6 +128,10 @@ const EMBEDDED_EN = {
   "card.signal.weak": "weak",
   "card.slot.stronger": "{proxy} heard it at {stronger}",
   "card.slot.stronger_full": "{proxy} heard it at {stronger}, but was full",
+  "card.slot.connections.one": "{count} connection in 24 h",
+  "card.slot.connections.other": "{count} connections in 24 h",
+  "card.slot.proxy_changes.one": "{count} proxy change",
+  "card.slot.proxy_changes.other": "{count} proxy changes",
   "card.proxy.last_advert": "last advert {age} ago",
   "card.proxy.last_advert_with_devices.one": "last advert {age} ago · {count} device seen",
   "card.proxy.last_advert_with_devices.other": "last advert {age} ago · {count} devices seen",
@@ -878,7 +882,9 @@ class BlueSightCard extends HTMLElement {
             return (
               `${entry.address}=${entry.name}` +
               `@${p.rssi}/${p.quality}/${p.stronger_name}/${p.stronger_rssi}` +
-              `/${p.stronger_was_full}`
+              `/${p.stronger_was_full}` +
+              `#${(entry.history || {}).connections}` +
+              `/${(entry.history || {}).proxy_changes}`
             );
           })
           .join(",")}`
@@ -1221,6 +1227,11 @@ class BlueSightCard extends HTMLElement {
       cell.appendChild(path);
     }
 
+    const history = this._renderHistory(entry.history);
+    if (history) {
+      cell.appendChild(history);
+    }
+
     if (!entry.device_id) {
       // Its own line, under the address rather than after it: the address is
       // already long enough to wrap on a phone, and a marker that wraps into
@@ -1282,6 +1293,41 @@ class BlueSightCard extends HTMLElement {
         )
       );
     }
+    line.textContent = parts.join(" · ");
+    return line;
+  }
+
+  /**
+   * How often this device took a slot over the last day, or `null` when that
+   * is not worth a line.
+   *
+   * One connection, held, is what a well-behaved device looks like, so the
+   * line starts at two. Nothing here is a verdict -- a sensor that wakes every
+   * few minutes reconnects all day by design -- which is why it is set in the
+   * same muted type as the signal and never coloured.
+   */
+  _renderHistory(history) {
+    if (!history || typeof history.connections !== "number") {
+      return null;
+    }
+    if (history.connections < 2) {
+      return null;
+    }
+    const parts = [
+      this._t(
+        "card.slot.connections",
+        { count: String(history.connections) },
+        history.connections
+      ),
+    ];
+    const changes = this._toInt(history.proxy_changes, 0);
+    if (changes > 0) {
+      parts.push(
+        this._t("card.slot.proxy_changes", { count: String(changes) }, changes)
+      );
+    }
+    const line = document.createElement("span");
+    line.className = "slot-history";
     line.textContent = parts.join(" · ");
     return line;
   }
@@ -1549,6 +1595,11 @@ class BlueSightCard extends HTMLElement {
         font-style: italic;
       }
       .slot-path {
+        font-size: 0.8rem;
+        opacity: 0.8;
+        font-variant-numeric: tabular-nums;
+      }
+      .slot-history {
         font-size: 0.8rem;
         opacity: 0.8;
         font-variant-numeric: tabular-nums;

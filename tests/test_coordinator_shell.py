@@ -19,6 +19,7 @@ pytest.importorskip("homeassistant.helpers.update_coordinator")
 from custom_components.bluesight import coordinator as coordinator_module
 from custom_components.bluesight.coordinator import BlueSightCoordinator
 from custom_components.bluesight.device_index import DeviceIndex
+from custom_components.bluesight.history import ConnectionHistory
 from custom_components.bluesight.model import IncidentKind
 from custom_components.bluesight.path import PathTracker
 from custom_components.bluesight.storm_signal import ReleaseTracker
@@ -85,6 +86,7 @@ def _bare_coordinator() -> BlueSightCoordinator:
     # pressure history until it has been seen.
     c._saturation = {}
     c._path_tracker = PathTracker()
+    c._history = ConnectionHistory(86400.0, lambda: 0.0)
     return c
 
 
@@ -1244,8 +1246,8 @@ def test_snapshot_names_the_device_holding_each_slot(monkeypatch):
         states={"climate.salon": _FakeState("off")},
     )
     assert c._snapshot().proxies[0].allocated_devices == [
-        {"address": UNKNOWN, "name": "", "device_id": None, "path": None},
-        {"address": SALON, "name": "Madoka salon", "device_id": "dev_salon", "path": None},
+        {"address": UNKNOWN, "name": "", "device_id": None, "path": None, "history": None},
+        {"address": SALON, "name": "Madoka salon", "device_id": "dev_salon", "path": None, "history": None},
     ]
 
 
@@ -1270,7 +1272,7 @@ def test_a_slot_named_through_a_wifi_mac_is_not_named_at_all(monkeypatch):
         states={},
     )
     named = c._snapshot().proxies[0].allocated_devices
-    assert named[0] == {"address": UNKNOWN, "name": "", "device_id": None, "path": None}
+    assert named[0] == {"address": UNKNOWN, "name": "", "device_id": None, "path": None, "history": None}
 
 
 def test_naming_walks_the_device_registry_once_per_snapshot(monkeypatch):
@@ -1417,6 +1419,22 @@ def test_a_slots_route_is_read_as_it_appears_and_published(monkeypatch):
     c._manager.async_scanner_devices_by_address = lambda a, connectable: []
     assert c._snapshot().proxies[0].allocated_devices[0]["path"]["rssi"] == -82
     assert asked == [PERIPHERAL]
+
+
+# --- each device's day at the connection layer ------------------------------
+
+
+def test_a_slot_held_at_startup_has_no_history_and_a_new_one_does(monkeypatch):
+    """Through the shell: the first snapshot is a baseline, so a slot that was
+    already held is not a connection; one that appears afterwards is."""
+    c = _telemetry_coordinator(monkeypatch, entries={}, states={}, allocated=[])
+    c._history = ConnectionHistory(86400.0, lambda: 0.0)
+    assert c._snapshot().proxies == []
+
+    c._manager = _telemetry_manager([PERIPHERAL])
+    [entry] = c._snapshot().proxies[0].allocated_devices
+    assert entry["history"] == {"connections": 1, "proxy_changes": 0}
+    assert c.connection_history.for_address(PERIPHERAL).proxies == (PROXY,)
 
 
 # --- the clock the retirement Repair reads ---------------------------------

@@ -81,6 +81,9 @@
       },
       "saturation_24h": {
         "name": "Saturation (24 h)"
+      },
+      "connections_24h": {
+        "name": "Connexions (24 h)"
       }
     },
     "binary_sensor": {

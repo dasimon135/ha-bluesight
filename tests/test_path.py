@@ -23,13 +23,13 @@ from __future__ import annotations
 from custom_components.bluesight.model import ProxySlots
 from custom_components.bluesight.path import (
     CLEARLY_STRONGER_DB,
+    FAIR_SIGNAL_DBM,
+    GOOD_SIGNAL_DBM,
     ConnectionPath,
     PathTracker,
     judge_path,
     path_attributes,
     signal_quality,
-    GOOD_SIGNAL_DBM,
-    FAIR_SIGNAL_DBM,
 )
 
 VIA = "D0:CF:13:0F:05:5A"

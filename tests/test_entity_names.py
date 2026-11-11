@@ -25,6 +25,7 @@ from custom_components.bluesight.binary_sensor import (
     ProxyOnlineBinarySensor,
 )
 from custom_components.bluesight.sensor import (
+    ConnectionsSensor,
     LastDeviceSeenSensor,
     SaturationSensor,
     SlotsFreeSensor,
@@ -39,6 +40,7 @@ ENTITIES = [
     (SlotsFreeSensor, "sensor", "slots_free", "Slots Free"),
     (LastDeviceSeenSensor, "sensor", "last_device_seen", "Last device seen"),
     (SaturationSensor, "sensor", "saturation_24h", "Saturation (24h)"),
+    (ConnectionsSensor, "sensor", "connections_24h", "Connections (24h)"),
     (IncidentBinarySensor, "binary_sensor", "incident", "Incident"),
     (ProxyOnlineBinarySensor, "binary_sensor", "online", "Online"),
 ]
