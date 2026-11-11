@@ -38,6 +38,15 @@ class IncidentEvents:
         # it was reported under, so what it *was* has to be kept here.
         self._open: dict[str, dict[str, object]] = {}
 
+    @property
+    def open_keys(self) -> list[str]:
+        """Keys of the incidents announced ``opened`` and not yet ``resolved``.
+
+        Read by diagnostics: an automation waiting on a ``resolved`` that never
+        came is debugged from this list.
+        """
+        return sorted(self._open)
+
     @callback
     def async_update(
         self,

@@ -12,13 +12,14 @@ explain. Saturation is that symptom, visible before it happens, and it is the
 one signal here that nothing else in Home Assistant can produce: it needs
 per-proxy slot accounting.
 
-**Nothing judges this yet, deliberately.** The point at which "busy" becomes
-"too busy" is not knowable from one fleet -- a proxy dedicated to three
+**No incident is raised from this, deliberately.** The point at which "busy"
+becomes "too busy" is not knowable from one fleet -- a proxy dedicated to three
 permanent connections is saturated *by design*, not in trouble. Inventing a
-threshold now would repeat the mistake ``idle_threshold_s`` had to be measured
-out of, where 300s was an argument and 1800s was a measurement. This publishes
-the measurement so a threshold can be chosen from data, on more fleets than
-one.
+threshold up front would have repeated the mistake ``idle_threshold_s`` had to
+be measured out of, where 300s was an argument and 1800s was a measurement. So
+the measurement was published first, and the one verdict drawn from it since
+(:func:`saturation_notices`, at the bottom) was chosen from nine weeks of it,
+and is a Repair the user can ignore rather than an alert.
 
 Three numbers rather than one, because they answer different questions and a
 single ratio hides the difference: ten one-second squeezes and one ten-minute
@@ -141,3 +142,49 @@ class SaturationWindow:
 
     def _saturated_s(self) -> float:
         return sum(end - start for start, end in self._stretches())
+
+
+# ------------------------------------------------------------------- notice
+#
+# The one judgement made on this reading, and deliberately not an incident.
+#
+# The module docstring above held off on any threshold until there was data.
+# Nine weeks of it from one fleet (four ESP32 proxies, 2026-09 to 2026-11)
+# separate cleanly: ordinary weeks average under 2 % of the day full, and the
+# two real episodes -- one proxy carrying every thermostat for five weeks, one
+# carrying a re-pairing session -- averaged 35 to 61 %. Half the day sits
+# between the two with room on both sides.
+#
+# One fleet is still one fleet, and "saturated by design" is still a real
+# case. So the verdict is a Repair, not an incident: no push notification, no
+# event, nothing on the incident sensor, and Home Assistant lets the user
+# ignore it -- which is the right answer for a proxy dedicated to three
+# permanent connections, and only the user knows that is what it is.
+
+#: Raised at half the observed day spent with no free slot.
+NOTICE_RAISE_RATIO = 0.5
+#: Cleared only below a quarter, so a proxy hovering at the line does not
+#: raise and clear its Repair all afternoon.
+NOTICE_CLEAR_RATIO = 0.25
+#: Not before half a day has been watched. A restart empties every window, and
+#: the first hour of a busy evening is not a day.
+NOTICE_MIN_OBSERVED_S = 43200.0
+
+
+def saturation_notices(
+    readings: dict[str, tuple[float, float]], raised: set[str]
+) -> set[str]:
+    """The proxies that should carry the saturation Repair now.
+
+    ``readings`` maps a source to ``(ratio, observed_s)``; ``raised`` is the
+    set carrying it already, which is what the hysteresis keys on. A source
+    absent from ``readings`` -- offline, passive, retired -- carries nothing.
+    """
+    wanted: set[str] = set()
+    for source, (ratio, observed_s) in readings.items():
+        if observed_s < NOTICE_MIN_OBSERVED_S:
+            continue
+        threshold = NOTICE_CLEAR_RATIO if source in raised else NOTICE_RAISE_RATIO
+        if ratio >= threshold:
+            wanted.add(source)
+    return wanted

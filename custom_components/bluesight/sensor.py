@@ -216,12 +216,12 @@ class LastDeviceSeenSensor(CoordinatorEntity[BlueSightCoordinator], SensorEntity
 class SaturationSensor(CoordinatorEntity[BlueSightCoordinator], SensorEntity):
     """Share of the last day this proxy spent with no free slot.
 
-    A pressure reading, not a fault. Nothing detects on it and no incident is
-    raised from it: a proxy dedicated to three permanent connections is
-    saturated *by design*, and the point at which busy becomes too busy is not
-    knowable from one fleet. This publishes the measurement so that threshold
-    can be chosen from data later -- the way `idle_threshold_s` went from an
-    argued 300s to a measured 1800s.
+    A pressure reading, not a fault. No incident is raised from it: a proxy
+    dedicated to three permanent connections is saturated *by design*. The one
+    verdict drawn from it is a Repair the user can ignore, raised at half the
+    day full -- a line chosen from nine weeks of this very reading, the way
+    `idle_threshold_s` went from an argued 300s to a measured 1800s. See
+    :mod:`.saturation_notice`.
 
     It is still worth reading today. A proxy sitting at 100% while its
     neighbours idle is the reason a device will go `unavailable` with no error

@@ -15,6 +15,7 @@ from collections.abc import Iterable
 from dataclasses import replace
 from datetime import timedelta
 from math import inf
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -131,6 +132,12 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
     #: ``__init__`` (the shell tests do this deliberately) still snapshots,
     #: with incident details left unrendered rather than crashing.
     catalogue: Catalogue | None = None
+    #: What setup hung off this coordinator to publish its snapshots -- the
+    #: incident events and the saturation Repairs. Set by `async_setup_entry`
+    #: and read only by diagnostics, which has to be able to say what is open
+    #: and has nothing else to reach them through. None until setup.
+    incident_events: Any = None
+    saturation_issues: Any = None
 
     def __init__(
         self,
@@ -267,6 +274,19 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         copied precisely because a writer could.
         """
         return self._saturation.get(normalize_address(source))
+
+    def saturation_readings(self) -> dict[str, tuple[float, float]]:
+        """``(ratio, observed_s)`` per proxy online in the last snapshot.
+
+        Online only: a proxy that dropped off the bus stops being recorded, so
+        its window would go on reading whatever state it was last seen in.
+        """
+        online = {h.source for h in self.data.proxies_health if h.online}
+        return {
+            source: (window.ratio(), window.observed_s())
+            for source, window in self._saturation.items()
+            if source in online
+        }
 
     @property
     def connection_history(self) -> ConnectionHistory:
