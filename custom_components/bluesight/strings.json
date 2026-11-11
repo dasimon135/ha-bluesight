@@ -66,6 +66,10 @@
           "proxy_online": "{proxy} is back online, so there is nothing to retire."
         }
       }
+    },
+    "proxy_saturated": {
+      "title": "{proxy} is full for {percent} % of the day",
+      "description": "Over the last {hours} hours, {proxy} ({source}) had no free connection slot {percent} % of the time.\n\nNothing is broken: every slot it holds is in use. But a device that can only reach this proxy will not get a connection while it is full, and it will go **unavailable** with no error and nothing in the log.\n\nIf that is a risk here, add a Bluetooth proxy near the devices it serves, or move one of them closer to another proxy. If this proxy is meant to stay full, for example dedicated to a few devices that hold permanent connections, ignore this repair.\n\nIt clears by itself once the proxy spends less than a quarter of the day full."
     }
   },
   "entity": {
@@ -81,6 +85,9 @@
       },
       "saturation_24h": {
         "name": "Saturation (24h)"
+      },
+      "connections_24h": {
+        "name": "Connections (24h)"
       }
     },
     "binary_sensor": {

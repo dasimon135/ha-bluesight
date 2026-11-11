@@ -23,10 +23,13 @@ from __future__ import annotations
 from custom_components.bluesight.model import ProxySlots
 from custom_components.bluesight.path import (
     CLEARLY_STRONGER_DB,
+    FAIR_SIGNAL_DBM,
+    GOOD_SIGNAL_DBM,
     ConnectionPath,
     PathTracker,
     judge_path,
     path_attributes,
+    signal_quality,
 )
 
 VIA = "D0:CF:13:0F:05:5A"
@@ -149,6 +152,7 @@ def test_a_reader_that_raises_costs_one_path_and_nothing_else():
 def test_a_route_that_needs_no_comment_publishes_its_signal_alone():
     assert path_attributes(ConnectionPath(rssi=-62), {}) == {
         "rssi": -62,
+        "quality": "good",
         "stronger_source": None,
         "stronger_name": None,
         "stronger_rssi": None,
@@ -176,3 +180,23 @@ def test_an_occupied_slot_carries_its_path_and_an_unread_one_says_so():
     assert first["path"]["rssi"] == -70
     assert second["path"] is None
 
+
+
+# --- how good the reading was ------------------------------------------------
+
+
+def test_signal_quality_bands():
+    """Three bands, and the boundary belongs to the better one: -70 is still
+    good, -85 still fair. The bands are presentation, so nothing detects on
+    them; they exist so a row says "weak" instead of asking the reader to
+    remember what -91 dBm means."""
+    assert signal_quality(-40) == "good"
+    assert signal_quality(GOOD_SIGNAL_DBM) == "good"
+    assert signal_quality(GOOD_SIGNAL_DBM - 1) == "fair"
+    assert signal_quality(FAIR_SIGNAL_DBM) == "fair"
+    assert signal_quality(FAIR_SIGNAL_DBM - 1) == "weak"
+    assert signal_quality(-99) == "weak"
+
+
+def test_the_published_path_carries_its_quality():
+    assert path_attributes(ConnectionPath(rssi=-91), {})["quality"] == "weak"

@@ -39,6 +39,24 @@ _LOGGER = logging.getLogger(__name__)
 #: one only decides what is worth a line on a card.
 CLEARLY_STRONGER_DB = 16
 
+#: The bands a reading is published in, beside the number. Ours, unlike the
+#: margin above: habluetooth defines no notion of a good or a weak signal. They
+#: are the figures BLE practice converges on -- above -70 dBm a link holds
+#: without retries, below -85 it starts dropping packets and connection
+#: attempts start timing out -- and they decide only which word a row shows.
+#: Nothing detects on them, for the reason the module docstring gives.
+GOOD_SIGNAL_DBM = -70
+FAIR_SIGNAL_DBM = -85
+
+
+def signal_quality(rssi: int) -> str:
+    """``good``, ``fair`` or ``weak``; a boundary belongs to the better band."""
+    if rssi >= GOOD_SIGNAL_DBM:
+        return "good"
+    if rssi >= FAIR_SIGNAL_DBM:
+        return "fair"
+    return "weak"
+
 
 @dataclass(frozen=True, slots=True)
 class ConnectionPath:
@@ -100,6 +118,7 @@ def path_attributes(
     source = path.stronger_source
     return {
         "rssi": path.rssi,
+        "quality": signal_quality(path.rssi),
         "stronger_source": source,
         "stronger_name": proxy_names.get(source, source) if source else None,
         "stronger_rssi": path.stronger_rssi,

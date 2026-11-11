@@ -15,6 +15,7 @@ from collections.abc import Iterable
 from dataclasses import replace
 from datetime import timedelta
 from math import inf
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -34,6 +35,7 @@ from .adapter import (
 )
 from .availability import is_device_alive
 from .const import (
+    CONNECTION_HISTORY_WINDOW_S,
     DEFAULT_BOND_THRESHOLD,
     DEFAULT_IDLE_SLOT_THRESHOLD_S,
     DEFAULT_OFFLINE_GRACE_S,
@@ -50,6 +52,7 @@ from .device_index import (
     build_proxy_index,
     resolve_proxy_names,
 )
+from .history import ConnectionHistory, history_attributes
 from .model import DeviceRef, ProxyHealth, ProxySlots, normalize_address
 from .path import PathTracker, path_attributes
 from .rendering import Catalogue
@@ -129,6 +132,11 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
     #: ``__init__`` (the shell tests do this deliberately) still snapshots,
     #: with incident details left unrendered rather than crashing.
     catalogue: Catalogue | None = None
+    #: The `bluesight_incident` publisher setup hung off this coordinator.
+    #: Set by `async_setup_entry` and read only by diagnostics, which has to
+    #: be able to say which incidents are announced open and has nothing else
+    #: to reach it through. None until setup.
+    incident_events: Any = None
 
     def __init__(
         self,
@@ -215,6 +223,13 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         # connected device stops advertising and every scanner forgets it
         # minutes later.
         self._path_tracker = PathTracker()
+        # Every slot appearance per device over the last day: how often each
+        # one reconnects, and through how many proxies. Published, not judged;
+        # see :mod:`.history`. In memory only, like the saturation windows, and
+        # `observed_s` says how much of the day a restart has left to go on.
+        self._history = ConnectionHistory(
+            CONNECTION_HISTORY_WINDOW_S, time.monotonic
+        )
         # How long a slot may sit without GATT traffic before the firmware's
         # reading is treated as a stuck slot. Bounded by the options schema;
         # ``detect_idle_slots`` deliberately carries no internal guard.
@@ -258,6 +273,24 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         copied precisely because a writer could.
         """
         return self._saturation.get(normalize_address(source))
+
+    def saturation_readings(self) -> dict[str, tuple[float, float]]:
+        """``(ratio, observed_s)`` per proxy online in the last snapshot.
+
+        Online only: a proxy that dropped off the bus stops being recorded, so
+        its window would go on reading whatever state it was last seen in.
+        """
+        online = {h.source for h in self.data.proxies_health if h.online}
+        return {
+            source: (window.ratio(), window.observed_s())
+            for source, window in self._saturation.items()
+            if source in online
+        }
+
+    @property
+    def connection_history(self) -> ConnectionHistory:
+        """Per-device connections over the last day (read-only use)."""
+        return self._history
 
     @property
     def tracked_sources(self) -> set[str]:
@@ -412,13 +445,25 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         # `health` itself stays the registered scanners: it is also the list of
         # proxies worth asking for telemetry, and these cannot answer.
         registered = {h.source for h in health}
+        # What the proxy's `last_device_seen` sensor publishes while it is
+        # gone: the time since it was last seen online, which is when it last
+        # heard anything it could tell us about. On the wall clock, persisted,
+        # where one exists: `offline_for` is restarted at every Home Assistant
+        # start (see `restart_offline_clock`), which is right for the grace
+        # period and made a proxy dead since yesterday read "12 s" after a
+        # restart. No detector reads this field for an offline proxy --
+        # `detect_stalled_proxies` judges online ones only, and the offline
+        # incident has `offline_for` -- so only the sensor changes.
+        offline_wall = self.offline_seconds()
         dropped_off = [
             ProxyHealth(
                 source=src,
                 name=self._names.get(src, src),
                 connectable=self._connectable.get(src, False),
                 online=False,
-                seconds_since_detection=offline_for[src],
+                seconds_since_detection=max(
+                    offline_for[src], offline_wall.get(src, 0.0)
+                ),
                 device_count=0,
             )
             for src in sorted(self._last_online.keys() - registered)
@@ -483,6 +528,7 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         # stops advertising and the reading is gone minutes later. After
         # `display_names`, which is what names the stronger proxy.
         proxies = self._with_paths(proxies, display_names)
+        proxies = self._with_history(proxies)
         # Memoized per snapshot: the release tracker asks about addresses that
         # are no longer allocated, so the answer set is wider than `proxies`.
         verdicts: dict[str, bool] = {}
@@ -653,6 +699,21 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
                 path, proxy_names
             )
         return [replace(p, paths=by_source.get(p.source, {})) for p in proxies]
+
+    def _with_history(self, proxies: list[ProxySlots]) -> list[ProxySlots]:
+        """Count this snapshot's new slots, and hand each held one its day."""
+        self._history.update(
+            (p.source, address) for p in proxies for address in p.allocated
+        )
+        out = []
+        for proxy in proxies:
+            histories = {}
+            for address in proxy.allocated:
+                published = history_attributes(self._history.for_address(address))
+                if published is not None:
+                    histories[normalize_address(address)] = published
+            out.append(replace(proxy, histories=histories) if histories else proxy)
+        return out
 
     def forget_proxy(self, source: str) -> bool:
         """Stop tracking a source, clearing any open ``proxy_offline`` incident.

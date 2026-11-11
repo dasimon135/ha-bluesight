@@ -209,3 +209,42 @@ def test_transitions_older_than_the_window_are_dropped():
     # Everything has aged out; at most the one entry holding the current state.
     assert len(w._transitions) <= 1
     assert w.ratio() == 0.0
+
+
+# --- the notice ----------------------------------------------------------------
+
+from custom_components.bluesight.saturation import (
+    NOTICE_CLEAR_RATIO,
+    NOTICE_MIN_OBSERVED_S,
+    NOTICE_RAISE_RATIO,
+    saturation_notices,
+)
+
+DAY = 86400.0
+
+
+def test_a_proxy_full_half_the_day_gets_the_notice():
+    assert saturation_notices({"A": (NOTICE_RAISE_RATIO, DAY)}, set()) == {"A"}
+
+
+def test_a_busy_but_not_saturated_proxy_does_not():
+    assert saturation_notices({"A": (NOTICE_RAISE_RATIO - 0.01, DAY)}, set()) == set()
+
+
+def test_half_a_day_must_be_watched_first():
+    """A restart empties every window; an evening's first hour is not a day."""
+    assert saturation_notices({"A": (1.0, NOTICE_MIN_OBSERVED_S - 1)}, set()) == set()
+    assert saturation_notices({"A": (1.0, NOTICE_MIN_OBSERVED_S)}, set()) == {"A"}
+
+
+def test_a_raised_notice_holds_until_the_lower_line():
+    """Without the gap, a proxy hovering at 50 % would raise and clear its
+    Repair all afternoon."""
+    between = (NOTICE_CLEAR_RATIO + NOTICE_RAISE_RATIO) / 2
+    assert saturation_notices({"A": (between, DAY)}, {"A"}) == {"A"}
+    assert saturation_notices({"A": (between, DAY)}, set()) == set()
+    assert saturation_notices({"A": (NOTICE_CLEAR_RATIO - 0.01, DAY)}, {"A"}) == set()
+
+
+def test_a_proxy_missing_from_the_readings_drops_its_notice():
+    assert saturation_notices({}, {"A"}) == set()

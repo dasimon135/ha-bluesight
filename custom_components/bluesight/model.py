@@ -100,6 +100,10 @@ class ProxySlots:
     #: signal could be read when they appeared. Excluded from equality for the
     #: reason ``devices`` is: it describes a slot, it is not the allocation.
     paths: dict[str, dict[str, object]] = field(default_factory=dict, compare=False)
+    #: Normalized address -> that device's last day at the connection layer,
+    #: already in its published shape (see :func:`history.history_attributes`).
+    #: Excluded from equality for the same reason as ``paths``.
+    histories: dict[str, dict[str, int]] = field(default_factory=dict, compare=False)
 
     @property
     def used(self) -> int:
@@ -137,6 +141,10 @@ class ProxySlots:
                     # attribute that comes and goes is a second shape for every
                     # template to handle.
                     "path": self.paths.get(norm),
+                    # Connections and proxy changes over the last day, or None
+                    # when none was seen -- a slot held since startup. Always
+                    # present, for the same reason as `path`.
+                    "history": self.histories.get(norm),
                 }
             )
         return entries

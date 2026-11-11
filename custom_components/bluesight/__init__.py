@@ -28,6 +28,7 @@ from .model import normalize_address
 from .notify import NotificationManager
 from .proxy_retirement import RetirementIssues, async_retire_proxy
 from .rendering import Catalogue
+from .saturation_notice import SaturationIssues
 
 FORGET_PROXY_SCHEMA = vol.Schema({vol.Required(ATTR_SOURCE): cv.string})
 
@@ -90,6 +91,12 @@ async def async_setup_entry(
     events = IncidentEvents(hass)
     # And, for a proxy that has stayed offline, a Repair offering to retire it.
     retirements = RetirementIssues(hass)
+    # And, for a proxy that spends half the day with no free slot, a Repair
+    # saying so -- not an incident: see `saturation_notice`.
+    saturations = SaturationIssues(hass)
+    # Read back by diagnostics, which must be able to say which incidents an
+    # automation has been told are open.
+    coordinator.incident_events = events
 
     @callback
     def _publish_incidents() -> None:
@@ -103,11 +110,15 @@ async def async_setup_entry(
             data.proxy_display_names,
             coordinator.offline_seconds(),
         )
+        saturations.async_update(
+            coordinator.saturation_readings(), data.proxy_display_names
+        )
 
     _publish_incidents()
     entry.async_on_unload(manager.async_shutdown)
     entry.async_on_unload(events.async_shutdown)
     entry.async_on_unload(retirements.async_shutdown)
+    entry.async_on_unload(saturations.async_shutdown)
     entry.async_on_unload(coordinator.async_add_listener(_publish_incidents))
 
     # Reload the entry when the user edits options so new tunables take effect.

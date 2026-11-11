@@ -92,14 +92,18 @@ it hears. So a device can end up connected through the far side of the house,
 and until now nothing said so.
 
 Each entry of `allocated_devices` carries a `path`: what the proxy holding the
-slot heard the device at, and — only when another proxy heard it *clearly*
-better — which one, at what signal, and whether that proxy was full at the time.
-The card draws it under the device's name:
+slot heard the device at, a `quality` band for that signal, and (only when
+another proxy heard it *clearly* better) which one, at what signal, and whether
+that proxy was full at the time. The card draws it under the device's name:
 
 ```
 Madoka salon
--82 dBm · Proxy Salon heard it at -54, but was full
+● -82 dBm · fair · Proxy Salon heard it at -54, but was full
 ```
+
+The band is `good` at -70 dBm and above, `fair` down to -85, `weak` below. Those
+two lines are ours, not habluetooth's (it defines no notion of a good signal),
+and they only pick the word and the dot's colour.
 
 That last clause is the point: it turns an odd-looking route into an explained
 one. **The reading is taken as the slot appears, or not at all** — a connected
@@ -110,8 +114,29 @@ therefore has no `path`, and never will until it reconnects.
 "Clearly better" is habluetooth's own margin (16 dB), not a threshold of ours:
 signal wanders by several dB between two advertisements, and below that the
 Bluetooth stack does not act on the difference either. **Nothing is judged from
-this** — no incident is raised, for the reason [saturation](#saturation-is-measured-not-judged)
+this** — no incident is raised, for the reason [saturation](#saturation-is-measured-and-only-a-repair-judges-it)
 raises none: what counts as a bad route is not knowable from one fleet.
+
+### How often each device connects
+
+A device that keeps reconnecting is the early form of most of what BlueSight
+detects, but the storm window counts only *failures*, over a few minutes.
+BlueSight now also counts every slot each device takes over the last 24 hours,
+and how many of those went through a different proxy than the connection
+before:
+
+- each `allocated_devices` entry carries `history`: `{connections,
+  proxy_changes}`, or `null` for a slot held since Home Assistant started;
+- `sensor.bluesight_connections_24h` totals the fleet's connections and lists
+  the 20 busiest devices in its `devices` attribute (kept out of the recorder,
+  since it changes with every connection);
+- the card adds a line from a device's second connection on:
+  `12 connections in 24 h · 2 proxy changes`.
+
+A connection here is a slot appearing, so a failed attempt counts too. Nothing
+is judged from it: a sensor that wakes every five minutes connects 288 times a
+day by design. The count lives in memory and starts again with Home Assistant;
+`observed_s` says how much of the day it covers.
 
 ## Proxy health
 
@@ -233,6 +258,15 @@ name, without you having to find a MAC address. Do nothing and it clears itself
 the moment the proxy comes back. An hour, and not the offline grace period,
 so that an OTA update or a router reboot never asks anyone that question.
 
+**A proxy that is often full** gets a Repair too, and that one is not an
+incident: nothing is pushed and the incident sensor stays quiet. It appears
+once a proxy, online and watched for at least 12 hours, has had no free slot
+for **half** of the observed day, and goes away below a quarter. A proxy that is
+full on purpose, dedicated to a few devices that hold permanent connections,
+is a real case: ignore the Repair and it stays ignored. See
+[saturation](#saturation-is-measured-and-only-a-repair-judges-it) for where the
+line comes from.
+
 That hour is counted in wall time and survives restarts: BlueSight remembers
 when it last saw each proxy. The **proxy offline** incident is judged on a
 separate clock that *does* restart with Home Assistant, on purpose, because a
@@ -303,24 +337,35 @@ If you run the [ESPHome component](docs/esphome-component.md), the dump's
 per signal, so "no telemetry" never looks like "nothing to report"), and
 `silent_sources` names the proxies that sent nothing at all.
 
+The dump also lists every BlueSight Repair and whether it was ignored
+(`repairs`), the incident keys announced open on the bus (`open_event_keys`),
+the readings the saturation Repair is judged on (`saturation`), and each
+device's connections over the day (`connection_history`).
+
 ## Entities
 
 | Entity | Type | State | Key attributes |
 | --- | --- | --- | --- |
-| `sensor.<proxy>_slots_used` | sensor | slots allocated on that proxy | `total`, `free`, `allocated` (list of MACs), `allocated_devices` (list of `{address, name, device_id, path}`, same slots in the same order), `source` |
+| `sensor.<proxy>_slots_used` | sensor | slots allocated on that proxy | `total`, `free`, `allocated` (list of MACs), `allocated_devices` (list of `{address, name, device_id, path, history}`, same slots in the same order), `source` |
 | `sensor.<proxy>_slots_free` | sensor | slots still free on that proxy | — |
 | `binary_sensor.<proxy>_online` | binary_sensor (`connectivity`) | `on` while the proxy is a registered scanner | — |
-| `sensor.<proxy>_last_device_seen` | sensor (`duration`, seconds) | seconds since that proxy last heard an advertisement | `device_count`, `connectable`, `online` |
+| `sensor.<proxy>_last_device_seen` | sensor (`duration`, seconds) | seconds since that proxy last heard an advertisement; for an offline proxy, since it was last seen online, across restarts | `device_count`, `connectable`, `online` |
 | `sensor.<proxy>_saturation_24h` | sensor (`%`) | share of the last 24h that proxy spent with **no free slot** | `longest_saturated_s`, `episodes`, `observed_s`, `window_s`, `source` |
+| `sensor.bluesight_connections_24h` | sensor | slots taken across the fleet over the last 24h | `devices` (the 20 busiest: `{address, name, connections, proxy_changes, proxies}`), `observed_s`, `window_s` |
 | `binary_sensor.bluesight_incident` | binary_sensor (`problem`) | `on` when any incident is open | `incident_count`, `availability_degraded`, `incidents` (list of `{kind, address, device_name, sources, source_names, detail}`, where `device_name` is what Home Assistant calls the peripheral — `""` when it cannot name it — and `source_names` the proxies named the way the detail sentence names them; `kind` ∈ `deadlock` / `ghost_slot` / `storm` / `bond_lost` / `proxy_offline` / `proxy_stalled` / `proxy_reboot_storm`) |
 
-### Saturation is measured, not judged
+### Saturation is measured, and only a Repair judges it
 
-`sensor.<proxy>_saturation_24h` raises no incident and never will on its own.
-A proxy dedicated to three permanent connections is saturated *by design*, and
-the point where busy becomes too busy is not knowable from one fleet — so this
-publishes the measurement rather than a verdict, the way `idle_threshold_s`
-went from an argued 300s to a measured 1800s.
+`sensor.<proxy>_saturation_24h` raises no incident. A proxy dedicated to three
+permanent connections is saturated *by design*, so the measurement was published
+for weeks before any line was drawn on it, the way `idle_threshold_s` went from
+an argued 300s to a measured 1800s.
+
+The one line drawn since comes from nine weeks of this sensor on one fleet of
+four proxies. Ordinary weeks averaged under 2 % of the day full; the two real
+episodes on two proxies, one of them lasting five weeks, averaged 35 to 61 %. Half the day sits clearly between the
+two, and that is where the [Repair](#repairs) appears. One fleet is still one
+fleet, which is why it is a Repair you can ignore rather than an alert.
 
 It is still the most useful number here when nothing is wrong. A proxy sitting
 near 100% while its neighbours idle is why a device will go `unavailable` with
@@ -340,8 +385,8 @@ degraded signal means *absence of ghost incidents proves nothing* — it is
 surfaced here rather than only in the log.
 
 Each proxy is registered as its own Home Assistant device carrying its two slot
-sensors; the incident binary sensor lives on a single **BlueSight** service
-device.
+sensors; the incident binary sensor and the connections sensor live on a single
+**BlueSight** service device.
 
 ## Dashboard
 

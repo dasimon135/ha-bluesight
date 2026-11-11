@@ -6,7 +6,7 @@
 //   tap     — also fire the tile's tap handler, and serialise what it opened
 //   key     — press that key on the tile's row instead, through its listeners
 //   close   — then close whatever the tap or the key opened
-// Prints: { html, size, dialog, attrs, focused } — the card's rendered shadow
+// Prints: { html, size, dialog, attrs, focused, grid, form } — the card's rendered shadow
 // tree, what it answers for `getCardSize()`, the tree of anything mounted on
 // document.body, the attributes of every element that has any (keyed by class
 // name), and the class name of whatever holds the focus.
@@ -153,6 +153,9 @@ global.document = {
   },
   querySelectorAll: () => [],
   body: new FakeElement("body"),
+  // What Home Assistant sets to the displayed language; the static editor
+  // schema reads it, having no `hass` of its own.
+  documentElement: { lang: JSON.parse(process.argv[2]).language || "en" },
 };
 global.window = global;
 // The popup binds Escape on the window.
@@ -240,6 +243,23 @@ if (servesCatalogues(scenario.language)) {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
+// The visual editor's schema, flattened to what an assertion reads: each
+// field's name, the label and helper the card computes for it, and the
+// option labels of a select.
+function editorForm() {
+  const form = registry["bluesight-card"].getConfigForm();
+  return form.schema.map((field) => ({
+    name: field.name,
+    label: form.computeLabel(field),
+    helper: form.computeHelper(field) || null,
+    default: field.default === undefined ? null : field.default,
+    options: field.selector.select
+      ? field.selector.select.options.map((o) => o.label)
+      : null,
+    selector: Object.keys(field.selector)[0],
+  }));
+}
+
 process.stdout.write(
   JSON.stringify({
     html: serialise(card.shadowRoot),
@@ -247,6 +267,8 @@ process.stdout.write(
     dialog: serialise(global.document.body),
     attrs,
     focused: global.__focused ? global.__focused.className : null,
+    grid: card.getGridOptions(),
+    form: editorForm(),
   })
 );
 }

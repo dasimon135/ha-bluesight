@@ -66,6 +66,10 @@
           "proxy_online": "{proxy} est de nouveau en ligne : il n'y a rien à retirer."
         }
       }
+    },
+    "proxy_saturated": {
+      "title": "{proxy} est plein {percent} % de la journée",
+      "description": "Sur les {hours} dernières heures, {proxy} ({source}) n'avait aucun slot de connexion libre {percent} % du temps.\n\nRien n'est en panne : chaque slot qu'il tient sert. Mais un appareil qui ne peut joindre que ce proxy n'obtiendra pas de connexion tant qu'il est plein, et passera **indisponible** sans erreur ni ligne dans le journal.\n\nSi c'est un risque ici, ajoutez un proxy Bluetooth près des appareils qu'il sert, ou rapprochez l'un d'eux d'un autre proxy. Si ce proxy doit rester plein, par exemple réservé à quelques appareils qui gardent une connexion permanente, ignorez cette réparation.\n\nElle disparaît d'elle-même quand le proxy passe moins d'un quart de la journée plein."
     }
   },
   "entity": {
@@ -81,6 +85,9 @@
       },
       "saturation_24h": {
         "name": "Saturation (24 h)"
+      },
+      "connections_24h": {
+        "name": "Connexions (24 h)"
       }
     },
     "binary_sensor": {

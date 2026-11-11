@@ -121,8 +121,17 @@ const EMBEDDED_EN = {
   "card.proxy.offline": "offline",
   "card.proxy.scan_only": "scan only — no connection slots",
   "card.proxy.unknown_device": "unknown to Home Assistant",
-  "card.slot.path": "{rssi} dBm · {proxy} heard it at {stronger}",
-  "card.slot.path_full": "{rssi} dBm · {proxy} heard it at {stronger}, but was full",
+  "card.slot.signal": "{rssi} dBm · {quality}",
+  "card.slot.signal_hint": "Signal heard just before the connection opened",
+  "card.signal.good": "good",
+  "card.signal.fair": "fair",
+  "card.signal.weak": "weak",
+  "card.slot.stronger": "{proxy} heard it at {stronger}",
+  "card.slot.stronger_full": "{proxy} heard it at {stronger}, but was full",
+  "card.slot.connections.one": "{count} connection in 24 h",
+  "card.slot.connections.other": "{count} connections in 24 h",
+  "card.slot.proxy_changes.one": "{count} proxy change",
+  "card.slot.proxy_changes.other": "{count} proxy changes",
   "card.proxy.last_advert": "last advert {age} ago",
   "card.proxy.last_advert_with_devices.one": "last advert {age} ago · {count} device seen",
   "card.proxy.last_advert_with_devices.other": "last advert {age} ago · {count} devices seen",
@@ -135,6 +144,18 @@ const EMBEDDED_EN = {
   "card.tile.slots.other": "{used}/{total} slots",
   "card.tile.no_data": "No diagnostic data",
   "card.dialog.close": "Close",
+  "card.editor.title": "Title",
+  "card.editor.layout": "Layout",
+  "card.editor.layout_helper": "Not set: the full card.",
+  "card.editor.layout_full": "Full card",
+  "card.editor.layout_tile": "One line",
+  "card.editor.show_devices": "Name the device in each slot",
+  "card.editor.show_devices_helper": "Off: one row of slots per proxy, without names. Shorter for a large fleet.",
+  "card.editor.tile_tap": "On tap (one-line layout)",
+  "card.editor.tile_tap_helper": "What tapping the one-line card opens. Not set: the full card, in a popup.",
+  "card.editor.tile_tap_popup": "The full card, in a popup",
+  "card.editor.tile_tap_more_info": "The incident sensor's dialog",
+  "card.editor.incident_entity": "Incident sensor",
   "card.incident.sources": "on {sources}",
   "card.kind.deadlock": "Deadlock",
   "card.kind.ghost_slot": "Ghost slot",
@@ -212,6 +233,29 @@ function interpolate(template, params) {
       ? String(values[name])
       : match
   );
+}
+
+/**
+ * The first usable string for `key` in `language`, or `null`; see
+ * `BlueSightCard._lookup`. At module level so the static editor schema, which
+ * has no card instance, resolves its labels by the same three levels.
+ */
+function lookupKey(language, key) {
+  const sources = [];
+  if (language !== "en" && CATALOGUES.has(language)) {
+    sources.push(CATALOGUES.get(language));
+  }
+  if (CATALOGUES.has("en")) {
+    sources.push(CATALOGUES.get("en"));
+  }
+  sources.push(EMBEDDED_EN);
+  for (const source of sources) {
+    const value = source[key];
+    if (typeof value === "string" && value.trim() !== "") {
+      return value;
+    }
+  }
+  return null;
 }
 
 class BlueSightCard extends HTMLElement {
@@ -404,22 +448,7 @@ class BlueSightCard extends HTMLElement {
    * as a floor the backend does not need.
    */
   _lookup(key) {
-    const language = this._language();
-    const sources = [];
-    if (language !== "en" && CATALOGUES.has(language)) {
-      sources.push(CATALOGUES.get(language));
-    }
-    if (CATALOGUES.has("en")) {
-      sources.push(CATALOGUES.get("en"));
-    }
-    sources.push(EMBEDDED_EN);
-    for (const source of sources) {
-      const value = source[key];
-      if (typeof value === "string" && value.trim() !== "") {
-        return value;
-      }
-    }
-    return null;
+    return lookupKey(this._language(), key);
   }
 
   /**
@@ -872,7 +901,10 @@ class BlueSightCard extends HTMLElement {
             const p = entry.path || {};
             return (
               `${entry.address}=${entry.name}` +
-              `@${p.rssi}/${p.stronger_name}/${p.stronger_rssi}/${p.stronger_was_full}`
+              `@${p.rssi}/${p.quality}/${p.stronger_name}/${p.stronger_rssi}` +
+              `/${p.stronger_was_full}` +
+              `#${(entry.history || {}).connections}` +
+              `/${(entry.history || {}).proxy_changes}`
             );
           })
           .join(",")}`
@@ -1215,6 +1247,11 @@ class BlueSightCard extends HTMLElement {
       cell.appendChild(path);
     }
 
+    const history = this._renderHistory(entry.history);
+    if (history) {
+      cell.appendChild(history);
+    }
+
     if (!entry.device_id) {
       // Its own line, under the address rather than after it: the address is
       // already long enough to wrap on a phone, and a marker that wraps into
@@ -1229,29 +1266,100 @@ class BlueSightCard extends HTMLElement {
   }
 
   /**
-   * Why this slot is on this proxy, or `null` when there is nothing to say.
+   * How well this proxy heard the device, and why it is the one holding the
+   * slot -- or `null` when the backend read nothing.
    *
-   * Only drawn when the backend named a proxy that heard the device clearly
-   * better -- it applies habluetooth's own switch margin, so a route nobody
-   * would question carries no `stronger_name` and gets no line. That a
-   * stronger proxy was *full* is the case worth the pixels: Home Assistant
-   * rules a proxy with no free slot out whatever it hears, so the odd-looking
-   * route is explained rather than merely reported.
+   * The signal is drawn on every row that has one, with the band the backend
+   * put it in: "-91 dBm" asks the reader to know what that means, "weak" does
+   * not. It was read as the slot appeared -- a connected device stops
+   * advertising, so there is no later reading to show -- and the tooltip says
+   * so, because a number that never moves looks live otherwise.
+   *
+   * The second half is drawn only when the backend named a proxy that heard
+   * the device clearly better. It applies habluetooth's own switch margin, so
+   * a route nobody would question carries no `stronger_name`. That a stronger
+   * proxy was *full* is the case worth the pixels: Home Assistant rules a
+   * proxy with no free slot out whatever it hears, so the odd-looking route is
+   * explained rather than merely reported.
    */
+  /** Whether `_renderPath` draws a line; also what `_labelLineCount` counts. */
+  _pathDrawn(path) {
+    return Boolean(path) && typeof path.rssi === "number";
+  }
+
+  /** Whether `_renderHistory` draws a line; the same rule for the sizer. */
+  _historyDrawn(history) {
+    return (
+      Boolean(history) &&
+      typeof history.connections === "number" &&
+      history.connections >= 2
+    );
+  }
+
   _renderPath(path) {
-    if (!path || !path.stronger_name) {
+    if (!this._pathDrawn(path)) {
       return null;
     }
     const line = document.createElement("span");
-    line.className = "slot-path";
-    line.textContent = this._t(
-      path.stronger_was_full ? "card.slot.path_full" : "card.slot.path",
-      {
-        rssi: String(path.rssi),
-        proxy: String(path.stronger_name),
-        stronger: String(path.stronger_rssi),
-      }
-    );
+    const quality = ["good", "fair", "weak"].includes(path.quality)
+      ? path.quality
+      : null;
+    line.className = quality ? `slot-path signal-${quality}` : "slot-path";
+    line.setAttribute("title", this._t("card.slot.signal_hint"));
+    // A backend that publishes no band (none ships without one, but a cached
+    // card can meet anything) still gets the number, which is a fact.
+    const parts = [
+      quality
+        ? this._t("card.slot.signal", {
+            rssi: String(path.rssi),
+            quality: this._t(`card.signal.${quality}`),
+          })
+        : `${path.rssi} dBm`,
+    ];
+    if (path.stronger_name) {
+      parts.push(
+        this._t(
+          path.stronger_was_full ? "card.slot.stronger_full" : "card.slot.stronger",
+          {
+            proxy: String(path.stronger_name),
+            stronger: String(path.stronger_rssi),
+          }
+        )
+      );
+    }
+    line.textContent = parts.join(" · ");
+    return line;
+  }
+
+  /**
+   * How often this device took a slot over the last day, or `null` when that
+   * is not worth a line.
+   *
+   * One connection, held, is what a well-behaved device looks like, so the
+   * line starts at two. Nothing here is a verdict -- a sensor that wakes every
+   * few minutes reconnects all day by design -- which is why it is set in the
+   * same muted type as the signal and never coloured.
+   */
+  _renderHistory(history) {
+    if (!this._historyDrawn(history)) {
+      return null;
+    }
+    const parts = [
+      this._t(
+        "card.slot.connections",
+        { count: String(history.connections) },
+        history.connections
+      ),
+    ];
+    const changes = this._toInt(history.proxy_changes, 0);
+    if (changes > 0) {
+      parts.push(
+        this._t("card.slot.proxy_changes", { count: String(changes) }, changes)
+      );
+    }
+    const line = document.createElement("span");
+    line.className = "slot-history";
+    line.textContent = parts.join(" · ");
     return line;
   }
 
@@ -1522,6 +1630,33 @@ class BlueSightCard extends HTMLElement {
         opacity: 0.8;
         font-variant-numeric: tabular-nums;
       }
+      .slot-history {
+        font-size: 0.8rem;
+        opacity: 0.8;
+        font-variant-numeric: tabular-nums;
+      }
+      /* The band is carried by a mark before the line, not by the text
+         colour: amber text on a light card fails contrast, a dot does not. */
+      .slot-path.signal-good::before,
+      .slot-path.signal-fair::before,
+      .slot-path.signal-weak::before {
+        content: "";
+        display: inline-block;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        margin-right: 5px;
+        vertical-align: 1px;
+      }
+      .slot-path.signal-good::before {
+        background: var(--success-color, #43a047);
+      }
+      .slot-path.signal-fair::before {
+        background: var(--warning-color, #ffa600);
+      }
+      .slot-path.signal-weak::before {
+        background: var(--error-color, #db4437);
+      }
       .pip-hint {
         margin-top: 8px;
         font-size: 0.8rem;
@@ -1643,9 +1778,28 @@ class BlueSightCard extends HTMLElement {
    * proxies draw a rack at all.
    */
   _slotRowCount(entityId, states) {
+    const allocated = this._drawnOccupants(entityId, states);
+    if (allocated === null) {
+      return 0;
+    }
+    const stateObj = states[entityId];
+    const attrs = stateObj.attributes || {};
+    return this._slotCounts(
+      this._toInt(stateObj.state, 0),
+      this._toInt(attrs.total, 0),
+      allocated
+    ).rows;
+  }
+
+  /**
+   * The occupant list a proxy's rack will draw, or `null` when it draws no
+   * rack at all (missing, offline, unavailable) -- the same rule the tile
+   * applies, through the same `_reachability`.
+   */
+  _drawnOccupants(entityId, states) {
     const stateObj = states[entityId];
     if (!stateObj) {
-      return 0; // the "missing" tile: name and a word, no rack
+      return null; // the "missing" tile: name and a word, no rack
     }
     const { offline, unavailable } = this._reachability(
       stateObj,
@@ -1653,17 +1807,36 @@ class BlueSightCard extends HTMLElement {
       this._healthEntities(entityId)
     );
     if (offline || unavailable) {
-      return 0;
+      return null;
     }
     const attrs = stateObj.attributes || {};
-    const allocated = Array.isArray(attrs.allocated_devices)
-      ? attrs.allocated_devices
-      : [];
-    return this._slotCounts(
-      this._toInt(stateObj.state, 0),
-      this._toInt(attrs.total, 0),
-      allocated
-    ).rows;
+    return Array.isArray(attrs.allocated_devices) ? attrs.allocated_devices : [];
+  }
+
+  /**
+   * How many text lines the rack's labels add beyond each row's first one:
+   * the signal line, the connections line, the "unknown" marker.
+   *
+   * A row is 20px for a pip and one line of text; every further line in its
+   * label pushes it down by ~16px, and a fleet where every row shows a signal
+   * and a history is half again as tall as the bare rack. The same predicates
+   * decide what `_renderConnectedDevice` draws, so the count cannot drift
+   * from the drawing. Zero under `show_devices: false`, which draws no label.
+   */
+  _labelLineCount(entityId, states) {
+    if (!this._showDevices()) {
+      return 0;
+    }
+    const allocated = this._drawnOccupants(entityId, states) || [];
+    let lines = 0;
+    for (const device of allocated) {
+      const entry = device || {};
+      if (!entry.address && !entry.name) continue;
+      if (this._pathDrawn(entry.path)) lines += 1;
+      if (this._historyDrawn(entry.history)) lines += 1;
+      if (!entry.device_id) lines += 1;
+    }
+    return lines;
   }
 
   /**
@@ -1673,7 +1846,10 @@ class BlueSightCard extends HTMLElement {
    *
    *   - the tile's fixed part -- borders, padding, the name line, the health
    *     line, the gap to the next tile: ~64px, one unit;
-   *   - with the rack, each row is 20px plus a 4px gap: two rows to a unit;
+   *   - with the rack, each row is 20px plus a 4px gap: two rows to a unit,
+   *     and each label line past a row's first (`_labelLineCount`) ~16px,
+   *     three to a unit -- both counted in one pixel sum so a half-filled
+   *     unit is not rounded up twice;
    *   - without it, the whole slot area is one 14px line of pips plus its 8px
    *     margin -- 22px, the same as a pair of rack rows, so one unit, and the
    *     same one whether the proxy has two slots or eight. That fixed height
@@ -1688,11 +1864,11 @@ class BlueSightCard extends HTMLElement {
    * -- the alternative is a hardcoded guess at the viewer's column width, and
    * masonry re-asks on every state change anyway.
    */
-  _proxyUnits(rows) {
+  _proxyUnits(rows, labelLines = 0) {
     if (!this._showDevices()) {
       return 1 + (rows > 0 ? 1 : 0);
     }
-    return 1 + Math.ceil(rows / 2);
+    return 1 + Math.ceil((rows * 24 + labelLines * 16) / 48);
   }
 
   /**
@@ -1724,14 +1900,109 @@ class BlueSightCard extends HTMLElement {
     }
     let size = 2; // card header + incident area
     for (const entityId of proxies) {
-      size += this._proxyUnits(this._slotRowCount(entityId, states));
+      size += this._proxyUnits(
+        this._slotRowCount(entityId, states),
+        this._labelLineCount(entityId, states)
+      );
     }
     return size;
+  }
+
+  /**
+   * Size in a sections view, which does not ask `getCardSize`.
+   *
+   * The one-line tile is a tile: half a section wide, one row high, like Home
+   * Assistant's own. The full card's height is its content -- a rack grows a
+   * row per slot -- so `rows` is left to its "auto" default, and only the
+   * width is set: the full section, never narrower than half, below which
+   * a device name and its signal line no longer fit beside the pip.
+   */
+  getGridOptions() {
+    if (this._layout() === "tile") {
+      return { columns: 6, rows: 1, min_columns: 3, min_rows: 1, max_rows: 1 };
+    }
+    return { columns: 12, min_columns: 6 };
   }
 
   // Used by the "add card" UI to seed a default config.
   static getStubConfig() {
     return {};
+  }
+
+  /**
+   * The visual editor: Home Assistant renders this schema with its own form
+   * controls, so there is no editor element to maintain.
+   *
+   * A select whose key is absent from the config shows blank: `ha-form` hands
+   * `default` to the control as a placeholder only, and the dropdown ignores
+   * it. The two selects therefore say in their help text what "not set" means,
+   * which is what the card does when the key is missing.
+   *
+   * `proxies` is deliberately not in it. Auto-discovery is the default and
+   * the right answer for nearly everyone, and an entity picker cannot be
+   * narrowed to *slot* sensors -- it would offer every BlueSight sensor and
+   * let a saturation sensor be drawn as a proxy. A list written in YAML is
+   * kept as it is: the form only rewrites the keys it shows.
+   *
+   * Labels come from the card's own catalogue in the language the frontend
+   * is displayed in. This is static -- there is no card instance and no
+   * `hass` to read the viewer's language from -- so it reads the document's,
+   * which Home Assistant sets to the same thing.
+   */
+  static getConfigForm() {
+    const language = baseLanguage(
+      (typeof document !== "undefined" &&
+        document.documentElement &&
+        document.documentElement.lang) ||
+        "en"
+    );
+    loadCatalogue(language, () => {});
+    if (language !== "en") loadCatalogue("en", () => {});
+    const t = (key) => lookupKey(language, key) || key;
+    const option = (value, key) => ({ value, label: t(key) });
+    return {
+      schema: [
+        { name: "title", selector: { text: {} } },
+        {
+          name: "layout",
+          default: "full",
+          selector: {
+            select: {
+              mode: "dropdown",
+              options: [
+                option("full", "card.editor.layout_full"),
+                option("tile", "card.editor.layout_tile"),
+              ],
+            },
+          },
+        },
+        { name: "show_devices", default: true, selector: { boolean: {} } },
+        {
+          name: "tile_tap",
+          default: "popup",
+          selector: {
+            select: {
+              mode: "dropdown",
+              options: [
+                option("popup", "card.editor.tile_tap_popup"),
+                option("more-info", "card.editor.tile_tap_more_info"),
+              ],
+            },
+          },
+        },
+        {
+          name: "incident_entity",
+          selector: {
+            entity: { filter: { domain: "binary_sensor", integration: "bluesight" } },
+          },
+        },
+      ],
+      computeLabel: (schema) => t(`card.editor.${schema.name}`),
+      computeHelper: (schema) =>
+        ["layout", "tile_tap", "show_devices"].includes(schema.name)
+          ? t(`card.editor.${schema.name}_helper`)
+          : undefined,
+    };
   }
 }
 

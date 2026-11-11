@@ -83,10 +83,16 @@ OPTION_DEFAULTS = {
 }
 
 # Window over which per-proxy saturation is measured. 24h, and not a tunable:
-# nothing detects on this reading, so there is no threshold for a user to move
-# it against -- and a day is the span that makes "how often is this proxy full"
-# answerable at all, since a fleet's load follows a daily rhythm.
+# no incident is raised from this reading, and the saturation Repair is one a
+# user ignores rather than tunes -- and a day is the span that makes "how often
+# is this proxy full" answerable at all, since a fleet's load follows a daily
+# rhythm.
 SATURATION_WINDOW_S = 86400.0
+
+# Window over which each device's connections and proxy changes are counted.
+# A day, for the same reason as saturation, and not a tunable either: nothing
+# detects on it.
+CONNECTION_HISTORY_WINDOW_S = 86400.0
 
 SERVICE_FORGET_PROXY = "forget_proxy"
 ATTR_SOURCE = "source"

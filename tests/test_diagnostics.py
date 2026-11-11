@@ -11,11 +11,13 @@ import pytest
 
 pytest.importorskip("homeassistant.core")
 
+from custom_components.bluesight import diagnostics as diagnostics_module
 from custom_components.bluesight.const import DEFAULT_BOND_THRESHOLD, OPTION_DEFAULTS
 from custom_components.bluesight.coordinator_data import BlueSightData
 from custom_components.bluesight.diagnostics import (
     async_get_config_entry_diagnostics,
 )
+from custom_components.bluesight.history import ConnectionHistory
 from custom_components.bluesight.model import (
     Incident,
     IncidentKind,
@@ -33,10 +35,39 @@ class _FakeCoordinator:
         self.reboot_window = FailureWindow(600.0, 3, clock=lambda: 0.0)
         self.tracked_sources = {"AA:BB:CC:DD:EE:FF"}
         self.deltas = CounterDeltas()
+        self.incident_events = None
+        self.connection_history = ConnectionHistory(86400.0, lambda: 0.0)
+        self.saturation = {}
+
+    def saturation_readings(self):
+        return self.saturation
 
     @property
     def counter_baselines(self):
         return self.deltas.baselines
+
+
+class _FakeIssue:
+    def __init__(self, issue_id, key, *, dismissed=None, placeholders=None):
+        self.issue_id = issue_id
+        self.translation_key = key
+        self.translation_placeholders = placeholders
+        self.active = True
+        self.dismissed_version = dismissed
+
+
+class _FakeIssueRegistry:
+    def __init__(self, issues=()):
+        self.issues = {(domain, issue.issue_id): issue for domain, issue in issues}
+
+
+@pytest.fixture(autouse=True)
+def _issue_registry(monkeypatch):
+    """No hass here: the issue registry is faked, empty unless a test fills it."""
+    registry = _FakeIssueRegistry()
+    fake_ir = type("_IR", (), {"async_get": staticmethod(lambda hass: registry)})
+    monkeypatch.setattr(diagnostics_module, "ir", fake_ir)
+    return registry
 
 
 class _FakeEntry:
@@ -193,3 +224,48 @@ def test_the_dump_reports_every_tunable_the_options_flow_offers():
     dump = _dump(_minimal_data())
 
     assert set(OPTION_DEFAULTS) <= set(dump["options"])
+
+
+def test_dump_names_what_is_open_ignored_and_measured(_issue_registry):
+    """A report about a Repair that never appeared, an ignored one, or an
+    automation still waiting for `resolved` is debugged from these."""
+    _issue_registry.issues.update(
+        {
+            ("bluesight", "proxy_saturated_AA"): _FakeIssue(
+                "proxy_saturated_AA", "proxy_saturated",
+                dismissed="2026.11.0", placeholders={"percent": "61"},
+            ),
+            ("other", "x"): _FakeIssue("x", "x"),
+        }
+    )
+    coordinator = _FakeCoordinator(_minimal_data())
+    coordinator.incident_events = type("_E", (), {"open_keys": ["storm|AA"]})()
+    coordinator.saturation = {"AA": (0.61234, 86400.0)}
+    clock = [0.0]
+    coordinator.connection_history = ConnectionHistory(86400.0, lambda: clock[0])
+    coordinator.connection_history.update([])
+    clock[0] = 10.0
+    coordinator.connection_history.update([("AA", "11:22")])
+
+    dump = asyncio.run(
+        async_get_config_entry_diagnostics(None, _FakeEntry(coordinator))
+    )
+    json.dumps(dump)
+
+    assert dump["open_event_keys"] == ["storm|AA"]
+    assert dump["repairs"] == [
+        {
+            "issue_id": "proxy_saturated_AA",
+            "translation_key": "proxy_saturated",
+            "placeholders": {"percent": "61"},
+            "active": True,
+            "ignored": True,
+        }
+    ]
+    assert dump["saturation"] == {"AA": {"ratio": 0.6123, "observed_s": 86400.0}}
+    assert dump["connection_history"] == {
+        "observed_s": 10.0,
+        "devices": {
+            "11:22": {"connections": 1, "proxy_changes": 0, "proxies": ("AA",)}
+        },
+    }

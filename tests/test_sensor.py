@@ -45,8 +45,8 @@ def test_slots_used_native_value_and_attributes() -> None:
         "free": 1,
         "allocated": ["11:22", "33:44"],
         "allocated_devices": [
-            {"address": "11:22", "name": "", "device_id": None, "path": None},
-            {"address": "33:44", "name": "", "device_id": None, "path": None},
+            {"address": "11:22", "name": "", "device_id": None, "path": None, "history": None},
+            {"address": "33:44", "name": "", "device_id": None, "path": None, "history": None},
         ],
         "source": "AA:BB",
     }
@@ -184,9 +184,9 @@ def test_allocated_devices_names_the_slots_it_can_and_says_so_when_it_cannot():
     assert _slots_used_attrs(proxy)["allocated_devices"] == [
         # The saturated proxy from the field report: one of the three slots is
         # held by an address Home Assistant knows nothing about.
-        {"address": "C3:EB:49:65:67:55", "name": "", "device_id": None, "path": None},
-        {"address": "1C:54:9E:8E:1D:2C", "name": "Madoka salon", "device_id": "dev_salon", "path": None},
-        {"address": "1C:54:9E:90:E3:0E", "name": "Madoka parents", "device_id": "dev_parents", "path": None},
+        {"address": "C3:EB:49:65:67:55", "name": "", "device_id": None, "path": None, "history": None},
+        {"address": "1C:54:9E:8E:1D:2C", "name": "Madoka salon", "device_id": "dev_salon", "path": None, "history": None},
+        {"address": "1C:54:9E:90:E3:0E", "name": "Madoka parents", "device_id": "dev_parents", "path": None, "history": None},
     ]
 
 
@@ -208,7 +208,7 @@ def test_the_published_attributes_are_json_shaped() -> None:
         "AA:BB", "proxy-a", 3, 2, ["11:22"], {"11:22": DeviceRef("Madoka", "dev_1")}
     )
     assert json.loads(json.dumps(_slots_used_attrs(proxy)))["allocated_devices"] == [
-        {"address": "11:22", "name": "Madoka", "device_id": "dev_1", "path": None}
+        {"address": "11:22", "name": "Madoka", "device_id": "dev_1", "path": None, "history": None}
     ]
 
 
@@ -296,3 +296,87 @@ def test_a_slot_sensor_names_its_device_as_the_health_sensors_do() -> None:
     sensor = SlotsUsedSensor(_coord_health(health), "AA:BB")
     assert sensor.device_info["name"] == "proxy-a"
 
+
+
+# --- connections across the fleet -------------------------------------------
+
+
+class _HistoryCoordinator:
+    def __init__(self, history, data: BlueSightData) -> None:
+        self.connection_history = history
+        self.data = data
+        self.last_update_success = True
+
+
+def _history_with(*connections: tuple[str, str]):
+    """A history in which each (proxy, device) pair connected once, in order."""
+    from custom_components.bluesight.history import ConnectionHistory
+
+    clock = [0.0]
+    history = ConnectionHistory(86400.0, lambda: clock[0])
+    history.update([])
+    for source, address in connections:
+        clock[0] += 10
+        history.update([(source, address)])
+        clock[0] += 10
+        history.update([])
+    return history
+
+
+def test_connections_total_the_fleet_and_rank_the_busiest_first() -> None:
+    from custom_components.bluesight.sensor import ConnectionsSensor
+
+    history = _history_with(
+        ("P1", "AA"), ("P2", "AA"), ("P1", "AA"), ("P1", "BB")
+    )
+    data = BlueSightData(
+        device_names={"AA": "Plant sensor"},
+        proxy_display_names={"P1": "Proxy Salon"},
+    )
+    sensor = ConnectionsSensor(_HistoryCoordinator(history, data))
+
+    assert sensor.native_value == 4
+    assert sensor.unique_id == "bluesight_connections_24h"
+    attrs = sensor.extra_state_attributes
+    assert attrs["devices"] == [
+        {
+            "address": "AA",
+            "name": "Plant sensor",
+            "connections": 3,
+            "proxy_changes": 2,
+            # Named as the user names the proxy; the address when unnamed.
+            "proxies": ["Proxy Salon", "P2"],
+        },
+        {
+            "address": "BB",
+            "name": "",
+            "connections": 1,
+            "proxy_changes": 0,
+            "proxies": ["Proxy Salon"],
+        },
+    ]
+    assert attrs["window_s"] == 86400.0
+
+
+def test_connections_are_unknown_before_anything_was_watched() -> None:
+    from custom_components.bluesight.history import ConnectionHistory
+    from custom_components.bluesight.sensor import ConnectionsSensor
+
+    history = ConnectionHistory(86400.0, lambda: 0.0)
+    sensor = ConnectionsSensor(_HistoryCoordinator(history, BlueSightData()))
+    assert sensor.native_value is None
+
+
+def test_the_device_list_is_capped_and_kept_out_of_the_recorder() -> None:
+    from custom_components.bluesight.sensor import (
+        CONNECTIONS_LISTED,
+        ConnectionsSensor,
+    )
+
+    history = _history_with(
+        *(("P1", f"{i:02X}") for i in range(CONNECTIONS_LISTED + 5))
+    )
+    sensor = ConnectionsSensor(_HistoryCoordinator(history, BlueSightData()))
+    assert sensor.native_value == CONNECTIONS_LISTED + 5
+    assert len(sensor.extra_state_attributes["devices"]) == CONNECTIONS_LISTED
+    assert "devices" in sensor._unrecorded_attributes
