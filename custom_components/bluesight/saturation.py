@@ -151,9 +151,8 @@ class SaturationWindow:
 # The module docstring above held off on any threshold until there was data.
 # Nine weeks of it from one fleet (four ESP32 proxies, 2026-09 to 2026-11)
 # separate cleanly: ordinary weeks average under 2 % of the day full, and the
-# two real episodes -- one proxy carrying every thermostat for five weeks, one
-# carrying a re-pairing session -- averaged 35 to 61 %. Half the day sits
-# between the two with room on both sides.
+# two real episodes, on two proxies and one of them five weeks long, averaged
+# 35 to 61 %. Half the day sits between the two with room on both sides.
 #
 # One fleet is still one fleet, and "saturated by design" is still a real
 # case. So the verdict is a Repair, not an incident: no push notification, no

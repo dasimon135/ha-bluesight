@@ -6,9 +6,9 @@ entities the integration creates:
 
 - `sensor.<proxy>_slots_used` — state = used count; attributes `total`, `free`,
   `allocated` (list of MACs), `allocated_devices` (the same slots in the same
-  order, each `{address, name, device_id}`; `name` is `""` and `device_id` is
-  `null` for an address Home Assistant's device registry does not know),
-  `source`.
+  order, each `{address, name, device_id, path, history}`; `name` is `""` and
+  `device_id` is `null` for an address Home Assistant's device registry does
+  not know), `source`.
 - `sensor.<proxy>_slots_free` — state = free count.
 - `binary_sensor.<proxy>_online` — `on` while the proxy is a registered scanner.
 - `sensor.<proxy>_last_device_seen` — seconds since that proxy last heard any
@@ -106,19 +106,26 @@ a card that turns entirely red stops meaning anything.
 
 It is a single vanilla-JS file — no build step, no dependencies.
 
-#### Why this proxy
+#### Signal, and why this proxy
 
-Under a slot's device name, when there is something to say:
+Under a slot's device name, the signal the proxy holding it heard the device
+at, with a band and a coloured dot:
 
 ```
 Madoka salon
--82 dBm · Proxy Salon heard it at -54, but was full
+● -82 dBm · fair · Proxy Salon heard it at -54, but was full
+Plant sensor Tomates
+● -99 dBm · weak
 ```
 
-What the proxy holding the slot heard the device at, and which proxy heard it
-clearly better — drawn only when the backend names one, which it does only past
-habluetooth's own 16 dB switch margin. A route nobody would question gets no
-line, so the rack stays quiet.
+The bands are **good** at -70 dBm and above, **fair** down to -85, **weak**
+below. They are ours, not habluetooth's, and they only choose the word: nothing
+detects on them. Hover the line for a reminder that it was measured just before
+the connection opened.
+
+The second half, which proxy heard the device clearly better, is drawn only
+when the backend names one, which it does only past habluetooth's own 16 dB
+switch margin. A route nobody would question gets the signal and nothing more.
 
 "but was full" is the clause worth the pixels. Home Assistant rules a proxy with
 no free slot out of the running whatever it hears, so that phrase turns an
@@ -129,6 +136,31 @@ The reading is taken as the slot appears and never again: a connected device
 stops advertising, and every scanner forgets it minutes later. A slot already
 held when Home Assistant started shows no line, and will not until it
 reconnects. See the README for the full rule.
+
+#### How often it reconnects
+
+From a device's second connection in a day, one more line:
+
+```
+Plant sensor Tomates
+● -99 dBm · weak
+288 connections in 24 h · 3 proxy changes
+```
+
+How many times it took a slot over the last 24 hours, and how many of those went
+through a different proxy than the time before. One connection, held, is what a
+well-behaved device looks like, so it gets no line. Nothing here is a verdict:
+a sensor that wakes every five minutes reconnects all day by design. The count
+starts when Home Assistant does, so a slot held since startup shows nothing.
+
+#### Visual editor and sections
+
+The card has a visual editor (**Edit card**), with the title, the layout, the
+names on or off, the tap action and the incident sensor. `proxies:` is not in
+it: auto-discovery is the default, and a list written in YAML is left as it is.
+
+In a sections view the one-line layout takes half a section, one row high; the
+full card takes the section's width and grows with its rack.
 
 #### `layout: tile` — the whole fleet on one line
 
