@@ -121,8 +121,13 @@ const EMBEDDED_EN = {
   "card.proxy.offline": "offline",
   "card.proxy.scan_only": "scan only — no connection slots",
   "card.proxy.unknown_device": "unknown to Home Assistant",
-  "card.slot.path": "{rssi} dBm · {proxy} heard it at {stronger}",
-  "card.slot.path_full": "{rssi} dBm · {proxy} heard it at {stronger}, but was full",
+  "card.slot.signal": "{rssi} dBm · {quality}",
+  "card.slot.signal_hint": "Signal heard just before the connection opened",
+  "card.signal.good": "good",
+  "card.signal.fair": "fair",
+  "card.signal.weak": "weak",
+  "card.slot.stronger": "{proxy} heard it at {stronger}",
+  "card.slot.stronger_full": "{proxy} heard it at {stronger}, but was full",
   "card.proxy.last_advert": "last advert {age} ago",
   "card.proxy.last_advert_with_devices.one": "last advert {age} ago · {count} device seen",
   "card.proxy.last_advert_with_devices.other": "last advert {age} ago · {count} devices seen",
@@ -872,7 +877,8 @@ class BlueSightCard extends HTMLElement {
             const p = entry.path || {};
             return (
               `${entry.address}=${entry.name}` +
-              `@${p.rssi}/${p.stronger_name}/${p.stronger_rssi}/${p.stronger_was_full}`
+              `@${p.rssi}/${p.quality}/${p.stronger_name}/${p.stronger_rssi}` +
+              `/${p.stronger_was_full}`
             );
           })
           .join(",")}`
@@ -1229,29 +1235,54 @@ class BlueSightCard extends HTMLElement {
   }
 
   /**
-   * Why this slot is on this proxy, or `null` when there is nothing to say.
+   * How well this proxy heard the device, and why it is the one holding the
+   * slot -- or `null` when the backend read nothing.
    *
-   * Only drawn when the backend named a proxy that heard the device clearly
-   * better -- it applies habluetooth's own switch margin, so a route nobody
-   * would question carries no `stronger_name` and gets no line. That a
-   * stronger proxy was *full* is the case worth the pixels: Home Assistant
-   * rules a proxy with no free slot out whatever it hears, so the odd-looking
-   * route is explained rather than merely reported.
+   * The signal is drawn on every row that has one, with the band the backend
+   * put it in: "-91 dBm" asks the reader to know what that means, "weak" does
+   * not. It was read as the slot appeared -- a connected device stops
+   * advertising, so there is no later reading to show -- and the tooltip says
+   * so, because a number that never moves looks live otherwise.
+   *
+   * The second half is drawn only when the backend named a proxy that heard
+   * the device clearly better. It applies habluetooth's own switch margin, so
+   * a route nobody would question carries no `stronger_name`. That a stronger
+   * proxy was *full* is the case worth the pixels: Home Assistant rules a
+   * proxy with no free slot out whatever it hears, so the odd-looking route is
+   * explained rather than merely reported.
    */
   _renderPath(path) {
-    if (!path || !path.stronger_name) {
+    if (!path || typeof path.rssi !== "number") {
       return null;
     }
     const line = document.createElement("span");
-    line.className = "slot-path";
-    line.textContent = this._t(
-      path.stronger_was_full ? "card.slot.path_full" : "card.slot.path",
-      {
-        rssi: String(path.rssi),
-        proxy: String(path.stronger_name),
-        stronger: String(path.stronger_rssi),
-      }
-    );
+    const quality = ["good", "fair", "weak"].includes(path.quality)
+      ? path.quality
+      : null;
+    line.className = quality ? `slot-path signal-${quality}` : "slot-path";
+    line.setAttribute("title", this._t("card.slot.signal_hint"));
+    // A backend that publishes no band (none ships without one, but a cached
+    // card can meet anything) still gets the number, which is a fact.
+    const parts = [
+      quality
+        ? this._t("card.slot.signal", {
+            rssi: String(path.rssi),
+            quality: this._t(`card.signal.${quality}`),
+          })
+        : `${path.rssi} dBm`,
+    ];
+    if (path.stronger_name) {
+      parts.push(
+        this._t(
+          path.stronger_was_full ? "card.slot.stronger_full" : "card.slot.stronger",
+          {
+            proxy: String(path.stronger_name),
+            stronger: String(path.stronger_rssi),
+          }
+        )
+      );
+    }
+    line.textContent = parts.join(" · ");
     return line;
   }
 
@@ -1521,6 +1552,28 @@ class BlueSightCard extends HTMLElement {
         font-size: 0.8rem;
         opacity: 0.8;
         font-variant-numeric: tabular-nums;
+      }
+      /* The band is carried by a mark before the line, not by the text
+         colour: amber text on a light card fails contrast, a dot does not. */
+      .slot-path.signal-good::before,
+      .slot-path.signal-fair::before,
+      .slot-path.signal-weak::before {
+        content: "";
+        display: inline-block;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        margin-right: 5px;
+        vertical-align: 1px;
+      }
+      .slot-path.signal-good::before {
+        background: var(--success-color, #43a047);
+      }
+      .slot-path.signal-fair::before {
+        background: var(--warning-color, #ffa600);
+      }
+      .slot-path.signal-weak::before {
+        background: var(--error-color, #db4437);
       }
       .pip-hint {
         margin-top: 8px;

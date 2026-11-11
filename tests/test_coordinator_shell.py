@@ -1406,6 +1406,7 @@ def test_a_slots_route_is_read_as_it_appears_and_published(monkeypatch):
     [entry] = c._snapshot().proxies[0].allocated_devices
     assert entry["path"] == {
         "rssi": -82,
+        "quality": "fair",
         "stronger_source": near,
         "stronger_name": "Proxy Salon",
         "stronger_rssi": -54,
