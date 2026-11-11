@@ -144,6 +144,17 @@ const EMBEDDED_EN = {
   "card.tile.slots.other": "{used}/{total} slots",
   "card.tile.no_data": "No diagnostic data",
   "card.dialog.close": "Close",
+  "card.editor.title": "Title",
+  "card.editor.layout": "Layout",
+  "card.editor.layout_full": "Full card",
+  "card.editor.layout_tile": "One line",
+  "card.editor.show_devices": "Name the device in each slot",
+  "card.editor.show_devices_helper": "Off: one row of slots per proxy, without names. Shorter for a large fleet.",
+  "card.editor.tile_tap": "On tap (one-line layout)",
+  "card.editor.tile_tap_helper": "What tapping the one-line card opens.",
+  "card.editor.tile_tap_popup": "The full card, in a popup",
+  "card.editor.tile_tap_more_info": "The incident sensor's dialog",
+  "card.editor.incident_entity": "Incident sensor",
   "card.incident.sources": "on {sources}",
   "card.kind.deadlock": "Deadlock",
   "card.kind.ghost_slot": "Ghost slot",
@@ -221,6 +232,29 @@ function interpolate(template, params) {
       ? String(values[name])
       : match
   );
+}
+
+/**
+ * The first usable string for `key` in `language`, or `null`; see
+ * `BlueSightCard._lookup`. At module level so the static editor schema, which
+ * has no card instance, resolves its labels by the same three levels.
+ */
+function lookupKey(language, key) {
+  const sources = [];
+  if (language !== "en" && CATALOGUES.has(language)) {
+    sources.push(CATALOGUES.get(language));
+  }
+  if (CATALOGUES.has("en")) {
+    sources.push(CATALOGUES.get("en"));
+  }
+  sources.push(EMBEDDED_EN);
+  for (const source of sources) {
+    const value = source[key];
+    if (typeof value === "string" && value.trim() !== "") {
+      return value;
+    }
+  }
+  return null;
 }
 
 class BlueSightCard extends HTMLElement {
@@ -413,22 +447,7 @@ class BlueSightCard extends HTMLElement {
    * as a floor the backend does not need.
    */
   _lookup(key) {
-    const language = this._language();
-    const sources = [];
-    if (language !== "en" && CATALOGUES.has(language)) {
-      sources.push(CATALOGUES.get(language));
-    }
-    if (CATALOGUES.has("en")) {
-      sources.push(CATALOGUES.get("en"));
-    }
-    sources.push(EMBEDDED_EN);
-    for (const source of sources) {
-      const value = source[key];
-      if (typeof value === "string" && value.trim() !== "") {
-        return value;
-      }
-    }
-    return null;
+    return lookupKey(this._language(), key);
   }
 
   /**
@@ -1262,8 +1281,22 @@ class BlueSightCard extends HTMLElement {
    * proxy with no free slot out whatever it hears, so the odd-looking route is
    * explained rather than merely reported.
    */
+  /** Whether `_renderPath` draws a line; also what `_labelLineCount` counts. */
+  _pathDrawn(path) {
+    return Boolean(path) && typeof path.rssi === "number";
+  }
+
+  /** Whether `_renderHistory` draws a line; the same rule for the sizer. */
+  _historyDrawn(history) {
+    return (
+      Boolean(history) &&
+      typeof history.connections === "number" &&
+      history.connections >= 2
+    );
+  }
+
   _renderPath(path) {
-    if (!path || typeof path.rssi !== "number") {
+    if (!this._pathDrawn(path)) {
       return null;
     }
     const line = document.createElement("span");
@@ -1307,10 +1340,7 @@ class BlueSightCard extends HTMLElement {
    * same muted type as the signal and never coloured.
    */
   _renderHistory(history) {
-    if (!history || typeof history.connections !== "number") {
-      return null;
-    }
-    if (history.connections < 2) {
+    if (!this._historyDrawn(history)) {
       return null;
     }
     const parts = [
@@ -1747,9 +1777,28 @@ class BlueSightCard extends HTMLElement {
    * proxies draw a rack at all.
    */
   _slotRowCount(entityId, states) {
+    const allocated = this._drawnOccupants(entityId, states);
+    if (allocated === null) {
+      return 0;
+    }
+    const stateObj = states[entityId];
+    const attrs = stateObj.attributes || {};
+    return this._slotCounts(
+      this._toInt(stateObj.state, 0),
+      this._toInt(attrs.total, 0),
+      allocated
+    ).rows;
+  }
+
+  /**
+   * The occupant list a proxy's rack will draw, or `null` when it draws no
+   * rack at all (missing, offline, unavailable) -- the same rule the tile
+   * applies, through the same `_reachability`.
+   */
+  _drawnOccupants(entityId, states) {
     const stateObj = states[entityId];
     if (!stateObj) {
-      return 0; // the "missing" tile: name and a word, no rack
+      return null; // the "missing" tile: name and a word, no rack
     }
     const { offline, unavailable } = this._reachability(
       stateObj,
@@ -1757,17 +1806,36 @@ class BlueSightCard extends HTMLElement {
       this._healthEntities(entityId)
     );
     if (offline || unavailable) {
-      return 0;
+      return null;
     }
     const attrs = stateObj.attributes || {};
-    const allocated = Array.isArray(attrs.allocated_devices)
-      ? attrs.allocated_devices
-      : [];
-    return this._slotCounts(
-      this._toInt(stateObj.state, 0),
-      this._toInt(attrs.total, 0),
-      allocated
-    ).rows;
+    return Array.isArray(attrs.allocated_devices) ? attrs.allocated_devices : [];
+  }
+
+  /**
+   * How many text lines the rack's labels add beyond each row's first one:
+   * the signal line, the connections line, the "unknown" marker.
+   *
+   * A row is 20px for a pip and one line of text; every further line in its
+   * label pushes it down by ~16px, and a fleet where every row shows a signal
+   * and a history is half again as tall as the bare rack. The same predicates
+   * decide what `_renderConnectedDevice` draws, so the count cannot drift
+   * from the drawing. Zero under `show_devices: false`, which draws no label.
+   */
+  _labelLineCount(entityId, states) {
+    if (!this._showDevices()) {
+      return 0;
+    }
+    const allocated = this._drawnOccupants(entityId, states) || [];
+    let lines = 0;
+    for (const device of allocated) {
+      const entry = device || {};
+      if (!entry.address && !entry.name) continue;
+      if (this._pathDrawn(entry.path)) lines += 1;
+      if (this._historyDrawn(entry.history)) lines += 1;
+      if (!entry.device_id) lines += 1;
+    }
+    return lines;
   }
 
   /**
@@ -1777,7 +1845,10 @@ class BlueSightCard extends HTMLElement {
    *
    *   - the tile's fixed part -- borders, padding, the name line, the health
    *     line, the gap to the next tile: ~64px, one unit;
-   *   - with the rack, each row is 20px plus a 4px gap: two rows to a unit;
+   *   - with the rack, each row is 20px plus a 4px gap: two rows to a unit,
+   *     and each label line past a row's first (`_labelLineCount`) ~16px,
+   *     three to a unit -- both counted in one pixel sum so a half-filled
+   *     unit is not rounded up twice;
    *   - without it, the whole slot area is one 14px line of pips plus its 8px
    *     margin -- 22px, the same as a pair of rack rows, so one unit, and the
    *     same one whether the proxy has two slots or eight. That fixed height
@@ -1792,11 +1863,11 @@ class BlueSightCard extends HTMLElement {
    * -- the alternative is a hardcoded guess at the viewer's column width, and
    * masonry re-asks on every state change anyway.
    */
-  _proxyUnits(rows) {
+  _proxyUnits(rows, labelLines = 0) {
     if (!this._showDevices()) {
       return 1 + (rows > 0 ? 1 : 0);
     }
-    return 1 + Math.ceil(rows / 2);
+    return 1 + Math.ceil((rows * 24 + labelLines * 16) / 48);
   }
 
   /**
@@ -1828,14 +1899,104 @@ class BlueSightCard extends HTMLElement {
     }
     let size = 2; // card header + incident area
     for (const entityId of proxies) {
-      size += this._proxyUnits(this._slotRowCount(entityId, states));
+      size += this._proxyUnits(
+        this._slotRowCount(entityId, states),
+        this._labelLineCount(entityId, states)
+      );
     }
     return size;
+  }
+
+  /**
+   * Size in a sections view, which does not ask `getCardSize`.
+   *
+   * The one-line tile is a tile: half a section wide, one row high, like Home
+   * Assistant's own. The full card's height is its content -- a rack grows a
+   * row per slot -- so `rows` is left to its "auto" default, and only the
+   * width is set: the full section, never narrower than half, below which
+   * a device name and its signal line no longer fit beside the pip.
+   */
+  getGridOptions() {
+    if (this._layout() === "tile") {
+      return { columns: 6, rows: 1, min_columns: 3, min_rows: 1, max_rows: 1 };
+    }
+    return { columns: 12, min_columns: 6 };
   }
 
   // Used by the "add card" UI to seed a default config.
   static getStubConfig() {
     return {};
+  }
+
+  /**
+   * The visual editor: Home Assistant renders this schema with its own form
+   * controls, so there is no editor element to maintain.
+   *
+   * `proxies` is deliberately not in it. Auto-discovery is the default and
+   * the right answer for nearly everyone, and an entity picker cannot be
+   * narrowed to *slot* sensors -- it would offer every BlueSight sensor and
+   * let a saturation sensor be drawn as a proxy. A list written in YAML is
+   * kept as it is: the form only rewrites the keys it shows.
+   *
+   * Labels come from the card's own catalogue in the language the frontend
+   * is displayed in. This is static -- there is no card instance and no
+   * `hass` to read the viewer's language from -- so it reads the document's,
+   * which Home Assistant sets to the same thing.
+   */
+  static getConfigForm() {
+    const language = baseLanguage(
+      (typeof document !== "undefined" &&
+        document.documentElement &&
+        document.documentElement.lang) ||
+        "en"
+    );
+    loadCatalogue(language, () => {});
+    if (language !== "en") loadCatalogue("en", () => {});
+    const t = (key) => lookupKey(language, key) || key;
+    const option = (value, key) => ({ value, label: t(key) });
+    return {
+      schema: [
+        { name: "title", selector: { text: {} } },
+        {
+          name: "layout",
+          default: "full",
+          selector: {
+            select: {
+              mode: "dropdown",
+              options: [
+                option("full", "card.editor.layout_full"),
+                option("tile", "card.editor.layout_tile"),
+              ],
+            },
+          },
+        },
+        { name: "show_devices", default: true, selector: { boolean: {} } },
+        {
+          name: "tile_tap",
+          default: "popup",
+          selector: {
+            select: {
+              mode: "dropdown",
+              options: [
+                option("popup", "card.editor.tile_tap_popup"),
+                option("more-info", "card.editor.tile_tap_more_info"),
+              ],
+            },
+          },
+        },
+        {
+          name: "incident_entity",
+          selector: {
+            entity: { filter: { domain: "binary_sensor", integration: "bluesight" } },
+          },
+        },
+      ],
+      computeLabel: (schema) => t(`card.editor.${schema.name}`),
+      computeHelper: (schema) =>
+        schema.name === "tile_tap" || schema.name === "show_devices"
+          ? t(`card.editor.${schema.name}_helper`)
+          : undefined,
+    };
   }
 }
 

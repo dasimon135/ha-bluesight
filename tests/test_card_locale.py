@@ -341,7 +341,8 @@ def test_the_card_size_knows_which_layout_it_is_measuring(card_source):
     """
     body = _method_body(card_source, "_proxyUnits")
     assert "this._showDevices()" in body
-    assert "Math.ceil(rows / 2)" in body
+    assert "rows * 24" in body
+    assert "labelLines * 16" in body
     assert "this._proxyUnits(" in _method_body(card_source, "getCardSize")
 
 
