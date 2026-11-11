@@ -146,12 +146,13 @@ const EMBEDDED_EN = {
   "card.dialog.close": "Close",
   "card.editor.title": "Title",
   "card.editor.layout": "Layout",
+  "card.editor.layout_helper": "Not set: the full card.",
   "card.editor.layout_full": "Full card",
   "card.editor.layout_tile": "One line",
   "card.editor.show_devices": "Name the device in each slot",
   "card.editor.show_devices_helper": "Off: one row of slots per proxy, without names. Shorter for a large fleet.",
   "card.editor.tile_tap": "On tap (one-line layout)",
-  "card.editor.tile_tap_helper": "What tapping the one-line card opens.",
+  "card.editor.tile_tap_helper": "What tapping the one-line card opens. Not set: the full card, in a popup.",
   "card.editor.tile_tap_popup": "The full card, in a popup",
   "card.editor.tile_tap_more_info": "The incident sensor's dialog",
   "card.editor.incident_entity": "Incident sensor",
@@ -1932,6 +1933,11 @@ class BlueSightCard extends HTMLElement {
    * The visual editor: Home Assistant renders this schema with its own form
    * controls, so there is no editor element to maintain.
    *
+   * A select whose key is absent from the config shows blank: `ha-form` hands
+   * `default` to the control as a placeholder only, and the dropdown ignores
+   * it. The two selects therefore say in their help text what "not set" means,
+   * which is what the card does when the key is missing.
+   *
    * `proxies` is deliberately not in it. Auto-discovery is the default and
    * the right answer for nearly everyone, and an entity picker cannot be
    * narrowed to *slot* sensors -- it would offer every BlueSight sensor and
@@ -1993,7 +1999,7 @@ class BlueSightCard extends HTMLElement {
       ],
       computeLabel: (schema) => t(`card.editor.${schema.name}`),
       computeHelper: (schema) =>
-        schema.name === "tile_tap" || schema.name === "show_devices"
+        ["layout", "tile_tap", "show_devices"].includes(schema.name)
           ? t(`card.editor.${schema.name}_helper`)
           : undefined,
     };

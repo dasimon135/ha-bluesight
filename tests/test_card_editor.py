@@ -119,7 +119,9 @@ def test_the_editor_is_labelled_in_english():
     by_name = {f["name"]: f for f in _run()["form"]}
     assert by_name["show_devices"]["label"] == "Name the device in each slot"
     assert by_name["layout"]["options"] == ["Full card", "One line"]
-    assert by_name["tile_tap"]["helper"] == "What tapping the one-line card opens."
+    assert by_name["tile_tap"]["helper"] == (
+        "What tapping the one-line card opens. Not set: the full card, in a popup."
+    )
     assert by_name["title"]["helper"] is None
 
 
@@ -127,3 +129,14 @@ def test_the_editor_is_labelled_in_the_displayed_language():
     by_name = {f["name"]: f for f in _run(language="fr")["form"]}
     assert by_name["show_devices"]["label"] == "Nommer l'appareil de chaque slot"
     assert by_name["layout"]["options"] == ["Carte complète", "Une ligne"]
+
+
+def test_a_blank_select_says_what_blank_means():
+    """`ha-form` shows a select whose key is absent as blank -- it hands
+    `default` to the control as a placeholder the dropdown ignores -- so the
+    help text carries the default instead, in the displayed language."""
+    en = {f["name"]: f for f in _run()["form"]}
+    assert en["layout"]["helper"] == "Not set: the full card."
+    fr = {f["name"]: f for f in _run(language="fr")["form"]}
+    assert fr["layout"]["helper"] == "Non défini : la carte complète."
+    assert "Non défini" in fr["tile_tap"]["helper"]
