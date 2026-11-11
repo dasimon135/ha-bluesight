@@ -168,3 +168,13 @@ def test_a_resolved_event_keeps_the_flag_it_opened_with():
         ("opened", True),
         ("resolved", True),
     ]
+
+
+def test_open_keys_list_what_was_announced_and_not_yet_resolved():
+    """Read by diagnostics: the list to check a missing `resolved` against."""
+    events, _fired = _events()
+    assert events.open_keys == []
+    events.async_update([_ghost()], {}, {})
+    assert events.open_keys == [_ghost().key]
+    events.async_update([], {}, {})
+    assert events.open_keys == []

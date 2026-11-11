@@ -132,12 +132,11 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
     #: ``__init__`` (the shell tests do this deliberately) still snapshots,
     #: with incident details left unrendered rather than crashing.
     catalogue: Catalogue | None = None
-    #: What setup hung off this coordinator to publish its snapshots -- the
-    #: incident events and the saturation Repairs. Set by `async_setup_entry`
-    #: and read only by diagnostics, which has to be able to say what is open
-    #: and has nothing else to reach them through. None until setup.
+    #: The `bluesight_incident` publisher setup hung off this coordinator.
+    #: Set by `async_setup_entry` and read only by diagnostics, which has to
+    #: be able to say which incidents are announced open and has nothing else
+    #: to reach it through. None until setup.
     incident_events: Any = None
-    saturation_issues: Any = None
 
     def __init__(
         self,
@@ -446,13 +445,25 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         # `health` itself stays the registered scanners: it is also the list of
         # proxies worth asking for telemetry, and these cannot answer.
         registered = {h.source for h in health}
+        # What the proxy's `last_device_seen` sensor publishes while it is
+        # gone: the time since it was last seen online, which is when it last
+        # heard anything it could tell us about. On the wall clock, persisted,
+        # where one exists: `offline_for` is restarted at every Home Assistant
+        # start (see `restart_offline_clock`), which is right for the grace
+        # period and made a proxy dead since yesterday read "12 s" after a
+        # restart. No detector reads this field for an offline proxy --
+        # `detect_stalled_proxies` judges online ones only, and the offline
+        # incident has `offline_for` -- so only the sensor changes.
+        offline_wall = self.offline_seconds()
         dropped_off = [
             ProxyHealth(
                 source=src,
                 name=self._names.get(src, src),
                 connectable=self._connectable.get(src, False),
                 online=False,
-                seconds_since_detection=offline_for[src],
+                seconds_since_detection=max(
+                    offline_for[src], offline_wall.get(src, 0.0)
+                ),
                 device_count=0,
             )
             for src in sorted(self._last_online.keys() - registered)

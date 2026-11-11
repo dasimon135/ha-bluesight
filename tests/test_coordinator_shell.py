@@ -920,6 +920,34 @@ def test_an_offline_proxy_is_not_asked_for_telemetry(monkeypatch):
     assert [i.kind for i in data.incidents] == [IncidentKind.PROXY_OFFLINE]
 
 
+def test_an_offline_proxys_age_survives_a_restart(monkeypatch):
+    """`last_device_seen` used to read the monotonic gap, which every start of
+    Home Assistant resets: a proxy dead since yesterday read "12 s" just after
+    a restart. The persisted wall clock knows better, and wins."""
+    now = _clock(monkeypatch)
+    c = _empty_fleet(monkeypatch, grace_s=90.0)
+    monkeypatch.setattr(coordinator_module.time, "time", lambda: 100_000.0)
+    c._last_seen_wall = {PROXY: 100_000.0 - 86_400.0}
+    c.remember_proxies([(PROXY, "Kitchen proxy")])   # stamped "now", monotonic
+    now[0] += 12.0
+
+    [health] = c._snapshot().proxies_health
+    assert health.online is False
+    assert health.seconds_since_detection == 86_400.0
+
+
+def test_a_proxy_with_no_stored_age_falls_back_to_this_run(monkeypatch):
+    now = _clock(monkeypatch)
+    c = _empty_fleet(monkeypatch, grace_s=90.0)
+    monkeypatch.setattr(coordinator_module.time, "time", lambda: 100_000.0)
+    c.remember_proxies([(PROXY, "Kitchen proxy")])
+    c._last_seen_wall = {}
+    now[0] += 12.0
+
+    [health] = c._snapshot().proxies_health
+    assert health.seconds_since_detection == 12.0
+
+
 def test_a_forgotten_proxy_is_not_reported_offline(monkeypatch):
     c, _data = _proxy_that_drops_off(monkeypatch)
     assert c.forget_proxy(PROXY) is True

@@ -94,9 +94,9 @@ async def async_setup_entry(
     # And, for a proxy that spends half the day with no free slot, a Repair
     # saying so -- not an incident: see `saturation_notice`.
     saturations = SaturationIssues(hass)
-    # Read back by diagnostics, which must be able to say what is open.
+    # Read back by diagnostics, which must be able to say which incidents an
+    # automation has been told are open.
     coordinator.incident_events = events
-    coordinator.saturation_issues = saturations
 
     @callback
     def _publish_incidents() -> None:
