@@ -86,7 +86,9 @@ def _bare_coordinator() -> BlueSightCoordinator:
     # pressure history until it has been seen.
     c._saturation = {}
     c._path_tracker = PathTracker()
-    c._history = ConnectionHistory(86400.0, lambda: 0.0)
+    c._history = ConnectionHistory(
+        86400.0, lambda: coordinator_module.time.monotonic()
+    )
     return c
 
 
@@ -1465,6 +1467,111 @@ def test_a_slot_held_at_startup_has_no_history_and_a_new_one_does(monkeypatch):
     assert c.connection_history.for_address(PERIPHERAL).proxies == (PROXY,)
 
 
+# --- the day so far, across a restart ---------------------------------------
+
+
+def test_the_windows_are_written_with_the_store(monkeypatch):
+    import json
+
+    _clock(monkeypatch)
+    c = _telemetry_coordinator(
+        monkeypatch, entries={}, states={}, allocated=[PERIPHERAL]
+    )
+    monkeypatch.setattr(coordinator_module.time, "time", lambda: 7_000.0)
+    c._snapshot()
+    assert c._store.saved is not None       # a write was asked for
+    # The real store calls the payload function when it writes, which is after
+    # the snapshot has created the windows; the fake calls it at the ask. So the
+    # payload is read here, as the real store would read it.
+    saved = c._store_payload()
+    assert saved["saved_at"] == 7_000.0
+    assert set(saved["saturation"]) == {PROXY}
+    assert {"observed_s", "events", "before"} <= set(saved["history"])
+    json.dumps(saved)                       # the store takes plain JSON only
+
+
+def test_a_restart_keeps_the_day_so_far(monkeypatch):
+    """Home Assistant restarts several times a week. Counts and saturation that
+    start from zero each time are not a day's, and a Repair that needs twelve
+    watched hours would never be reached."""
+    import json
+
+    now = _clock(monkeypatch, start=1_000.0)
+    wall = {"t": 50_000.0}
+    monkeypatch.setattr(coordinator_module.time, "time", lambda: wall["t"])
+    old = _telemetry_coordinator(monkeypatch, entries={}, states={}, allocated=[])
+    old._snapshot()                          # baseline
+    now[0] += 600
+    old._manager = _telemetry_manager([PERIPHERAL])
+    old._snapshot()                          # one connection
+    now[0] += 3_000
+    old._snapshot()
+    saved = json.loads(json.dumps(old._store_payload()))
+
+    # A new process: a monotonic clock that starts over, 120 s later by the wall.
+    now[0] = 5.0
+    wall["t"] += 120.0
+    new = _telemetry_coordinator(
+        monkeypatch, entries={}, states={}, allocated=[PERIPHERAL]
+    )
+    new._store = _FakeStore(saved)
+    asyncio.run(new._async_load_last_seen())
+
+    assert new.connection_history.for_address(PERIPHERAL).connections == 1
+    assert new.connection_history.observed_s() == 3_600.0
+    assert new.saturation_for(PROXY).observed_s() == 3_000.0
+
+    # The slot held when it comes back is a baseline, not a new connection.
+    new._snapshot()
+    assert new.connection_history.for_address(PERIPHERAL).connections == 1
+
+
+def test_a_file_from_before_the_windows_were_saved_restores_nothing():
+    c = _bare_coordinator()
+    c._store = _FakeStore({"last_seen": {PROXY: 5.0}})
+    asyncio.run(c._async_load_last_seen())
+    assert c._last_seen_wall == {PROXY: 5.0}
+    assert c._saturation == {}
+    assert c.connection_history.observed_s() == 0.0
+
+
+def test_a_corrupt_history_costs_the_history_and_nothing_else():
+    """The last-seen map and the windows are read apart: a file whose map is
+    fine and whose history is not must keep the one and lose the other."""
+    c = _bare_coordinator()
+    c._store = _FakeStore(
+        {
+            "saved_at": 1.0,
+            "last_seen": {PROXY: 5.0},
+            "history": {"observed_s": "soon", "events": {}, "before": {}},
+            "saturation": {PROXY: {"observed_s": 1.0, "transitions": [["x", True]]}},
+        }
+    )
+    asyncio.run(c._async_load_last_seen())
+    assert c._last_seen_wall == {PROXY: 5.0}
+    assert c._saturation == {}
+    assert c.connection_history.observed_s() == 0.0
+    assert c.connection_history.all() == {}
+
+
+def test_a_clock_that_jumped_backwards_counts_as_no_downtime(monkeypatch):
+    now = _clock(monkeypatch, start=1_000.0)
+    wall = {"t": 50_000.0}
+    monkeypatch.setattr(coordinator_module.time, "time", lambda: wall["t"])
+    old = _telemetry_coordinator(monkeypatch, entries={}, states={}, allocated=[])
+    old._snapshot()
+    now[0] += 600
+    old._snapshot()
+    saved = old._store_payload()
+
+    now[0] = 5.0
+    wall["t"] -= 3_600.0                     # the wall clock went back an hour
+    new = _telemetry_coordinator(monkeypatch, entries={}, states={}, allocated=[])
+    new._store = _FakeStore(saved)
+    asyncio.run(new._async_load_last_seen())
+    assert new.connection_history.observed_s() == 600.0
+
+
 # --- the clock the retirement Repair reads ---------------------------------
 
 
@@ -1519,14 +1626,14 @@ def test_forgetting_a_proxy_forgets_when_it_was_last_seen():
     c._last_seen_wall = {PROXY: 500.0}
     assert c.forget_proxy(PROXY.lower()) is True
     assert c._last_seen_wall == {}
-    assert c._store.saved == {"last_seen": {}}
+    assert c._store.saved["last_seen"] == {}
 
 
 def test_the_map_is_written_back_when_a_proxy_is_seen(monkeypatch):
     c = _telemetry_coordinator(monkeypatch, entries={}, states={})
     monkeypatch.setattr(coordinator_module.time, "time", lambda: 7_000.0)
     c._snapshot()
-    assert c._store.saved == {"last_seen": {PROXY: 7_000.0}}
+    assert c._store.saved["last_seen"] == {PROXY: 7_000.0}
 
 
 def test_the_map_is_not_asked_to_be_written_on_every_snapshot(monkeypatch):

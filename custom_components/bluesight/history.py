@@ -30,6 +30,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from typing import Any
 
 from .model import normalize_address
 
@@ -73,7 +74,13 @@ class ConnectionHistory:
         }
         if self._held is None:
             self._held = current
-            self._started = now
+            # Kept if a restore already set it: the observation then continues
+            # from where the saved history stopped instead of starting over.
+            if self._started is None:
+                self._started = now
+            # A restored history can hold events that aged out while Home
+            # Assistant was down; this is the first moment to drop them.
+            self._evict(now)
             return
         for source, address in sorted(current - self._held):
             self._events.setdefault(address, deque()).append((now, source))
@@ -125,6 +132,62 @@ class ConnectionHistory:
         if self._started is None:
             return 0.0
         return min(self._clock() - self._started, self.window_s)
+
+    # ---------------------------------------------------------- persistence
+
+    def export(self) -> dict[str, Any]:
+        """The history as plain JSON, for the store.
+
+        Events are written as *ages*, seconds before now, and never as
+        timestamps: this class runs on an injected monotonic clock that starts
+        again with every process, so a timestamp from one run means nothing in
+        the next. The caller records when it was written, and tells
+        :meth:`restore` how long ago that was.
+        """
+        now = self._clock()
+        return {
+            "observed_s": self.observed_s(),
+            "events": {
+                address: [[now - at, source] for at, source in events]
+                for address, events in self._events.items()
+            },
+            "before": dict(self._before),
+        }
+
+    def restore(self, data: dict[str, Any], downtime_s: float) -> None:
+        """Take a saved history back, ``downtime_s`` after it was written.
+
+        Only a history that has not started watching takes it: one that has
+        would have its own, newer past overwritten by a file that is older.
+
+        The events are older by the downtime, which is what ages some of them
+        out of the window. The downtime itself is **not** counted as observed:
+        nothing was watching while Home Assistant was down, and ``observed_s``
+        is the claim of how much of the day the numbers rest on.
+
+        ``_held`` stays unset, so the first snapshot after a restore is still a
+        baseline. A slot held when Home Assistant comes back is not a
+        connection: the device may or may not have reconnected meanwhile, and
+        counting it would give every restart one connection per device.
+        """
+        if self._held is not None or self._started is not None or self._events:
+            return
+        downtime_s = max(0.0, downtime_s)
+        # What the saved history watched, and the window still reaches back to.
+        # Down for longer than the window, none of it does, and claiming the
+        # coverage the file recorded would be claiming a day nobody watched.
+        observed = min(float(data["observed_s"]), self.window_s - downtime_s)
+        if observed <= 0:
+            return
+        now = self._clock()
+        self._started = now - observed
+        for address, events in data["events"].items():
+            self._events[address] = deque(
+                (now - float(age) - downtime_s, str(source)) for age, source in events
+            )
+        self._before = {
+            address: str(source) for address, source in data["before"].items()
+        }
 
 
 def history_attributes(history: DeviceHistory | None) -> dict[str, int] | None:
