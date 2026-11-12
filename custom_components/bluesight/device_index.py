@@ -257,6 +257,22 @@ def own_proxy_records(devices: Iterable[Any], own_domain: str) -> list[tuple[str
     return sorted(records)
 
 
+_TRAILING_MAC = re.compile(r"\s*\(([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})\)\s*$")
+
+
+def _without_own_mac(name: str, source: str) -> str:
+    """``name`` without a trailing ``(MAC)`` that is ``source`` itself.
+
+    Only the proxy's *own* address: another one in a name is information, and
+    a name reduced to nothing by the strip is kept whole, since there would be
+    nothing left to call the proxy by.
+    """
+    match = _TRAILING_MAC.search(name)
+    if match is None or normalize_address(match.group(1)) != normalize_address(source):
+        return name
+    return name[: match.start()].strip() or name
+
+
 def resolve_proxy_names(
     scanner_names: dict[str, str], user_names: dict[str, str]
 ) -> dict[str, str]:
@@ -272,6 +288,11 @@ def resolve_proxy_names(
     proxy's BlueSight device to, and it is already what every entity on that
     device reports and what the card draws.
 
+    The scanner name loses the ``(MAC)`` on its end when that is the proxy's own
+    address: the node name already says which proxy it is, and the address is
+    the source key every incident carries anyway. The user's name is never
+    edited.
+
     A proxy in neither map simply is not here, and the detectors fall back to
     the raw source address, exactly as before. Blank names on either side are
     dropped rather than carried: an empty ``{proxy}`` is worse than a MAC, and
@@ -284,7 +305,11 @@ def resolve_proxy_names(
     creation would write the user's name into that field and make the rename
     impossible to undo.
     """
-    resolved = {k: v.strip() for k, v in scanner_names.items() if v and v.strip()}
+    resolved = {
+        k: _without_own_mac(v.strip(), k)
+        for k, v in scanner_names.items()
+        if v and v.strip()
+    }
     resolved.update(
         {k: v.strip() for k, v in user_names.items() if v and v.strip()}
     )

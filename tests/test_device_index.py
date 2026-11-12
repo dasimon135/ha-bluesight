@@ -504,3 +504,51 @@ def test_a_nameless_device_is_still_a_known_proxy():
         [_NamedDevice("d1", identifiers={("bluesight", PROXY_MAC)})], "bluesight"
     )
     assert records == [(PROXY_MAC, "")]
+
+
+# --- the MAC glued onto a scanner name ---------------------------------------
+
+
+def test_a_proxys_own_mac_is_dropped_from_its_scanner_name():
+    """habluetooth names an ESPHome proxy "node (MAC)". The node name says which
+    proxy it is; the MAC is the source key the incident already carries, and
+    inside a sentence that names the proxy twice it is only noise."""
+    from custom_components.bluesight.device_index import resolve_proxy_names
+
+    assert resolve_proxy_names(
+        {PROXY_MAC: f"atomebuanderie ({PROXY_MAC})"}, {}
+    ) == {PROXY_MAC: "atomebuanderie"}
+
+
+def test_the_mac_is_matched_whatever_its_case():
+    from custom_components.bluesight.device_index import resolve_proxy_names
+
+    assert resolve_proxy_names(
+        {PROXY_MAC: f"atomebuanderie ({PROXY_MAC.lower()})"}, {}
+    ) == {PROXY_MAC: "atomebuanderie"}
+
+
+def test_a_mac_that_is_not_this_proxys_is_kept():
+    """Only the proxy's *own* address is redundant. Another one in the name is
+    information, and guessing it away is how a name stops being a name."""
+    from custom_components.bluesight.device_index import resolve_proxy_names
+
+    name = "atomebuanderie (D8:3B:DA:99:99:99)"
+    assert resolve_proxy_names({PROXY_MAC: name}, {}) == {PROXY_MAC: name}
+
+
+def test_a_name_that_is_nothing_but_the_mac_is_kept():
+    """Stripped, there would be nothing left to call the proxy by."""
+    from custom_components.bluesight.device_index import resolve_proxy_names
+
+    name = f"({PROXY_MAC})"
+    assert resolve_proxy_names({PROXY_MAC: name}, {}) == {PROXY_MAC: name}
+
+
+def test_the_users_own_name_is_never_edited():
+    from custom_components.bluesight.device_index import resolve_proxy_names
+
+    rename = f"Proxy ({PROXY_MAC})"
+    assert resolve_proxy_names({PROXY_MAC: "atomebuanderie"}, {PROXY_MAC: rename}) == {
+        PROXY_MAC: rename
+    }

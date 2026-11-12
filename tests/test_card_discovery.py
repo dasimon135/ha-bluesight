@@ -127,3 +127,42 @@ def test_without_a_registry_the_card_still_finds_english_ids():
     html = _render(states)["html"]
     assert "1/3" in html
     assert ">Kitchen<" in html
+
+
+# --- the MAC glued onto a proxy's default name -------------------------------
+
+
+def _named(device: dict) -> str:
+    states = {
+        "sensor.mesh_slots_used": {
+            "state": "0",
+            "attributes": {"total": 2, "allocated": [], "allocated_devices": []},
+        },
+        INCIDENT: QUIET,
+    }
+    entities = {"sensor.mesh_slots_used": _entry("d1", "slots_used")}
+    html = _render(states, entities, {"d1": device})["html"]
+    return html
+
+
+def test_a_proxy_nobody_renamed_is_not_called_by_its_mac():
+    """habluetooth names an ESPHome proxy "node (MAC)", and that is the
+    device's name until someone renames it. On a card the MAC is noise."""
+    html = _named({"name": "atomemesh (14:2B:2F:A0:34:4A)"})
+    assert "atomemesh" in html
+    assert "14:2B:2F:A0:34:4A" not in html
+
+
+def test_the_users_rename_is_drawn_as_written():
+    html = _named(
+        {"name": "atomemesh (14:2B:2F:A0:34:4A)", "name_by_user": "Proxy (Mesh)"}
+    )
+    assert "Proxy (Mesh)" in html
+
+
+def test_a_parenthesis_that_is_not_a_mac_is_kept():
+    assert "Proxy (étage)" in _named({"name": "Proxy (étage)"})
+
+
+def test_a_name_that_is_nothing_but_a_mac_is_kept():
+    assert "(14:2B:2F:A0:34:4A)" in _named({"name": "(14:2B:2F:A0:34:4A)"})

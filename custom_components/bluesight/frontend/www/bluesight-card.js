@@ -179,6 +179,23 @@ const PLACEHOLDER = /\{(\w+)\}/g;
  * Base language of a Home Assistant tag: `fr-CA` and `fr_CA` are both `fr`.
  * Mirrors `Catalogue.for_language` on the backend.
  */
+/**
+ * `name` without a trailing `(AA:BB:CC:DD:EE:FF)`, kept whole if that is all
+ * there is.
+ *
+ * habluetooth names an ESPHome proxy "node (MAC)", and that stays the device's
+ * name until someone renames it. The node name says which proxy it is; the
+ * address is noise on a card. Mirrors `device_index._without_own_mac`, except
+ * that the card cannot know the proxy's source address from here, so any MAC
+ * in that position goes: nothing else in a proxy's name looks like one.
+ */
+function withoutTrailingMac(name) {
+  const stripped = name
+    .replace(/\s*\((?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}\)\s*$/, "")
+    .trim();
+  return stripped || name;
+}
+
 function baseLanguage(tag) {
   if (!tag) {
     return "en";
@@ -567,14 +584,21 @@ class BlueSightCard extends HTMLElement {
     const known = this._registryIndex(this._hass).bySlotSensor[entityId];
     const devices = this._hass && this._hass.devices;
     const device = known && devices ? devices[known.deviceId] : null;
-    const named = device && (device.name_by_user || device.name);
-    if (named) {
-      return String(named);
+    if (device && device.name_by_user) {
+      // The user's own words, drawn as written.
+      return String(device.name_by_user);
+    }
+    if (device && device.name) {
+      return withoutTrailingMac(String(device.name));
     }
     const friendly =
       (stateObj && stateObj.attributes && stateObj.attributes.friendly_name) ||
       entityId;
-    return String(friendly).replace(/\s*Slots Used$/i, "").trim() || entityId;
+    return (
+      withoutTrailingMac(
+        String(friendly).replace(/\s*Slots Used$/i, "").trim()
+      ) || entityId
+    );
   }
 
   /**
