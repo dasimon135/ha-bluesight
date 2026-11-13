@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Callable
+from typing import Any
 
 
 class SaturationWindow:
@@ -60,6 +61,54 @@ class SaturationWindow:
         if not self._transitions or self._transitions[-1][1] != saturated:
             self._transitions.append((now, saturated))
         self._evict(now)
+
+    # ----------------------------------------------------------- persistence
+
+    def export(self) -> dict[str, Any]:
+        """The window as plain JSON, for the store.
+
+        Transitions are written as *ages*, seconds before now: this class runs
+        on an injected monotonic clock that starts again with every process, so
+        a timestamp from one run means nothing in the next.
+        """
+        now = self._clock()
+        return {
+            "observed_s": self.observed_s(),
+            "transitions": [
+                [now - at, saturated] for at, saturated in self._transitions
+            ],
+        }
+
+    def restore(self, data: dict[str, Any], downtime_s: float) -> None:
+        """Take a saved window back, ``downtime_s`` after it was written.
+
+        Only a window that has not recorded anything takes it.
+
+        A stretch still open when it was saved **ends there**. Carried across
+        the downtime it would read a proxy that was merely switched off as full
+        for the whole time, which is a claim nobody was in a position to make.
+        If the proxy is still full when it comes back, that is a new stretch,
+        and counted as one. For the same reason the downtime is not counted as
+        observed: ``observed_s`` is how much of the window the figures rest on.
+        """
+        if self._started is not None or self._transitions:
+            return
+        downtime_s = max(0.0, downtime_s)
+        # What the saved window watched, and the window still reaches back to.
+        # Down for longer than the window, none of it does, and claiming the
+        # coverage the file recorded would be claiming a day nobody watched.
+        observed = min(float(data["observed_s"]), self.window_s - downtime_s)
+        if observed <= 0:
+            return
+        now = self._clock()
+        transitions = deque(
+            (now - float(age) - downtime_s, bool(saturated))
+            for age, saturated in data["transitions"]
+        )
+        if transitions and transitions[-1][1]:
+            transitions.append((now - downtime_s, False))
+        self._transitions = transitions
+        self._started = now - observed
 
     def _evict(self, now: float) -> None:
         """Drop entries wholly older than the window, keeping the one in force.

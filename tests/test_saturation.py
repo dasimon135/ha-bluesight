@@ -248,3 +248,99 @@ def test_a_raised_notice_holds_until_the_lower_line():
 
 def test_a_proxy_missing_from_the_readings_drops_its_notice():
     assert saturation_notices({}, {"A"}) == set()
+
+
+# --- surviving a restart ------------------------------------------------------
+
+
+def _squeezed():
+    clock = {"t": 0.0}
+    window = SaturationWindow(1000.0, lambda: clock["t"])
+    window.record(False)
+    clock["t"] = 200.0
+    window.record(True)
+    clock["t"] = 300.0
+    window.record(False)
+    clock["t"] = 500.0
+    window.record(False)
+    return window, clock
+
+
+def test_a_restored_window_reads_what_the_saved_one_read():
+    saved, _clock = _squeezed()
+    fresh_clock = {"t": 9_999.0}
+    fresh = SaturationWindow(1000.0, lambda: fresh_clock["t"])
+    fresh.restore(saved.export(), downtime_s=0.0)
+    assert fresh.ratio() == saved.ratio()
+    assert fresh.longest_s() == saved.longest_s()
+    assert fresh.episodes() == saved.episodes()
+    assert fresh.observed_s() == saved.observed_s()
+
+
+def test_a_stretch_open_at_shutdown_ends_at_shutdown_not_at_the_restart():
+    """Counting the downtime as time spent full would read a proxy that was
+    merely off as saturated: nobody watched it, so nothing is claimed."""
+    clock = {"t": 0.0}
+    saved = SaturationWindow(100_000.0, lambda: clock["t"])
+    saved.record(False)
+    clock["t"] = 1000.0
+    saved.record(True)
+    clock["t"] = 1100.0                   # full for 100 s when it was saved
+    data = saved.export()
+
+    fresh_clock = {"t": 5.0}
+    fresh = SaturationWindow(100_000.0, lambda: fresh_clock["t"])
+    fresh.restore(data, downtime_s=7200.0)
+    assert fresh.longest_s() == 100.0
+    assert fresh.episodes() == 1
+    fresh_clock["t"] += 60.0
+    fresh.record(True)                    # still full: a new stretch, honestly
+    assert fresh.episodes() == 2
+
+
+def test_the_restored_observation_continues_rather_than_restarting():
+    saved, _clock = _squeezed()
+    observed = saved.observed_s()
+    fresh_clock = {"t": 40.0}
+    fresh = SaturationWindow(1000.0, lambda: fresh_clock["t"])
+    fresh.restore(saved.export(), downtime_s=100.0)
+    assert fresh.observed_s() == observed
+    fresh_clock["t"] += 10.0
+    assert fresh.observed_s() == observed + 10.0
+
+
+def test_the_saturation_export_is_plain_json():
+    import json
+
+    saved, _clock = _squeezed()
+    assert json.loads(json.dumps(saved.export())) == saved.export()
+
+
+def test_a_window_that_has_been_recording_ignores_a_restore():
+    saved, _clock = _squeezed()
+    clock = {"t": 0.0}
+    live = SaturationWindow(1000.0, lambda: clock["t"])
+    live.record(False)
+    clock["t"] = 50.0
+    live.record(True)
+    live.restore(saved.export(), downtime_s=0.0)
+    assert live.episodes() == 1
+    assert live.observed_s() == 50.0
+
+
+def test_down_for_longer_than_the_window_restores_nothing():
+    """The file's coverage is a day nobody watched by now."""
+    saved, _clock = _squeezed()
+    fresh_clock = {"t": 0.0}
+    fresh = SaturationWindow(1000.0, lambda: fresh_clock["t"])
+    fresh.restore(saved.export(), downtime_s=1000.0)
+    assert fresh.observed_s() == 0.0
+    assert fresh.episodes() == 0
+
+
+def test_down_for_part_of_the_window_keeps_only_what_it_still_covers():
+    saved, _clock = _squeezed()            # 500 s observed, window 1000
+    fresh_clock = {"t": 0.0}
+    fresh = SaturationWindow(1000.0, lambda: fresh_clock["t"])
+    fresh.restore(saved.export(), downtime_s=800.0)
+    assert fresh.observed_s() == 200.0

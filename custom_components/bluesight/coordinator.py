@@ -94,6 +94,11 @@ _PUSH_SETTLE_S = 0.25
 # a few lost minutes after a hard power cut cost nothing, and a 24/7 loop must
 # not write to disk on every snapshot.
 #
+# The same file now carries the day's connection history and saturation windows
+# (see `_store_payload`): they are in memory, and Home Assistant restarts several
+# times a week. Their cost is the same few lost minutes, so they ride on the
+# same spaced writes rather than getting a second file.
+#
 # This spaces out the *asks* rather than leaning on `async_delay_save`'s own
 # delay, because that delay is not a debounce: every call pushes the pending
 # timer back. Asked again at each snapshot it would never fire while the loop
@@ -320,6 +325,7 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         and nothing else, so it is read defensively rather than allowed to
         fail setup.
         """
+        stored: dict[str, Any] = {}
         try:
             stored = await self._store.async_load() or {}
             last_seen = stored.get("last_seen", {})
@@ -332,6 +338,47 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
                 "Could not read %s; starting fresh", _STORE_KEY, exc_info=True
             )
             self._last_seen_wall = {}
+        # The windows are read on their own: a file whose last-seen map is
+        # fine and whose history is not must keep the one and lose the other.
+        try:
+            self._restore_windows(stored)
+        except (ValueError, TypeError, AttributeError, KeyError):
+            _LOGGER.debug(
+                "Could not restore the windows from %s; starting fresh",
+                _STORE_KEY,
+                exc_info=True,
+            )
+            # Whatever a failed restore half-applied goes with it.
+            self._history = ConnectionHistory(
+                CONNECTION_HISTORY_WINDOW_S, time.monotonic
+            )
+            self._saturation = {}
+
+    def _restore_windows(self, stored: dict[str, Any]) -> None:
+        """Take the saved history and saturation windows back, if there are any.
+
+        A file written before 0.10.1 has neither, and no ``saved_at`` to date
+        them by, which reads as nothing to restore.
+
+        The downtime is the wall-clock gap since the file was written: the
+        windows themselves run on a monotonic clock that restarted with the
+        process, so wall time is the only thing that can say how long ago it
+        was. A clock that went backwards counts as no downtime at all.
+        """
+        saved_at = stored.get("saved_at")
+        if saved_at is None:
+            return
+        downtime_s = max(0.0, time.time() - float(saved_at))
+        history = stored.get("history")
+        if history:
+            self._history.restore(history, downtime_s)
+        for source, data in (stored.get("saturation") or {}).items():
+            window = SaturationWindow(SATURATION_WINDOW_S, time.monotonic)
+            window.restore(data, downtime_s)
+            # A window with nothing restored is left out: it would only be
+            # replaced by a fresh one at the first snapshot.
+            if window.observed_s() > 0:
+                self._saturation[normalize_address(source)] = window
 
     def offline_seconds(self) -> dict[str, float]:
         """How long each known proxy has been missing, in wall clock.
@@ -345,8 +392,28 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
             for source, seen in self._last_seen_wall.items()
         }
 
+    def _store_payload(self) -> dict[str, Any]:
+        """What goes into the store, gathered when the write actually happens.
+
+        ``saved_at`` is wall time, because it is what says how long Home
+        Assistant was down when the file is read back; the windows are written
+        as ages for the reason :meth:`.ConnectionHistory.export` gives.
+        """
+        return {
+            "saved_at": time.time(),
+            "last_seen": dict(self._last_seen_wall),
+            "history": self._history.export(),
+            "saturation": {
+                source: window.export() for source, window in self._saturation.items()
+            },
+        }
+
     def _save_last_seen(self, *, force: bool = False) -> None:
-        """Write the last-seen map out, at most once per interval.
+        """Write the store out, at most once per interval.
+
+        Named for what it first held. It now carries the connection history and
+        the saturation windows too, which is why a write is a little larger and
+        no less rare: five minutes of them can be lost to a hard power cut.
 
         ``force`` is for a change a restart must not undo -- retiring a proxy
         -- which cannot wait behind the interval.
@@ -355,9 +422,7 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         if not force and now - self._last_save_at < _STORE_SAVE_INTERVAL_S:
             return
         self._last_save_at = now
-        self._store.async_delay_save(
-            lambda: {"last_seen": dict(self._last_seen_wall)}
-        )
+        self._store.async_delay_save(self._store_payload)
 
     def _record_reboot(self, source: str) -> None:
         """Record a proxy REMOVED event as a reboot signal. Scheduled on the

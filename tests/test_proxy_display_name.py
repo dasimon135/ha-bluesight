@@ -37,6 +37,8 @@ NETWORK = "mac"
 
 PROXY = "D0:CF:13:0F:05:5A"
 SCANNER_NAME = "atomebuanderie (D0:CF:13:0F:05:5A)"
+#: What the proxy is called once its own MAC is dropped from that.
+NODE_NAME = "atomebuanderie"
 DEVICE = "1C:54:9E:8E:1D:2C"
 
 
@@ -104,14 +106,24 @@ def test_the_rendered_detail_uses_the_name_the_user_gave_the_proxy():
     assert SCANNER_NAME not in incident.detail
 
 
-def test_an_unrenamed_proxy_still_reads_as_it_always_did():
-    """The fallback is not a regression path: it is the shipped behaviour for
-    every user who has not renamed anything."""
+def test_an_unrenamed_proxy_is_called_by_its_node_name():
+    """The fallback is the node name habluetooth gave the proxy, without the
+    "(MAC)" it glues on the end.
+
+    Until 0.10.1 the fallback was the whole scanner name, MAC included, and a
+    test here pinned that as "the shipped behaviour for every user who has not
+    renamed anything". The `detail` is a published attribute, so that was not
+    lightly given up. The MAC it carried is the proxy's own source address,
+    which the incident already publishes in `sources`, and in a sentence that
+    names the proxy twice it made the card and the sentence read as two
+    different proxies. The change is limited to that one suffix: a name with
+    anything else in it, or a MAC that is not the proxy's own, is untouched.
+    """
     incident = _bond_lost_detail(_names(_bluesight_proxy_device()))
     assert incident.detail == (
-        f"3 connexions refusées en 60s via {SCANNER_NAME}, qui n'a pas la clé "
+        f"3 connexions refusées en 60s via {NODE_NAME}, qui n'a pas la clé "
         f"d'appairage de cet appareil. Réappairez l'appareil en passant par "
-        f"{SCANNER_NAME} : chaque proxy garde ses propres clés, appairer via "
+        f"{NODE_NAME} : chaque proxy garde ses propres clés, appairer via "
         f"un autre ne corrigera rien."
     )
 
@@ -120,7 +132,8 @@ def test_a_proxy_with_no_registry_device_at_all_falls_back_to_the_scanner_name()
     """First snapshots run before the proxy's entities exist, and a disabled
     or deleted BlueSight device never comes back."""
     incident = _bond_lost_detail(_names())
-    assert SCANNER_NAME in incident.detail
+    assert NODE_NAME in incident.detail
+    assert SCANNER_NAME not in incident.detail
 
 
 def test_a_rename_mid_incident_does_not_re_key_and_so_does_not_re_alert():

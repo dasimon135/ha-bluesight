@@ -153,3 +153,111 @@ def test_observed_says_how_much_of_the_day_was_watched():
     assert history.observed_s() == 3600
     clock.now += 2 * DAY
     assert history.observed_s() == DAY
+
+
+# --- surviving a restart ------------------------------------------------------
+
+
+def _busy_history() -> tuple[ConnectionHistory, Clock]:
+    history, clock = _history()
+    history.update([])
+    for held in ([(A, DEV)], [], [(B, DEV)], [], [(B, OTHER)]):
+        clock.now += 600
+        history.update(held)
+    return history, clock
+
+
+def test_a_restored_history_reads_what_the_saved_one_read():
+    """Home Assistant restarts several times a week, and a day's counts that
+    start over each time are not a day's counts."""
+    saved, clock = _busy_history()
+    clock.now += 300
+    expected = saved.all()
+    data = saved.export()
+
+    fresh, fresh_clock = _history()
+    fresh_clock.now = 50_000.0            # a different process, a different clock
+    fresh.restore(data, downtime_s=0.0)
+    assert fresh.all() == expected
+    assert fresh.observed_s() == saved.observed_s()
+
+
+def test_downtime_ages_the_restored_events_but_is_not_observed():
+    saved, clock = _busy_history()
+    data = saved.export()
+    observed = saved.observed_s()
+
+    fresh, fresh_clock = _history()
+    fresh_clock.now = 50_000.0
+    fresh.restore(data, downtime_s=3600.0)
+    # Nothing was watched while Home Assistant was down.
+    assert fresh.observed_s() == observed
+    fresh_clock.now += 60
+    assert fresh.observed_s() == observed + 60
+    # And the events are an hour older than they were: past the window, gone.
+    fresh_clock.now += DAY
+    fresh.update([])
+    assert fresh.all() == {}
+
+
+def test_the_first_snapshot_after_a_restore_is_still_a_baseline():
+    """A slot held when Home Assistant comes back is not a connection: the
+    device may or may not have reconnected while nothing was watching."""
+    saved, _clock = _busy_history()
+    fresh, fresh_clock = _history()
+    fresh.restore(saved.export(), downtime_s=0.0)
+    before = fresh.all()
+    fresh_clock.now += 30
+    fresh.update([(B, DEV), (A, OTHER)])
+    assert fresh.all() == before
+    fresh_clock.now += 30
+    fresh.update([(B, DEV)])
+    fresh_clock.now += 30
+    fresh.update([(B, DEV), (A, OTHER)])
+    assert fresh.for_address(OTHER).connections == before[OTHER].connections + 1
+
+
+def test_a_change_is_still_judged_against_the_last_connection_after_a_restore():
+    saved, _clock = _busy_history()
+    last = saved.for_address(DEV)
+    fresh, fresh_clock = _history()
+    fresh.restore(saved.export(), downtime_s=60.0)
+    fresh_clock.now += 30
+    fresh.update([])                      # baseline
+    fresh_clock.now += 30
+    fresh.update([(A, DEV)])              # DEV last connected via B
+    assert fresh.for_address(DEV).proxy_changes == last.proxy_changes + 1
+
+
+def test_the_export_is_plain_json():
+    import json
+
+    saved, _clock = _busy_history()
+    assert json.loads(json.dumps(saved.export())) == saved.export()
+
+
+def test_a_restore_into_a_history_already_running_changes_nothing():
+    """Only a fresh history takes a restore; one that has started watching
+    must not have its own past overwritten by a stale file."""
+    saved, _clock = _busy_history()
+    live, live_clock = _history()
+    live.update([])
+    live_clock.now += 10
+    live.update([(A, OTHER)])
+    live.restore(saved.export(), downtime_s=0.0)
+    assert set(live.all()) == {OTHER}
+
+
+def test_down_for_longer_than_the_window_restores_nothing():
+    saved, _clock = _busy_history()
+    fresh, _fresh_clock = _history()
+    fresh.restore(saved.export(), downtime_s=DAY)
+    assert fresh.observed_s() == 0.0
+    assert fresh.all() == {}
+
+
+def test_observed_is_limited_to_what_the_window_still_reaches():
+    saved, _clock = _busy_history()        # 3000 s observed
+    fresh, _fresh_clock = _history()
+    fresh.restore(saved.export(), downtime_s=DAY - 1000.0)
+    assert fresh.observed_s() == 1000.0
