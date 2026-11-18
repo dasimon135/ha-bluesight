@@ -339,6 +339,9 @@ class ConnectionsSensor(CoordinatorEntity[BlueSightCoordinator], SensorEntity):
                     "connections": reading.connections,
                     "proxy_changes": reading.proxy_changes,
                     "proxies": [proxy_names.get(s, s) for s in reading.proxies],
+                    # Connections per hour, oldest first: what the card draws
+                    # as a device's day. See ConnectionHistory.hourly.
+                    "hourly": list(history.hourly(address)),
                 }
                 for address, reading in ranked[:CONNECTIONS_LISTED]
             ],

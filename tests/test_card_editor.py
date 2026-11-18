@@ -104,7 +104,8 @@ def test_the_one_line_layout_is_a_tile_sized_cell():
 def test_the_editor_offers_every_option_but_the_proxy_list():
     form = _run()["form"]
     assert [f["name"] for f in form] == [
-        "title", "layout", "show_devices", "tile_tap", "incident_entity",
+        "title", "layout", "show_devices", "bounce_threshold", "tile_tap",
+        "incident_entity",
     ]
     by_name = {f["name"]: f for f in form}
     # The defaults the card applies when a key is absent, so the form shows

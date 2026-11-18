@@ -27,12 +27,16 @@ it never invents a connection.
 """
 from __future__ import annotations
 
+import math
 from collections import deque
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
 from .model import normalize_address
+
+#: Width of one bucket in :meth:`ConnectionHistory.hourly`.
+HOUR_S = 3600.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +121,29 @@ class ConnectionHistory:
             proxy_changes=changes,
             proxies=tuple(sorted({source for _, source in events})),
         )
+
+    def hourly(self, address: str) -> tuple[int, ...]:
+        """Connections per hour over the window, oldest hour first.
+
+        The last bucket is the hour ending now, so the series reads left to
+        right as time passes. It is derived from the events the history already
+        keeps and restores, which is why a restart does not empty it. A window
+        that is not a whole number of hours rounds up, so nothing inside it is
+        dropped. Empty for a device that took no slot inside the window.
+        """
+        events = self._events.get(normalize_address(address))
+        if not events:
+            return ()
+        buckets = max(1, math.ceil(self.window_s / HOUR_S))
+        now = self._clock()
+        counts = [0] * buckets
+        for at, _ in events:
+            # A clock that stepped back would give a negative age; the event is
+            # then "just now", not a bucket past the end.
+            index = buckets - 1 - int(max(0.0, now - at) // HOUR_S)
+            if 0 <= index < buckets:
+                counts[index] += 1
+        return tuple(counts)
 
     def all(self) -> dict[str, DeviceHistory]:
         """Every device that took a slot inside the window."""

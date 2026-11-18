@@ -13,7 +13,8 @@
  *     fleet the rack would make too tall.
  *   - With `layout: rings` the same proxy is drawn as a ring of slots, one
  *     segment each, coloured by how well the device holding it is heard, under
- *     a strip that sums the fleet up.
+ *     a strip that sums the fleet up. The devices follow as tiles, the ones to
+ *     look at first on top, each with its day as a row of bars.
  *   - A global incident banner driven by `binary_sensor.bluesight_incident`.
  *     Each incident is rendered as a coloured badge (red for deadlock/ghost
  *     slot, amber for storm) with its kind, address and detail.
@@ -30,6 +31,7 @@
  *   layout: full                            # `tile` = one line, tap for a popup;
  *                                           # `rings` = one ring per proxy
  *   tile_tap: popup                         # `more-info` = HA's own dialog
+ *   bounce_threshold: 5                     # rings: proxy changes in 24 h that outline a device
  */
 
 // Kept equal to `manifest.json`'s version by tests/test_card_locale.py. The
@@ -45,6 +47,17 @@ console.info(
 );
 
 const DEFAULT_INCIDENT_ENTITY = "binary_sensor.bluesight_incident";
+
+// The fleet-wide connections sensor, where each device's connections per hour
+// are published. Found through the entity registry when there is one (its id
+// follows the user's language); this is the English install's id.
+const DEFAULT_CONNECTIONS_ENTITY = "sensor.bluesight_connections_24h";
+
+// How many device tiles `layout: rings` draws before "show the others".
+const DEVICE_TILES_SHOWN = 8;
+
+// Proxy changes in a day from which a device's tile gets an amber outline.
+const DEFAULT_BOUNCE_THRESHOLD = 5;
 
 // Incident kinds that are considered critical (red). Anything else is amber.
 //
@@ -65,6 +78,15 @@ const CRITICAL_KINDS = new Set(["deadlock", "ghost_slot"]);
 // single reader by design (tests/test_card_locale.py pins that); this one is
 // about the diagnostic itself, and is what turns the tile's dot grey.
 const SENSOR_SILENT_STATES = new Set(["unavailable", "unknown"]);
+
+// An SVG node with its attributes. A class goes through `setAttribute` like any
+// other attribute: `className` is a read-only object on an SVG element, and
+// assigning to it throws in strict mode.
+function svgElement(tag, attrs) {
+  const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const key of Object.keys(attrs)) el.setAttribute(key, String(attrs[key]));
+  return el;
+}
 
 // A circular arc as an SVG path, angles in degrees measured clockwise from
 // twelve o'clock. Used by the rings layout; pure, so it is easy to reason about.
@@ -167,6 +189,11 @@ const EMBEDDED_EN = {
   "card.fleet.weak.other": "{count} weak signals",
   "card.ring.saturation": "full {percent}% of the day",
   "card.ring.label": "{proxy}: {used} of {total} slots",
+  "card.devices.heading": "Devices",
+  "card.devices.via": "via {proxy}",
+  "card.devices.more.one": "Show the {count} other device",
+  "card.devices.more.other": "Show the {count} other devices",
+  "card.devices.less": "Show fewer",
   "card.dialog.close": "Close",
   "card.editor.title": "Title",
   "card.editor.layout": "Layout",
@@ -174,6 +201,8 @@ const EMBEDDED_EN = {
   "card.editor.layout_full": "Full card",
   "card.editor.layout_tile": "One line",
   "card.editor.layout_rings": "Rings, one per proxy",
+  "card.editor.bounce_threshold": "Proxy changes before a device is outlined",
+  "card.editor.bounce_threshold_helper": "Rings layout: a device that changed proxy at least this often in 24 h gets an amber outline. Display only, nothing is raised. Not set: 5.",
   "card.editor.show_devices": "Name the device in each slot",
   "card.editor.show_devices_helper": "Off: one row of slots per proxy, without names. Shorter for a large fleet.",
   "card.editor.tile_tap": "On tap (one-line layout)",
@@ -582,9 +611,16 @@ class BlueSightCard extends HTMLElement {
       return this._registryCache;
     }
     const byDevice = {};
+    let connections = null;
     if (entities && typeof entities === "object") {
       for (const entityId of Object.keys(entities)) {
         const entry = entities[entityId] || {};
+        if (
+          entry.platform === "bluesight" &&
+          entry.translation_key === "connections_24h"
+        ) {
+          connections = entityId;
+        }
         if (entry.platform !== "bluesight" || !entry.device_id) continue;
         const role = REGISTRY_ROLES[entry.translation_key];
         if (!role) continue;
@@ -600,7 +636,7 @@ class BlueSightCard extends HTMLElement {
       }
     }
     this._registrySource = entities;
-    this._registryCache = { bySlotSensor };
+    this._registryCache = { bySlotSensor, connections };
     return this._registryCache;
   }
 
@@ -738,6 +774,7 @@ class BlueSightCard extends HTMLElement {
     this._headerEl.textContent = title;
     if (this._fleetEl) this._renderFleet(proxyEntities, hass);
     this._renderProxies(proxyEntities, hass);
+    if (this._devicesEl) this._renderDevices(proxyEntities, hass);
     this._renderIncidents(incidentEntity, incidentState);
   }
 
@@ -936,6 +973,16 @@ class BlueSightCard extends HTMLElement {
       `rack:${this._showDevices() ? 1 : 0}`,
       `layout:${this._layout()}`,
     ];
+    if (this._layout() === "rings") {
+      // The tiles' sparklines come from the connections sensor, and whether the
+      // list is expanded and where the flag starts change what is drawn.
+      const conn = this._connectionsState(hass);
+      parts.push(
+        `devx:${this._devicesExpanded ? 1 : 0}`,
+        `thr:${this._bounceThreshold()}`,
+        `conn:${conn ? conn.last_updated : "-"}`
+      );
+    }
     for (const id of proxyEntities) {
       const s = hass.states ? hass.states[id] : undefined;
       if (!s) {
@@ -1041,6 +1088,13 @@ class BlueSightCard extends HTMLElement {
       card.appendChild(this._fleetEl);
     }
     card.appendChild(this._proxiesEl);
+    // The device tiles sit between the rings and the incidents, `rings` only.
+    this._devicesEl = null;
+    if (layout === "rings") {
+      this._devicesEl = document.createElement("div");
+      this._devicesEl.className = "devices";
+      card.appendChild(this._devicesEl);
+    }
     card.appendChild(this._incidentsEl);
 
     // Reset shadow root (handles a re-build after setConfig).
@@ -1287,10 +1341,6 @@ class BlueSightCard extends HTMLElement {
       });
       cell.appendChild(sat);
     }
-    if (this._showDevices()) {
-      const devices = this._renderRingDevices(facts.allocated);
-      if (devices) cell.appendChild(devices);
-    }
     return cell;
   }
 
@@ -1315,12 +1365,7 @@ class BlueSightCard extends HTMLElement {
    * one more slot.
    */
   _ringGauge(name, facts) {
-    const NS = "http://www.w3.org/2000/svg";
-    const make = (tag, attrs) => {
-      const el = document.createElementNS(NS, tag);
-      for (const key of Object.keys(attrs)) el.setAttribute(key, String(attrs[key]));
-      return el;
-    };
+    const make = svgElement;
     const svg = make("svg", {
       viewBox: "0 0 80 80",
       class: "ring-gauge",
@@ -1387,50 +1432,239 @@ class BlueSightCard extends HTMLElement {
     return label;
   }
 
+  /** Proxy changes in a day from which a device is outlined; display only. */
+  _bounceThreshold() {
+    const value = parseInt(this._config.bounce_threshold, 10);
+    return Number.isFinite(value) && value >= 1 ? value : DEFAULT_BOUNCE_THRESHOLD;
+  }
+
+  /** The fleet-wide connections sensor's state, or undefined without one. */
+  _connectionsState(hass) {
+    const states = (hass && hass.states) || {};
+    const id =
+      this._registryIndex(hass).connections || DEFAULT_CONNECTIONS_ENTITY;
+    return states[id];
+  }
+
   /**
-   * The devices holding a proxy's slots, as chips: a dot in the band's colour,
-   * the name, and the dBm figure. The figure is on the chip rather than in a
-   * tooltip because a phone has no hover; the connections line and the stronger
-   * proxy stay in the tooltip, where the rack draws them as lines.
+   * Each listed device's connections per hour, by upper-case address.
+   *
+   * The sensor lists the busiest devices only, so a quiet one has no series and
+   * its tile draws no sparkline -- which is also the truth about it.
    */
-  _renderRingDevices(allocated) {
-    const list = document.createElement("div");
-    list.className = "ring-devices";
-    for (const device of allocated) {
+  _hourlyByAddress(hass) {
+    const state = this._connectionsState(hass);
+    const attrs = (state && state.attributes) || {};
+    const listed = Array.isArray(attrs.devices) ? attrs.devices : [];
+    const out = new Map();
+    for (const device of listed) {
       const entry = device || {};
-      const label = entry.name ? String(entry.name) : String(entry.address || "");
-      if (!label) continue;
-
-      const chip = document.createElement("span");
-      chip.className = "chip";
-      const path = this._renderPath(entry.path);
-      const history = this._renderHistory(entry.history);
-      const description = [label, path && path.textContent, history && history.textContent]
-        .filter(Boolean)
-        .join(" · ");
-      chip.setAttribute("title", description);
-
-      const dot = document.createElement("span");
-      const quality = this._pathDrawn(entry.path) ? entry.path.quality : null;
-      dot.className = ["good", "fair", "weak"].includes(quality)
-        ? `chip-dot signal-${quality}`
-        : "chip-dot";
-      chip.appendChild(dot);
-
-      const text = document.createElement("span");
-      text.className = "chip-name";
-      text.textContent = label;
-      chip.appendChild(text);
-
-      if (this._pathDrawn(entry.path)) {
-        const rssi = document.createElement("span");
-        rssi.className = "chip-rssi";
-        rssi.textContent = String(entry.path.rssi);
-        chip.appendChild(rssi);
+      if (entry.address && Array.isArray(entry.hourly)) {
+        out.set(String(entry.address).toUpperCase(), entry.hourly);
       }
-      list.appendChild(chip);
     }
-    return list.children.length ? list : null;
+    return out;
+  }
+
+  /**
+   * The devices holding a slot, in the order a person should look at them.
+   *
+   * A device that changed proxy at least `bounce_threshold` times comes first
+   * (most changes first), then the rest by signal, weakest band and weakest
+   * figure first, then those with no reading, then by name. An offline proxy
+   * contributes nothing: its last occupants are not to be believed.
+   *
+   * The order is for reading, not a verdict. Nothing here raises an incident.
+   */
+  _deviceRows(proxyEntities, hass) {
+    const threshold = this._bounceThreshold();
+    const band = { weak: 0, fair: 1, good: 2 };
+    const rows = [];
+    for (const entityId of proxyEntities) {
+      const facts = this._ringFacts(entityId, hass);
+      if (facts.missing || facts.offline) continue;
+      const proxy = this._proxyName(hass.states[entityId], entityId);
+      for (const device of facts.allocated) {
+        const entry = device || {};
+        const label = entry.name ? String(entry.name) : String(entry.address || "");
+        if (!label) continue;
+        const changes = this._toInt((entry.history || {}).proxy_changes, 0);
+        const path = this._pathDrawn(entry.path) ? entry.path : null;
+        rows.push({
+          entry,
+          label,
+          proxy,
+          changes,
+          flagged: changes >= threshold,
+          band: path && band[path.quality] !== undefined ? band[path.quality] : 3,
+          rssi: path ? path.rssi : 0,
+        });
+      }
+    }
+    rows.sort(
+      (a, b) =>
+        Number(b.flagged) - Number(a.flagged) ||
+        (a.flagged ? b.changes - a.changes : 0) ||
+        a.band - b.band ||
+        a.rssi - b.rssi ||
+        a.label.localeCompare(b.label)
+    );
+    return rows;
+  }
+
+  /**
+   * The tiles under the rings: one per device, the ones to look at first.
+   * Skipped under `show_devices: false`, which asks for the rings alone.
+   */
+  _renderDevices(proxyEntities, hass) {
+    const host = this._devicesEl;
+    host.innerHTML = "";
+    if (!this._showDevices()) return;
+    const rows = this._deviceRows(proxyEntities, hass);
+    if (!rows.length) return;
+
+    const heading = document.createElement("div");
+    heading.className = "devices-heading";
+    heading.textContent = this._t("card.devices.heading");
+    host.appendChild(heading);
+
+    const hourly = this._hourlyByAddress(hass);
+    const shown = this._devicesExpanded ? rows : rows.slice(0, DEVICE_TILES_SHOWN);
+    const grid = document.createElement("div");
+    grid.className = "device-tiles";
+    for (const row of shown) grid.appendChild(this._renderDeviceTile(row, hourly));
+    host.appendChild(grid);
+
+    const hidden = rows.length - DEVICE_TILES_SHOWN;
+    if (hidden > 0) {
+      const button = document.createElement("button");
+      button.className = "more";
+      button.setAttribute("type", "button");
+      button.textContent = this._devicesExpanded
+        ? this._t("card.devices.less")
+        : this._t("card.devices.more", { count: String(hidden) }, hidden);
+      button.addEventListener("click", () => {
+        this._devicesExpanded = !this._devicesExpanded;
+        this._lastSignature = null;
+        try {
+          this._render();
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.error("bluesight-card render error", err);
+          this._renderFatal(err);
+        }
+      });
+      host.appendChild(button);
+    }
+  }
+
+  /**
+   * One device: a badge carrying its signal band, its name, which proxy holds
+   * it and how well, and its day as a row of bars.
+   *
+   * The band is carried by the badge's colour and by the number of bars (three
+   * for good, one for weak), so it reads without telling colours apart. The
+   * whole story, including the connections line, is in the tooltip.
+   */
+  _renderDeviceTile(row, hourly) {
+    const { entry, label, proxy } = row;
+    const path = this._pathDrawn(entry.path) ? entry.path : null;
+    const quality =
+      path && ["good", "fair", "weak"].includes(path.quality) ? path.quality : null;
+
+    const tile = document.createElement("div");
+    tile.className = row.flagged ? "device-tile flagged" : "device-tile";
+    const pathLine = this._renderPath(entry.path);
+    const historyLine = this._renderHistory(entry.history);
+    tile.setAttribute(
+      "title",
+      [label, pathLine && pathLine.textContent, historyLine && historyLine.textContent]
+        .filter(Boolean)
+        .join(" · ")
+    );
+
+    const badge = document.createElement("span");
+    badge.className = quality ? `device-badge band-${quality}` : "device-badge";
+    if (quality) {
+      badge.setAttribute("role", "img");
+      badge.setAttribute("aria-label", this._t(`card.signal.${quality}`));
+    }
+    const bars = document.createElement("span");
+    bars.className = "bars";
+    const lit = { good: 3, fair: 2, weak: 1 }[quality] || 0;
+    for (let i = 1; i <= 3; i += 1) {
+      const bar = document.createElement("i");
+      bar.className = i <= lit ? "on" : "";
+      bars.appendChild(bar);
+    }
+    badge.appendChild(bars);
+    tile.appendChild(badge);
+
+    const text = document.createElement("div");
+    text.className = "device-text";
+    const title = document.createElement("div");
+    title.className = "device-title";
+    title.textContent = label;
+    text.appendChild(title);
+
+    const sub = document.createElement("div");
+    sub.className = "device-sub";
+    if (row.flagged) {
+      const flag = document.createElement("span");
+      flag.className = "device-flag";
+      flag.textContent = this._t(
+        "card.slot.proxy_changes",
+        { count: String(row.changes) },
+        row.changes
+      );
+      sub.appendChild(flag);
+    }
+    const rest = document.createElement("span");
+    const parts = [this._t("card.devices.via", { proxy })];
+    if (path) parts.push(`${path.rssi} dBm`);
+    rest.textContent = (row.flagged ? " · " : "") + parts.join(" · ");
+    sub.appendChild(rest);
+    text.appendChild(sub);
+    tile.appendChild(text);
+
+    const series = hourly.get(String(entry.address || "").toUpperCase());
+    if (series && series.some((n) => Number(n) > 0)) {
+      tile.appendChild(this._renderSpark(series));
+    }
+    return tile;
+  }
+
+  /**
+   * A device's day as one bar per hour, oldest on the left, scaled to its own
+   * busiest hour: the shape is the point, and a figure is in the tooltip.
+   */
+  _renderSpark(series) {
+    const counts = series.map((n) => Math.max(0, Number(n) || 0));
+    const peak = Math.max(1, ...counts);
+    const total = counts.reduce((sum, n) => sum + n, 0);
+    const step = 3;
+    const svg = svgElement("svg", {
+      class: "device-spark",
+      width: counts.length * step,
+      height: 18,
+      viewBox: `0 0 ${counts.length * step} 18`,
+      role: "img",
+      "aria-label": this._t("card.slot.connections", { count: String(total) }, total),
+    });
+    counts.forEach((count, i) => {
+      const height = count > 0 ? 3 + (13 * count) / peak : 1.5;
+      svg.appendChild(
+        svgElement("rect", {
+          class: count > 0 ? "on" : "off",
+          x: i * step,
+          y: 18 - height,
+          width: 2,
+          height,
+          rx: 1,
+        })
+      );
+    });
+    return svg;
   }
 
   /**
@@ -2179,13 +2413,6 @@ class BlueSightCard extends HTMLElement {
         font-size: 0.75rem;
         color: var(--secondary-text-color, #888);
       }
-      .ring-devices {
-        display: flex;
-        flex-wrap: wrap;
-        justify-content: center;
-        gap: 4px;
-        margin-top: 8px;
-      }
       .chip {
         display: inline-flex;
         align-items: center;
@@ -2220,10 +2447,132 @@ class BlueSightCard extends HTMLElement {
         overflow: hidden;
         text-overflow: ellipsis;
       }
-      .chip-rssi {
+      .devices {
+        margin-top: 14px;
+      }
+      .devices-heading {
+        font-size: 0.7rem;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--secondary-text-color, #888);
+        margin-bottom: 8px;
+      }
+      .device-tiles {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+        gap: 8px;
+      }
+      .device-tile {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+        box-sizing: border-box;
+        padding: 9px 10px;
+        border-radius: 12px;
+        border: 1px solid transparent;
+        background: var(--secondary-background-color, rgba(127, 127, 127, 0.08));
+      }
+      .device-tile.flagged {
+        border-color: var(--warning-color, #ffa600);
+      }
+      .device-badge {
+        --c: var(--disabled-text-color, #9e9e9e);
         flex: 0 0 auto;
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        background: color-mix(in srgb, var(--c) 18%, transparent);
+      }
+      .device-badge.band-good {
+        --c: var(--success-color, #43a047);
+      }
+      .device-badge.band-fair {
+        --c: var(--warning-color, #ffa600);
+      }
+      .device-badge.band-weak {
+        --c: var(--error-color, #db4437);
+      }
+      .bars {
+        display: inline-flex;
+        align-items: flex-end;
+        gap: 2px;
+        height: 14px;
+      }
+      .bars i {
+        display: block;
+        width: 4px;
+        border-radius: 1px;
+        background: var(--divider-color, #cfcfcf);
+      }
+      .bars i:nth-child(1) {
+        height: 5px;
+      }
+      .bars i:nth-child(2) {
+        height: 9px;
+      }
+      .bars i:nth-child(3) {
+        height: 14px;
+      }
+      .bars i.on {
+        background: var(--c);
+      }
+      .device-text {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+      .device-title {
+        font-size: 14px;
+        font-weight: 600;
+        line-height: 20px;
+        color: var(--primary-text-color);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .device-sub {
+        font-size: 12px;
+        line-height: 16px;
         color: var(--secondary-text-color, #888);
         font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      /* The outline carries the amber; the words stay in the text colour, since
+         amber text on a light card fails contrast. */
+      .device-flag {
+        font-weight: 600;
+        color: var(--primary-text-color);
+      }
+      .device-spark {
+        flex: 0 0 auto;
+        display: block;
+      }
+      .device-spark rect.off {
+        fill: var(--divider-color, #cfcfcf);
+      }
+      .device-spark rect.on {
+        fill: var(--secondary-text-color, #727272);
+      }
+      .more {
+        width: 100%;
+        margin-top: 8px;
+        padding: 8px;
+        font: inherit;
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: var(--primary-color, #03a9f4);
+        background: transparent;
+        border: 1px dashed var(--divider-color, #cfcfcf);
+        border-radius: 10px;
+        cursor: pointer;
+      }
+      .more:focus-visible {
+        outline: 2px solid var(--primary-color, #03a9f4);
       }
       .empty {
         color: var(--secondary-text-color, #888);
@@ -2364,19 +2713,24 @@ class BlueSightCard extends HTMLElement {
       return 3;
     }
     if (this._layout() === "rings") {
-      // Header, fleet strip and incident area, then the rings two to a row on
-      // a phone-width card: a ring is ~170px before its chips, and each chip
-      // is counted as a row of its own (the worst case, a narrow cell), which
-      // is why the row is as tall as its busiest ring. Masonry re-asks on every
-      // state change, so an over-estimate corrects itself.
-      let rowsSize = 3;
-      for (let i = 0; i < proxies.length; i += 2) {
-        const chips = proxies.slice(i, i + 2).map((entityId) =>
-          this._showDevices()
-            ? (this._drawnOccupants(entityId, states) || []).length
-            : 0
-        );
-        rowsSize += Math.ceil((170 + Math.max(...chips) * 26) / 50);
+      // Header, fleet strip and incident area, then the rings two to a row on a
+      // phone-width card (~170px each), then the device tiles: a heading, a
+      // ~64px tile per device shown (one column is the worst case) and the
+      // "show the others" button. Masonry re-asks on every state change, so an
+      // over-estimate corrects itself.
+      let rowsSize = 3 + 4 * Math.ceil(proxies.length / 2);
+      if (this._showDevices()) {
+        let devices = 0;
+        for (const entityId of proxies) {
+          devices += (this._drawnOccupants(entityId, states) || []).length;
+        }
+        if (devices > 0) {
+          const drawn = this._devicesExpanded
+            ? devices
+            : Math.min(devices, DEVICE_TILES_SHOWN);
+          rowsSize +=
+            1 + Math.ceil((drawn * 64) / 50) + (devices > DEVICE_TILES_SHOWN ? 1 : 0);
+        }
       }
       return rowsSize;
     }
@@ -2461,6 +2815,11 @@ class BlueSightCard extends HTMLElement {
         },
         { name: "show_devices", default: true, selector: { boolean: {} } },
         {
+          name: "bounce_threshold",
+          default: DEFAULT_BOUNCE_THRESHOLD,
+          selector: { number: { min: 1, max: 200, mode: "box" } },
+        },
+        {
           name: "tile_tap",
           default: "popup",
           selector: {
@@ -2482,7 +2841,9 @@ class BlueSightCard extends HTMLElement {
       ],
       computeLabel: (schema) => t(`card.editor.${schema.name}`),
       computeHelper: (schema) =>
-        ["layout", "tile_tap", "show_devices"].includes(schema.name)
+        ["layout", "tile_tap", "show_devices", "bounce_threshold"].includes(
+          schema.name
+        )
           ? t(`card.editor.${schema.name}_helper`)
           : undefined,
     };

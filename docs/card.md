@@ -224,11 +224,28 @@ spent, how many devices are heard weakly. Under it each proxy is a ring with
   24 hours the proxy had no free slot (the saturation sensor). It is left out
   until the proxy has been observed: unknown is not zero.
 
-Beneath the ring come the proxy's name, "full 42% of the day", and one chip per
-device: a dot in the band's colour, the name and the dBm figure. The number of
-connections and the stronger proxy that heard the device are in the chip's
-tooltip, where the rack draws them as lines. `show_devices: false` drops the
-chips and leaves the rings alone.
+Beneath each ring come the proxy's name and "full 42% of the day".
+
+Under the rings, the devices are tiles, **the ones to look at first on top**:
+
+- a device that changed proxy at least `bounce_threshold` times in 24 h
+  (default 5) leads, most changes first, with an amber outline and the count
+  in bold;
+- the rest follow by signal, the weakest band and figure first, then the ones
+  with no reading;
+- a tile has a badge whose colour and number of bars (three good, two fair, one
+  weak) both say the band, the name, `via <proxy> · -83 dBm`, and the device's
+  day as one bar per hour, oldest on the left, scaled to its own busiest hour.
+  The connections line and the stronger proxy are in the tooltip.
+
+Eight tiles are shown, with a button for the others. The bars come from the
+fleet-wide connections sensor, which lists the 20 busiest devices; a quieter
+one has no bars, which is also the truth about it. `show_devices: false` drops
+the tiles and leaves the rings alone.
+
+`bounce_threshold` is display only. Nothing is raised from it, and a sensor that
+wakes every five minutes reconnects all day by design, so the number is yours to
+set for your fleet.
 
 An offline proxy is faded and draws no segments and no devices, because its last
 known occupants are the thing you must not believe. The rings flow into as many

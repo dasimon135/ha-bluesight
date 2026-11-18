@@ -135,6 +135,68 @@ def test_a_change_is_judged_against_the_last_connection_even_if_it_aged_out():
     )
 
 
+def test_hourly_buckets_connections_oldest_hour_first():
+    history, clock = _history()
+    history.update([])
+    # One connection 5 hours ago, two in the last hour.
+    clock.now += 1
+    history.update([(A, DEV)])
+    clock.now += 1
+    history.update([])
+    clock.now += 5 * 3600
+    history.update([(A, DEV)])
+    clock.now += 1
+    history.update([])
+    clock.now += 1
+    history.update([(B, DEV)])
+    series = history.hourly(DEV)
+    assert len(series) == 24
+    assert series[-1] == 2
+    assert series[-6] == 1
+    assert sum(series) == 3
+
+
+def test_hourly_of_a_quiet_device_is_empty_not_zeros():
+    history, _ = _history()
+    history.update([])
+    assert history.hourly(DEV) == ()
+
+
+def test_hourly_drops_what_aged_out_and_survives_a_restore():
+    history, clock = _history()
+    history.update([])
+    clock.now += 1
+    history.update([(A, DEV)])
+    clock.now += 1
+    history.update([])
+    saved = history.export()
+
+    fresh = ConnectionHistory(DAY, clock)
+    fresh.restore(saved, downtime_s=7200.0)
+    series = fresh.hourly(DEV)
+    # Two hours of downtime push the connection two buckets back.
+    assert sum(series) == 1
+    assert series[-3] == 1
+
+
+def test_hourly_treats_a_clock_that_stepped_back_as_just_now():
+    history, clock = _history()
+    history.update([])
+    clock.now += 1
+    history.update([(A, DEV)])
+    clock.now -= 60
+    assert history.hourly(DEV)[-1] == 1
+
+
+def test_hourly_follows_the_window_it_was_given():
+    clock = Clock()
+    history = ConnectionHistory(6 * 3600.0, clock)
+    history.update([])
+    clock.now += 1
+    history.update([(A, DEV)])
+    assert len(history.hourly(DEV)) == 6
+
+
 def test_all_lists_every_device_seen_connecting():
     history, clock = _history()
     history.update([])
