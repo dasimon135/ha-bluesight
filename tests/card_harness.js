@@ -80,6 +80,7 @@ class FakeElement {
 
   appendChild(child) {
     this.children.push(child);
+    child.parent = this;
     return child;
   }
 
@@ -88,7 +89,10 @@ class FakeElement {
     return child;
   }
 
-  remove() {}
+  // Leaves its parent, as in a browser: a closed popup is gone from the body.
+  remove() {
+    if (this.parent) this.parent.children = this.parent.children.filter((c) => c !== this);
+  }
   setAttribute(name, value) {
     this.attributes[name] = String(value);
     // An SVG node takes its class through the attribute (`className` is
@@ -289,10 +293,27 @@ if (scenario.tapDevice !== undefined) {
   await new Promise((resolve) => setImmediate(resolve));
 }
 if (scenario.back) {
+  // The click bubbles: the button's own listener first, then the popup's
+  // backdrop, which sees the button as the target -- by then already removed
+  // from the tree, which is what once made "back" close the whole popup.
   walk(global.document.body, (el) => {
-    if (el.className.split(" ").includes("detail-back")) press(el, "click", {});
+    if (!el.className.split(" ").includes("detail-back")) return;
+    press(el, "click", {});
+    walk(global.document.body, (other) => {
+      if (other.className.split(" ").includes("scrim")) {
+        press(other, "click", { target: el });
+      }
+    });
   });
   await new Promise((resolve) => setImmediate(resolve));
+}
+// A click on the empty backdrop of whatever popup is open.
+if (scenario.backdropClick) {
+  walk(global.document.body, (el) => {
+    if (el.className.split(" ").includes("scrim")) {
+      press(el, "click", { target: el });
+    }
+  });
 }
 
 if (scenario.close) {

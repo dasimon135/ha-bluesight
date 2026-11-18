@@ -313,7 +313,7 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         return {
             "address": normalize_address(address),
             "window_s": history.window_s,
-            "observed_s": round(history.observed_s(), 1),
+            "observed_s": round(history.stays_observed_s(), 1),
             "proxies": [names.get(source, source) for source in sources],
             "stays": [
                 [round(start), round(end), index[source]]

@@ -198,9 +198,12 @@ const EMBEDDED_EN = {
   "card.detail.back": "Back",
   "card.detail.heading": "Which proxy held it",
   "card.detail.held_by": "held by {proxy}",
-  "card.detail.connections": "connections",
-  "card.detail.changes": "proxy changes",
-  "card.detail.proxies_used": "proxies used",
+  "card.detail.connections.one": "connection",
+  "card.detail.connections.other": "connections",
+  "card.detail.changes.one": "proxy change",
+  "card.detail.changes.other": "proxy changes",
+  "card.detail.proxies_used.one": "proxy used",
+  "card.detail.proxies_used.other": "proxies used",
   "card.detail.loading": "Loading…",
   "card.detail.error": "The timeline could not be loaded.",
   "card.detail.empty": "No connection recorded in this period.",
@@ -919,8 +922,8 @@ class BlueSightCard extends HTMLElement {
         animation:bsfade .15s ease; }
       @keyframes bsfade { from{opacity:0} to{opacity:1} }
       .wrap { position:relative; width:100%; max-width:480px; max-height:90vh;
-        overflow:auto; }
-      .x { position:absolute; top:-12px; right:-12px; z-index:1; width:34px; height:34px;
+        box-sizing:border-box; padding:12px 12px 0 0; overflow:auto; }
+      .x { position:absolute; top:0; right:0; z-index:1; width:34px; height:34px;
         border-radius:50%; border:none; cursor:pointer; font-size:17px; line-height:1;
         display:grid; place-items:center;
         background:var(--card-background-color,#fff); color:var(--primary-text-color,#222);
@@ -961,8 +964,12 @@ class BlueSightCard extends HTMLElement {
    */
   _openCardDialog() {
     if (this._dialog) return;
+    // With the card's stylesheet: the inner card carries its own, but the device
+    // detail that replaces it is markup of this popup's, and without these rules
+    // it would be bare text.
     const { host, scrim, wrap, closeButton } = this._dialogShell(
-      this._config.title || "BlueSight"
+      this._config.title || "BlueSight",
+      true
     );
 
     const card = document.createElement("bluesight-card");
@@ -974,14 +981,12 @@ class BlueSightCard extends HTMLElement {
     wrap.appendChild(card);
 
     const close = () => this._closeCardDialog();
-    // A click anywhere off the card closes -- the scrim itself, and the empty
-    // area of the wrapper around the card or the device detail that replaced it.
+    // A click on the scrim or on the empty area of the wrapper closes. It is
+    // decided by what was hit, not by what the click passed through: the
+    // "back" button removes the detail from the tree before the click reaches
+    // this listener, so a test of the path would find it outside everything.
     scrim.addEventListener("click", (event) => {
-      const path = event.composedPath();
-      const inside =
-        path.includes(card) ||
-        (this._detailPanel && path.includes(this._detailPanel));
-      if (!inside) close();
+      if (event.target === scrim || event.target === wrap) close();
     });
     closeButton.addEventListener("click", close);
     this._dialogKey = (event) => {
@@ -1066,7 +1071,7 @@ class BlueSightCard extends HTMLElement {
 
     const close = () => this._closeDetailDialog();
     scrim.addEventListener("click", (event) => {
-      if (!event.composedPath().includes(panel)) close();
+      if (event.target === scrim || event.target === wrap) close();
     });
     closeButton.addEventListener("click", close);
     this._detailKey = (event) => {
@@ -1152,22 +1157,24 @@ class BlueSightCard extends HTMLElement {
 
     const figures = document.createElement("div");
     figures.className = "detail-kv";
+    // A figure the card does not have shows a dash and takes the plural, which
+    // is the form of "none" and "unknown" in the languages it ships.
     const number = (value) => (Number.isFinite(value) ? String(value) : "–");
-    let usedValue = null;
-    for (const [value, key] of [
-      [number(history.connections), "card.detail.connections"],
-      [number(history.proxy_changes), "card.detail.changes"],
-      ["–", "card.detail.proxies_used"],
+    let used = null;
+    for (const [value, count, key] of [
+      [number(history.connections), history.connections, "card.detail.connections"],
+      [number(history.proxy_changes), history.proxy_changes, "card.detail.changes"],
+      ["–", undefined, "card.detail.proxies_used"],
     ]) {
       const box = document.createElement("div");
       const figure = document.createElement("b");
       figure.textContent = value;
       const caption = document.createElement("span");
-      caption.textContent = this._t(key);
+      caption.textContent = this._t(key, {}, Number.isFinite(count) ? count : 2);
       box.appendChild(figure);
       box.appendChild(caption);
       figures.appendChild(box);
-      usedValue = figure;
+      used = { value: figure, caption };
     }
     body.appendChild(figures);
 
@@ -1181,12 +1188,12 @@ class BlueSightCard extends HTMLElement {
     body.appendChild(timeline);
 
     this._detailToken = (this._detailToken || 0) + 1;
-    this._loadTimeline(entry.address, timeline, usedValue, this._detailToken);
+    this._loadTimeline(entry.address, timeline, used, this._detailToken);
     return body;
   }
 
   /** Ask the backend for the device's stays and draw them when they arrive. */
-  _loadTimeline(address, host, usedValue, token) {
+  _loadTimeline(address, host, used, token) {
     const note = (key, className) => {
       host.innerHTML = "";
       const line = document.createElement("div");
@@ -1203,7 +1210,7 @@ class BlueSightCard extends HTMLElement {
     call
       .then((data) => {
         if (token !== this._detailToken) return;
-        this._drawTimeline(host, usedValue, data || {});
+        this._drawTimeline(host, used, data || {});
       })
       .catch(() => {
         if (token !== this._detailToken) return;
@@ -1216,11 +1223,18 @@ class BlueSightCard extends HTMLElement {
    * the line. A stretch the integration had not been watching yet is hatched,
    * and a gap is a gap: nothing held the device then.
    */
-  _drawTimeline(host, usedValue, data) {
+  _drawTimeline(host, figure, data) {
     host.innerHTML = "";
     const stays = Array.isArray(data.stays) ? data.stays : [];
     const proxies = Array.isArray(data.proxies) ? data.proxies : [];
-    if (usedValue) usedValue.textContent = String(proxies.length);
+    if (figure) {
+      figure.value.textContent = String(proxies.length);
+      figure.caption.textContent = this._t(
+        "card.detail.proxies_used",
+        {},
+        proxies.length
+      );
+    }
 
     if (!stays.length) {
       const empty = document.createElement("div");

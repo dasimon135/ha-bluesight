@@ -345,3 +345,51 @@ def test_the_timeline_figures_survive_a_hostile_answer() -> None:
     result = _tap(ws={"stays": [["x", None, "y"]], "proxies": [], "window_s": "nope"})
     assert "detail-title" in result["dialog"]
     assert re.search(r"detail-seg proxy-0", result["dialog"])
+
+
+def test_the_detail_in_the_small_cards_popup_carries_the_styles_it_needs() -> None:
+    # The popup hosts a card with a stylesheet of its own; the detail that
+    # replaces it is this popup's markup, and bare text without these rules.
+    dialog = _from_the_small_card()["dialog"]
+    assert "detail-title" in dialog
+    assert dialog.count("<style/>") >= 2
+
+
+def test_one_of_a_figure_is_in_the_singular() -> None:
+    device = _device("Madoka Manon", -83, "fair", address=MANON)
+    device["history"] = {"connections": 1, "proxy_changes": 1}
+    one_proxy = {**TIMELINE, "proxies": ["Proxy Salon"], "stays": [[600, 0, 0]]}
+    result = _run({"layout": "rings"}, _states(device), tapDevice=0, ws=one_proxy)
+    dialog = result["dialog"]
+    assert "<b>1</b><span>connection</span>" in dialog
+    assert "<b>1</b><span>proxy change</span>" in dialog
+    assert "<b>1</b><span>proxy used</span>" in dialog
+
+
+def test_the_singular_agrees_in_french_too() -> None:
+    device = _device("Madoka Manon", -83, "fair", address=MANON)
+    device["history"] = {"connections": 1, "proxy_changes": 1}
+    one_proxy = {**TIMELINE, "proxies": ["Proxy Salon"], "stays": [[600, 0, 0]]}
+    result = _run(
+        {"layout": "rings"}, _states(device), tapDevice=0, ws=one_proxy, language="fr"
+    )
+    dialog = result["dialog"]
+    assert "<b>1</b><span>connexion</span>" in dialog
+    assert "<b>1</b><span>proxy utilisé</span>" in dialog
+
+
+def test_back_does_not_close_the_popup_it_returns_to() -> None:
+    # The click bubbles to the backdrop after the detail has left the tree.
+    result = _from_the_small_card(back=True)
+    assert 'class="scrim"' in result["dialog"]
+    assert "ring-gauge" in result["dialog"]
+
+
+def test_a_click_on_the_empty_backdrop_closes_the_popup() -> None:
+    result = _from_the_small_card(backdropClick=True)
+    assert 'class="scrim"' not in result["dialog"]
+
+
+def test_a_click_on_the_backdrop_closes_the_detail_popup_too() -> None:
+    result = _tap(backdropClick=True)
+    assert 'class="scrim"' not in result["dialog"]

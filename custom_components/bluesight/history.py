@@ -98,6 +98,11 @@ class ConnectionHistory:
         self._stays: dict[str, deque[list]] = {}
         # The stay each held (source, address) pair has open right now.
         self._open: dict[tuple[str, str], list] = {}
+        # When stays began to be recorded. Separate from ``_started``: a history
+        # restored from a file written before stays existed has watched
+        # connections for a day and stays for no time at all, and the timeline
+        # must not claim the second from the first.
+        self._stays_started: float | None = None
 
     def update(self, held: Iterable[tuple[str, str]]) -> None:
         """Advance one snapshot with the slots held now, as (source, address)."""
@@ -112,6 +117,8 @@ class ConnectionHistory:
             # from where the saved history stopped instead of starting over.
             if self._started is None:
                 self._started = now
+            if self._stays_started is None:
+                self._stays_started = now
             for pair in sorted(current):
                 self._open_stay(pair, now)
             # A restored history can hold events that aged out while Home
@@ -230,6 +237,17 @@ class ConnectionHistory:
                 out[address] = reading
         return out
 
+    def stays_observed_s(self) -> float:
+        """How much of the window the timeline rests on.
+
+        Not :meth:`observed_s`: the first start after the version that records
+        stays has the day's connections but none of its stays, and the stretch
+        before this moment is unknown, not empty.
+        """
+        if self._stays_started is None:
+            return 0.0
+        return min(self._clock() - self._stays_started, self.window_s)
+
     def observed_s(self) -> float:
         """How much of the window is covered, for the reason saturation gives."""
         if self._started is None:
@@ -255,6 +273,7 @@ class ConnectionHistory:
                 for address, events in self._events.items()
             },
             "before": dict(self._before),
+            "stays_observed_s": self.stays_observed_s(),
             "stays": {
                 address: [
                     [now - start, None if end is None else now - end, source]
@@ -307,6 +326,11 @@ class ConnectionHistory:
         # starts from the first snapshot. One that was open when it was written
         # ends where it was written: that is the last moment it was known to be
         # held, and Home Assistant going down drops the links anyway.
+        stays_observed = min(
+            float(data.get("stays_observed_s", 0.0)), self.window_s - downtime_s
+        )
+        if stays_observed > 0:
+            self._stays_started = now - stays_observed
         for address, stays in data.get("stays", {}).items():
             restored: deque[list] = deque(maxlen=MAX_STAYS)
             for start_age, end_age, source in stays:

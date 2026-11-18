@@ -195,3 +195,51 @@ def test_a_restore_into_a_running_history_leaves_its_stays_alone():
     running.update([(B, DEV)])
     running.restore(saved, downtime_s=10.0)
     assert [s for _, _, s in running.timeline(DEV).stays] == [B]
+
+
+def test_the_timeline_rests_on_stays_not_on_the_connections_watched_before():
+    history, clock = _history()
+    history.update([])
+    clock.now += 1
+    history.update([(A, DEV)])
+    saved = history.export()
+    # A file from before stays: a day of connections watched, no stays.
+    del saved["stays"]
+    del saved["stays_observed_s"]
+    saved["observed_s"] = 80000.0
+
+    fresh = ConnectionHistory(DAY, clock)
+    fresh.restore(saved, downtime_s=100.0)
+    fresh.update([])
+    assert fresh.observed_s() > 79000
+    assert fresh.stays_observed_s() == 0.0
+    clock.now += 500
+    assert fresh.stays_observed_s() == 500.0
+
+
+def test_the_stays_observed_survive_a_restart_less_the_downtime():
+    history, clock = _history()
+    history.update([])
+    clock.now += 3000
+    history.update([(A, DEV)])
+    saved = history.export()
+    assert saved["stays_observed_s"] == 3000.0
+
+    fresh = ConnectionHistory(DAY, clock)
+    fresh.restore(saved, downtime_s=600.0)
+    assert fresh.stays_observed_s() == 3000.0
+    # The downtime is not watched: it is not added.
+    clock.now += 100
+    assert fresh.stays_observed_s() == 3100.0
+
+
+def test_down_for_longer_than_the_window_restores_no_stays_either():
+    history, clock = _history()
+    history.update([])
+    clock.now += 10
+    history.update([(A, DEV)])
+    saved = history.export()
+    fresh = ConnectionHistory(DAY, clock)
+    fresh.restore(saved, downtime_s=DAY + 5)
+    assert fresh.stays_observed_s() == 0.0
+    assert fresh.timeline(DEV) is None
