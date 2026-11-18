@@ -247,6 +247,35 @@ the tiles and leaves the rings alone.
 wakes every five minutes reconnects all day by design, so the number is yours to
 set for your fleet.
 
+**Tap a tile for the device's day.** A popup opens with the signal, three
+numbers (connections, proxy changes, proxies used) and a timeline of the last
+24 hours: one bar, one colour per proxy, a stay drawn where it began. A stay is
+a slot held from the moment it appears to the moment it is released; a gap is a
+gap, nothing held the device then, and a stretch BlueSight had not been watching
+yet is hatched. A device that moves between proxies all day shows as a mosaic,
+which is the question the counter alone cannot answer: *where does it go?*
+
+The timeline is asked for when you tap, through a WebSocket command
+(`bluesight/device_timeline`), rather than kept on a sensor: it changes with
+every connection in the house and would be pushed to every open dashboard. Two
+stays through one proxy less than a minute apart are drawn as one. A device that
+reconnects so often that the oldest stays were dropped says so under the line.
+The stays are saved with the rest of BlueSight's state, so a restart leaves a
+gap and not a hole in the history; a file from before this version simply has
+none until the first snapshot.
+
+**`popup_layout`** picks what the one-line card's popup shows: `full` (the
+default) or `rings`. With `rings`, the popup holds the ring layout, and a tap on
+one of its devices **changes that same popup's screen** instead of opening a
+second one on top: the detail replaces the list, with a "Back" (Escape goes back
+first, then closes).
+
+```yaml
+type: custom:bluesight-card
+layout: tile
+popup_layout: rings
+```
+
 An offline proxy is faded and draws no segments and no devices, because its last
 known occupants are the thing you must not believe. The rings flow into as many
 columns as the card is wide, so a phone gets two and a wide section more.

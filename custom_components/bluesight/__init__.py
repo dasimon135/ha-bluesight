@@ -18,6 +18,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.loader import async_get_integration
 
+from .api import async_register_commands
 from .const import ATTR_SOURCE, DOMAIN, OPTION_DEFAULTS, SERVICE_FORGET_PROXY
 from .coordinator import BlueSightCoordinator
 from .device_index import looks_like_mac, own_proxy_records
@@ -124,6 +125,7 @@ async def async_setup_entry(
     # Reload the entry when the user edits options so new tunables take effect.
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     _async_register_services(hass)
+    async_register_commands(hass)
     await _async_setup_card(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
