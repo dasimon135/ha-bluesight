@@ -118,7 +118,7 @@ def test_the_editor_offers_every_option_but_the_proxy_list():
 def test_the_editor_is_labelled_in_english():
     by_name = {f["name"]: f for f in _run()["form"]}
     assert by_name["show_devices"]["label"] == "Name the device in each slot"
-    assert by_name["layout"]["options"] == ["Full card", "One line"]
+    assert by_name["layout"]["options"] == ["Full card", "One line", "Rings, one per proxy"]
     assert by_name["tile_tap"]["helper"] == (
         "What tapping the one-line card opens. Not set: the full card, in a popup."
     )
@@ -128,7 +128,7 @@ def test_the_editor_is_labelled_in_english():
 def test_the_editor_is_labelled_in_the_displayed_language():
     by_name = {f["name"]: f for f in _run(language="fr")["form"]}
     assert by_name["show_devices"]["label"] == "Nommer l'appareil de chaque slot"
-    assert by_name["layout"]["options"] == ["Carte complète", "Une ligne"]
+    assert by_name["layout"]["options"] == ["Carte complète", "Une ligne", "Anneaux, un par proxy"]
 
 
 def test_a_blank_select_says_what_blank_means():

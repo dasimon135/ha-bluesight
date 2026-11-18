@@ -407,6 +407,12 @@ native fallback YAML — is in **[docs/card.md](docs/card.md)**.
 > dashboard where BlueSight is something you check rather than something you
 > watch. See [docs/card.md](docs/card.md#layout-tile--the-whole-fleet-on-one-line).
 
+> **`layout: rings` draws each proxy as a ring of slots**: one segment per
+> slot, coloured by how well the device in it is heard, with the share of the
+> day the proxy was full around it. A strip above sums the fleet up. For a fleet
+> where the question is *which proxy is under pressure*, not *who holds slot
+> two*. See [docs/card.md](docs/card.md#layout-rings-a-ring-per-proxy).
+
 > Since 0.4.0 the card ships **inside the integration**, so HACS delivers it
 > along with everything else and the integration serves and registers it
 > itself — no copying, no resource to declare. YAML-mode dashboards still
