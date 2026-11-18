@@ -160,7 +160,7 @@ names on or off, the tap action and the incident sensor. `proxies:` is not in
 it: auto-discovery is the default, and a list written in YAML is left as it is.
 
 In a sections view the one-line layout takes half a section, one row high; the
-full card takes the section's width and grows with its rack.
+full card and the rings take the section's width and grow with their content.
 
 #### `layout: tile` — the whole fleet on one line
 
@@ -199,6 +199,44 @@ fact whatever the gaps around it, so an open incident still colours the dot.
 
 The tile reserves one row of dashboard height (`getCardSize()` answers 1), where
 the full card grows with the fleet.
+
+#### `layout: rings`, a ring per proxy
+
+```yaml
+type: custom:bluesight-card
+layout: rings
+```
+
+The rack answers *who holds which slot*. The rings answer *how full is each
+proxy, and how well are its devices heard*, which is the question a fleet of a
+dozen proxies asks.
+
+A strip at the top sums the fleet up: how many proxies, how many slots are
+spent, how many devices are heard weakly. Under it each proxy is a ring with
+**one segment per slot**:
+
+- a held segment takes the colour of the signal band of the device in it:
+  green for good, amber for fair, red for weak, and the theme's info colour
+  when no signal was read;
+- a free slot is grey, and a device past the end of the rack gets a dashed amber
+  segment of its own, as the rack gives it a row;
+- the count sits in the middle, and the thin outer arc is the share of the last
+  24 hours the proxy had no free slot (the saturation sensor). It is left out
+  until the proxy has been observed: unknown is not zero.
+
+Beneath the ring come the proxy's name, "full 42% of the day", and one chip per
+device: a dot in the band's colour, the name and the dBm figure. The number of
+connections and the stronger proxy that heard the device are in the chip's
+tooltip, where the rack draws them as lines. `show_devices: false` drops the
+chips and leaves the rings alone.
+
+An offline proxy is faded and draws no segments and no devices, because its last
+known occupants are the thing you must not believe. The rings flow into as many
+columns as the card is wide, so a phone gets two and a wide section more.
+
+Nothing here is a verdict. Like the signal line, the colours only name a band,
+and no incident is raised from them. `layout: full` stays the default, so a
+stored config means what it always meant.
 
 ### Languages
 

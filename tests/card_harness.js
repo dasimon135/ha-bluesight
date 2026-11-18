@@ -84,6 +84,9 @@ class FakeElement {
   remove() {}
   setAttribute(name, value) {
     this.attributes[name] = String(value);
+    // An SVG node takes its class through the attribute (`className` is
+    // read-only on it), so mirror it where the serialiser looks.
+    if (name === "class") this.className = String(value);
   }
   getAttribute(name) {
     return name in this.attributes ? this.attributes[name] : null;
@@ -151,6 +154,7 @@ global.document = {
     el.tagName = tag;
     return el;
   },
+  createElementNS: (_ns, tag) => new FakeElement(tag),
   querySelectorAll: () => [],
   body: new FakeElement("body"),
   // What Home Assistant sets to the displayed language; the static editor

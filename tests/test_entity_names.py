@@ -78,5 +78,5 @@ def test_the_card_reads_the_same_keys():
     card = (ROOT / "frontend" / "www" / "bluesight-card.js").read_text(encoding="utf-8")
     roles = re.search(r"const REGISTRY_ROLES = \{(.*?)\};", card, re.S).group(1)
     assert set(re.findall(r"^\s*(\w+):", roles, re.M)) == {
-        "slots_used", "online", "last_device_seen",
+        "slots_used", "online", "last_device_seen", "saturation_24h",
     }

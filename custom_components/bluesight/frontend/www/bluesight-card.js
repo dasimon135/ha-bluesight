@@ -11,6 +11,9 @@
  *     `total` attribute. With `show_devices: false` the same pips are drawn
  *     as a single horizontal row and nobody is named: a denser tile for a
  *     fleet the rack would make too tall.
+ *   - With `layout: rings` the same proxy is drawn as a ring of slots, one
+ *     segment each, coloured by how well the device holding it is heard, under
+ *     a strip that sums the fleet up.
  *   - A global incident banner driven by `binary_sensor.bluesight_incident`.
  *     Each incident is rendered as a coloured badge (red for deadlock/ghost
  *     slot, amber for storm) with its kind, address and detail.
@@ -24,7 +27,8 @@
  *   incident_entity: binary_sensor.bluesight_incident
  *   title: BlueSight                        # card header text
  *   show_devices: true                      # false = one row of pips, no names
- *   layout: full                            # `tile` = one line, tap for a popup
+ *   layout: full                            # `tile` = one line, tap for a popup;
+ *                                           # `rings` = one ring per proxy
  *   tile_tap: popup                         # `more-info` = HA's own dialog
  */
 
@@ -62,6 +66,19 @@ const CRITICAL_KINDS = new Set(["deadlock", "ghost_slot"]);
 // about the diagnostic itself, and is what turns the tile's dot grey.
 const SENSOR_SILENT_STATES = new Set(["unavailable", "unknown"]);
 
+// A circular arc as an SVG path, angles in degrees measured clockwise from
+// twelve o'clock. Used by the rings layout; pure, so it is easy to reason about.
+function arcPath(cx, cy, radius, from, to) {
+  const point = (angle) => {
+    const t = ((angle - 90) * Math.PI) / 180;
+    return [cx + radius * Math.cos(t), cy + radius * Math.sin(t)];
+  };
+  const [x0, y0] = point(from);
+  const [x1, y1] = point(to);
+  const large = to - from > 180 ? 1 : 0;
+  return `M${x0.toFixed(1)} ${y0.toFixed(1)} A${radius} ${radius} 0 ${large} 1 ${x1.toFixed(1)} ${y1.toFixed(1)}`;
+}
+
 // Which of a proxy device's BlueSight entities the card reads, by the
 // translation key the backend gives each one. The key is the entity's
 // identity in every language; its id and its name are not.
@@ -69,6 +86,7 @@ const REGISTRY_ROLES = {
   slots_used: "slots",
   online: "online",
   last_device_seen: "lastSeen",
+  saturation_24h: "saturation",
 };
 
 // ---------------------------------------------------------------------------
@@ -143,12 +161,19 @@ const EMBEDDED_EN = {
   "card.tile.slots.one": "{used}/{total} slot",
   "card.tile.slots.other": "{used}/{total} slots",
   "card.tile.no_data": "No diagnostic data",
+  "card.fleet.proxies.one": "{count} proxy",
+  "card.fleet.proxies.other": "{count} proxies",
+  "card.fleet.weak.one": "{count} weak signal",
+  "card.fleet.weak.other": "{count} weak signals",
+  "card.ring.saturation": "full {percent}% of the day",
+  "card.ring.label": "{proxy}: {used} of {total} slots",
   "card.dialog.close": "Close",
   "card.editor.title": "Title",
   "card.editor.layout": "Layout",
   "card.editor.layout_helper": "Not set: the full card.",
   "card.editor.layout_full": "Full card",
   "card.editor.layout_tile": "One line",
+  "card.editor.layout_rings": "Rings, one per proxy",
   "card.editor.show_devices": "Name the device in each slot",
   "card.editor.show_devices_helper": "Off: one row of slots per proxy, without names. Shorter for a large fleet.",
   "card.editor.tile_tap": "On tap (one-line layout)",
@@ -299,7 +324,11 @@ class BlueSightCard extends HTMLElement {
   }
 
   /**
-   * `full` (the default) or `tile`.
+   * `full` (the default), `tile` or `rings`.
+   *
+   * `rings` is the full card with each proxy drawn as a ring of slots instead
+   * of a rack: one segment per slot, coloured by how well the device in it is
+   * heard. It is opt-in -- `full` is what every stored config means.
    *
    * The tile is one line: a coloured dot, the fleet's slot count, how many
    * incidents are open. It answers "do I need to look", where the full card
@@ -308,8 +337,8 @@ class BlueSightCard extends HTMLElement {
    * the other cards from this author use.
    */
   _layout() {
-    const value = (this._config || {}).layout;
-    return String(value || "").trim().toLowerCase() === "tile" ? "tile" : "full";
+    const value = String((this._config || {}).layout || "").trim().toLowerCase();
+    return value === "tile" || value === "rings" ? value : "full";
   }
 
   /**
@@ -611,12 +640,17 @@ class BlueSightCard extends HTMLElement {
     if (known) {
       // Through the device, so a translated entity id costs nothing. A
       // companion the registry does not list is simply absent, as before.
-      return { online: known.online, lastSeen: known.lastSeen };
+      return {
+        online: known.online,
+        lastSeen: known.lastSeen,
+        saturation: known.saturation,
+      };
     }
     const slug = entityId.replace(/^sensor\./, "").replace(/_slots_used$/, "");
     return {
       online: `binary_sensor.${slug}_online`,
       lastSeen: `sensor.${slug}_last_device_seen`,
+      saturation: `sensor.${slug}_saturation_24h`,
     };
   }
 
@@ -694,13 +728,15 @@ class BlueSightCard extends HTMLElement {
       return;
     }
 
-    if (!this._built || this._builtLayout !== "full") {
-      this._buildSkeleton();
+    const layout = this._layout();
+    if (!this._built || this._builtLayout !== layout) {
+      this._buildSkeleton(layout);
       this._built = true;
-      this._builtLayout = "full";
+      this._builtLayout = layout;
     }
 
     this._headerEl.textContent = title;
+    if (this._fleetEl) this._renderFleet(proxyEntities, hass);
     this._renderProxies(proxyEntities, hass);
     this._renderIncidents(incidentEntity, incidentState);
   }
@@ -942,6 +978,11 @@ class BlueSightCard extends HTMLElement {
         `seen:${lastSeen ? this._formatAge(lastSeen.state) : "-"}:` +
           `${lastSeen ? (lastSeen.attributes || {}).device_count : "-"}`
       );
+      // The ring's outer arc is the proxy's saturation, a sensor of its own.
+      if (this._layout() === "rings") {
+        const sat = hass.states ? hass.states[health.saturation] : undefined;
+        parts.push(`sat:${sat ? sat.state : "-"}`);
+      }
     }
     if (incidentState) {
       parts.push(`inc:${incidentState.state}`);
@@ -975,7 +1016,7 @@ class BlueSightCard extends HTMLElement {
     return parts.join("~");
   }
 
-  _buildSkeleton() {
+  _buildSkeleton(layout = "full") {
     const style = document.createElement("style");
     style.textContent = this._css();
 
@@ -985,12 +1026,20 @@ class BlueSightCard extends HTMLElement {
     this._headerEl.className = "card-header";
 
     this._proxiesEl = document.createElement("div");
-    this._proxiesEl.className = "proxies";
+    this._proxiesEl.className = layout === "rings" ? "proxies rings" : "proxies";
 
     this._incidentsEl = document.createElement("div");
     this._incidentsEl.className = "incidents";
 
+    // The fleet strip exists only under `rings`; every other layout leaves it
+    // null so `_render` knows there is nothing to fill.
+    this._fleetEl = null;
     card.appendChild(this._headerEl);
+    if (layout === "rings") {
+      this._fleetEl = document.createElement("div");
+      this._fleetEl.className = "fleet";
+      card.appendChild(this._fleetEl);
+    }
     card.appendChild(this._proxiesEl);
     card.appendChild(this._incidentsEl);
 
@@ -1014,7 +1063,11 @@ class BlueSightCard extends HTMLElement {
 
     for (const entityId of proxyEntities) {
       const stateObj = hass.states ? hass.states[entityId] : undefined;
-      container.appendChild(this._renderProxyTile(entityId, stateObj, hass));
+      container.appendChild(
+        this._layout() === "rings"
+          ? this._renderProxyRing(entityId, stateObj, hass)
+          : this._renderProxyTile(entityId, stateObj, hass)
+      );
     }
   }
 
@@ -1117,6 +1170,267 @@ class BlueSightCard extends HTMLElement {
     }
 
     return tile;
+  }
+
+  // ---------------------------------------------------------------------------
+  // layout: rings
+  // ---------------------------------------------------------------------------
+
+  /**
+   * What the ring and the fleet strip both read about one proxy, in one place
+   * so they cannot disagree about which proxies are worth believing.
+   *
+   * An offline or unavailable proxy draws no occupants, exactly as in the rack:
+   * its last known devices are the thing you must not believe. `saturation` is
+   * the share of the day (0-100) the proxy had no free slot, or `null` when the
+   * sensor is missing or has not observed the proxy yet -- unknown, not zero.
+   */
+  _ringFacts(entityId, hass) {
+    const states = (hass && hass.states) || {};
+    const stateObj = states[entityId];
+    if (!stateObj) {
+      return { missing: true, offline: true, used: 0, total: 0, allocated: [] };
+    }
+    // `_drawnOccupants` is the one reader of the reachability rule besides the
+    // tile, so the ring cannot believe a proxy the sizer does not.
+    const drawn = this._drawnOccupants(entityId, states);
+    const attrs = stateObj.attributes || {};
+    const satState = states[this._healthEntities(entityId).saturation];
+    const sat = satState ? Number.parseFloat(satState.state) : Number.NaN;
+    return {
+      missing: false,
+      offline: drawn === null,
+      used: this._toInt(stateObj.state, 0),
+      total: this._toInt(attrs.total, 0),
+      allocated: drawn || [],
+      saturation: Number.isFinite(sat) ? Math.max(0, Math.min(100, sat)) : null,
+    };
+  }
+
+  /**
+   * The strip above the rings: how many proxies, how many slots the fleet is
+   * spending (the tile's own sum), and how many devices are heard weakly.
+   *
+   * A count, not a verdict: nothing here raises an incident. The weak count
+   * reads the band the backend already put on each connection.
+   */
+  _renderFleet(proxyEntities, hass) {
+    const strip = this._fleetEl;
+    strip.innerHTML = "";
+    if (!proxyEntities.length) return;
+
+    const { used, total } = this._fleetSlots(proxyEntities, hass);
+    let weak = 0;
+    for (const entityId of proxyEntities) {
+      for (const device of this._ringFacts(entityId, hass).allocated) {
+        const path = (device || {}).path;
+        if (this._pathDrawn(path) && path.quality === "weak") weak += 1;
+      }
+    }
+    const count = proxyEntities.length;
+    const chips = [
+      [null, this._t("card.fleet.proxies", { count: String(count) }, count)],
+      [null, this._t("card.tile.slots", { used, total }, total)],
+      [
+        weak > 0 ? "weak" : "good",
+        this._t("card.fleet.weak", { count: String(weak) }, weak),
+      ],
+    ];
+    for (const [signal, text] of chips) {
+      const chip = document.createElement("span");
+      chip.className = "chip";
+      if (signal) {
+        const dot = document.createElement("span");
+        dot.className = `chip-dot signal-${signal}`;
+        chip.appendChild(dot);
+      }
+      const label = document.createElement("span");
+      label.className = "chip-name";
+      label.textContent = text;
+      chip.appendChild(label);
+      strip.appendChild(chip);
+    }
+  }
+
+  /**
+   * One proxy as a ring: a segment per slot, then its name, how long it was
+   * full today and, unless `show_devices` is off, the devices holding it.
+   */
+  _renderProxyRing(entityId, stateObj, hass) {
+    const facts = this._ringFacts(entityId, hass);
+    const cell = document.createElement("div");
+    cell.className = facts.offline ? "ring offline" : "ring";
+
+    const name = facts.missing ? entityId : this._proxyName(stateObj, entityId);
+    cell.appendChild(this._ringGauge(name, facts));
+
+    const title = document.createElement("div");
+    title.className = "ring-name";
+    title.textContent = name;
+    cell.appendChild(title);
+
+    if (facts.missing || facts.offline) {
+      const state = document.createElement("div");
+      state.className = "ring-sub";
+      state.textContent = this._t(
+        facts.missing ? "card.proxy.missing" : "card.proxy.offline"
+      );
+      cell.appendChild(state);
+      return cell;
+    }
+
+    if (facts.saturation !== null) {
+      const sat = document.createElement("div");
+      sat.className = "ring-sub";
+      sat.textContent = this._t("card.ring.saturation", {
+        percent: String(Math.round(facts.saturation)),
+      });
+      cell.appendChild(sat);
+    }
+    if (this._showDevices()) {
+      const devices = this._renderRingDevices(facts.allocated);
+      if (devices) cell.appendChild(devices);
+    }
+    return cell;
+  }
+
+  /**
+   * The gauge itself. SVG elements take their class through `setAttribute`:
+   * `className` is a read-only object on them, and assigning to it throws in
+   * strict mode.
+   *
+   * Geometry is `_slotCounts`, the rack's own, so a ring and a rack cannot
+   * reach different conclusions about the same proxy -- an overflow occupant
+   * still gets its segment, dashed, because dropping it would under-report how
+   * many devices hold a connection.
+   *
+   * Colour: a held segment takes the band of the device in it (good, fair,
+   * weak), or the theme's info colour when no signal was read. That is a
+   * different rule from the rack's, where every held pip is green: a ring has
+   * the room to say how well the slot is held, and "held" alone is what the
+   * count says.
+   *
+   * The outer saturation arc is grey on purpose. A theme's primary colour is
+   * often one of the band colours, and an arc that looks like a segment reads as
+   * one more slot.
+   */
+  _ringGauge(name, facts) {
+    const NS = "http://www.w3.org/2000/svg";
+    const make = (tag, attrs) => {
+      const el = document.createElementNS(NS, tag);
+      for (const key of Object.keys(attrs)) el.setAttribute(key, String(attrs[key]));
+      return el;
+    };
+    const svg = make("svg", {
+      viewBox: "0 0 80 80",
+      class: "ring-gauge",
+      role: "img",
+      "aria-label": facts.offline
+        ? `${name}: ${this._t(facts.missing ? "card.proxy.missing" : "card.proxy.offline")}`
+        : this._t("card.ring.label", {
+            proxy: name,
+            used: String(facts.used),
+            total: String(facts.total),
+          }),
+    });
+    const START = 225; // lower left, measured clockwise from twelve o'clock
+    const SWEEP = 270;
+
+    svg.appendChild(
+      make("path", { class: "track", d: arcPath(40, 40, 37, START, START + SWEEP) })
+    );
+    if (facts.offline) {
+      svg.appendChild(this._ringCount(make, "–"));
+      return svg;
+    }
+
+    if (facts.saturation !== null && facts.saturation > 0) {
+      svg.appendChild(
+        make("path", {
+          class: "sat",
+          d: arcPath(40, 40, 37, START, START + (SWEEP * facts.saturation) / 100),
+        })
+      );
+    }
+
+    const { slots, filled, rows } = this._slotCounts(
+      facts.used,
+      facts.total,
+      facts.allocated
+    );
+    const gap = rows > 8 ? 3 : 8;
+    const width = rows > 0 ? (SWEEP - gap * (rows - 1)) / rows : 0;
+    for (let i = 0; i < rows; i += 1) {
+      const from = START + i * (width + gap);
+      const classes = ["seg"];
+      if (i >= slots) {
+        classes.push("overflow");
+      } else if (i < filled) {
+        classes.push("held");
+      }
+      if (i < filled) {
+        const entry = facts.allocated[i] || {};
+        const quality = this._pathDrawn(entry.path) ? entry.path.quality : null;
+        if (["good", "fair", "weak"].includes(quality)) classes.push(quality);
+      }
+      svg.appendChild(
+        make("path", { class: classes.join(" "), d: arcPath(40, 40, 31, from, from + width) })
+      );
+    }
+    svg.appendChild(this._ringCount(make, rows > 0 ? `${facts.used}/${facts.total}` : "–"));
+    return svg;
+  }
+
+  _ringCount(make, text) {
+    const label = make("text", { class: "ring-count", x: 40, y: 46 });
+    label.textContent = text;
+    return label;
+  }
+
+  /**
+   * The devices holding a proxy's slots, as chips: a dot in the band's colour,
+   * the name, and the dBm figure. The figure is on the chip rather than in a
+   * tooltip because a phone has no hover; the connections line and the stronger
+   * proxy stay in the tooltip, where the rack draws them as lines.
+   */
+  _renderRingDevices(allocated) {
+    const list = document.createElement("div");
+    list.className = "ring-devices";
+    for (const device of allocated) {
+      const entry = device || {};
+      const label = entry.name ? String(entry.name) : String(entry.address || "");
+      if (!label) continue;
+
+      const chip = document.createElement("span");
+      chip.className = "chip";
+      const path = this._renderPath(entry.path);
+      const history = this._renderHistory(entry.history);
+      const description = [label, path && path.textContent, history && history.textContent]
+        .filter(Boolean)
+        .join(" · ");
+      chip.setAttribute("title", description);
+
+      const dot = document.createElement("span");
+      const quality = this._pathDrawn(entry.path) ? entry.path.quality : null;
+      dot.className = ["good", "fair", "weak"].includes(quality)
+        ? `chip-dot signal-${quality}`
+        : "chip-dot";
+      chip.appendChild(dot);
+
+      const text = document.createElement("span");
+      text.className = "chip-name";
+      text.textContent = label;
+      chip.appendChild(text);
+
+      if (this._pathDrawn(entry.path)) {
+        const rssi = document.createElement("span");
+        rssi.className = "chip-rssi";
+        rssi.textContent = String(entry.path.rssi);
+        chip.appendChild(rssi);
+      }
+      list.appendChild(chip);
+    }
+    return list.children.length ? list : null;
   }
 
   /**
@@ -1784,6 +2098,133 @@ class BlueSightCard extends HTMLElement {
         color: var(--secondary-text-color, #888);
         white-space: nowrap;
       }
+      /* layout: rings -- a ring of slots per proxy, the colours are the signal
+         bands'. The panel follows the theme rather than carrying a dark face of
+         its own, so it reads in a light or a dark dashboard alike. */
+      .fleet {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-bottom: 12px;
+      }
+      .proxies.rings {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 10px;
+      }
+      .ring {
+        background: var(--secondary-background-color, rgba(127, 127, 127, 0.08));
+        border-radius: 12px;
+        padding: 10px 6px;
+        text-align: center;
+        min-width: 0;
+      }
+      .ring.offline {
+        opacity: 0.5;
+      }
+      .ring-gauge {
+        display: block;
+        width: 96px;
+        height: 96px;
+        margin: 0 auto;
+      }
+      .ring-gauge path {
+        fill: none;
+      }
+      .ring-gauge .track {
+        stroke: var(--divider-color, #cfcfcf);
+        stroke-width: 1.5;
+      }
+      .ring-gauge .sat {
+        stroke: var(--secondary-text-color, #727272);
+        stroke-width: 2.5;
+        stroke-linecap: round;
+      }
+      .ring-gauge .seg {
+        stroke: var(--divider-color, #cfcfcf);
+        stroke-width: 7;
+        stroke-linecap: round;
+      }
+      .ring-gauge .seg.held {
+        stroke: var(--info-color, #2196f3);
+      }
+      .ring-gauge .seg.good {
+        stroke: var(--success-color, #43a047);
+      }
+      .ring-gauge .seg.fair {
+        stroke: var(--warning-color, #ffa600);
+      }
+      .ring-gauge .seg.weak {
+        stroke: var(--error-color, #db4437);
+      }
+      .ring-gauge .seg.overflow {
+        stroke: var(--warning-color, #ffa600);
+        stroke-dasharray: 3 3;
+      }
+      .ring-count {
+        fill: var(--primary-text-color);
+        font-size: 16px;
+        text-anchor: middle;
+        font-variant-numeric: tabular-nums;
+      }
+      .ring-name {
+        font-weight: 500;
+        color: var(--primary-text-color);
+        padding: 0 4px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .ring-sub {
+        font-size: 0.75rem;
+        color: var(--secondary-text-color, #888);
+      }
+      .ring-devices {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 4px;
+        margin-top: 8px;
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        max-width: 100%;
+        box-sizing: border-box;
+        font-size: 0.72rem;
+        color: var(--primary-text-color);
+        border: 1px solid var(--divider-color, #e0e0e0);
+        border-radius: 999px;
+        padding: 2px 8px 2px 6px;
+      }
+      .chip-dot {
+        flex: 0 0 auto;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--disabled-text-color, #9e9e9e);
+      }
+      .chip-dot.signal-good {
+        background: var(--success-color, #43a047);
+      }
+      .chip-dot.signal-fair {
+        background: var(--warning-color, #ffa600);
+      }
+      .chip-dot.signal-weak {
+        background: var(--error-color, #db4437);
+      }
+      .chip-name {
+        min-width: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .chip-rssi {
+        flex: 0 0 auto;
+        color: var(--secondary-text-color, #888);
+        font-variant-numeric: tabular-nums;
+      }
       .empty {
         color: var(--secondary-text-color, #888);
         font-size: 0.95rem;
@@ -1922,6 +2363,23 @@ class BlueSightCard extends HTMLElement {
       // layout: there is no proxy to lay out.
       return 3;
     }
+    if (this._layout() === "rings") {
+      // Header, fleet strip and incident area, then the rings two to a row on
+      // a phone-width card: a ring is ~170px before its chips, and each chip
+      // is counted as a row of its own (the worst case, a narrow cell), which
+      // is why the row is as tall as its busiest ring. Masonry re-asks on every
+      // state change, so an over-estimate corrects itself.
+      let rowsSize = 3;
+      for (let i = 0; i < proxies.length; i += 2) {
+        const chips = proxies.slice(i, i + 2).map((entityId) =>
+          this._showDevices()
+            ? (this._drawnOccupants(entityId, states) || []).length
+            : 0
+        );
+        rowsSize += Math.ceil((170 + Math.max(...chips) * 26) / 50);
+      }
+      return rowsSize;
+    }
     let size = 2; // card header + incident area
     for (const entityId of proxies) {
       size += this._proxyUnits(
@@ -1996,6 +2454,7 @@ class BlueSightCard extends HTMLElement {
               options: [
                 option("full", "card.editor.layout_full"),
                 option("tile", "card.editor.layout_tile"),
+                option("rings", "card.editor.layout_rings"),
               ],
             },
           },
