@@ -32,6 +32,7 @@
  *                                           # `rings` = one ring per proxy
  *   tile_tap: popup                         # `more-info` = HA's own dialog
  *   bounce_threshold: 5                     # rings: proxy changes in 24 h that outline a device
+ *   popup_layout: full                      # `rings` = what the one-line card's popup shows
  */
 
 // Kept equal to `manifest.json`'s version by tests/test_card_locale.py. The
@@ -194,6 +195,22 @@ const EMBEDDED_EN = {
   "card.devices.more.one": "Show the {count} other device",
   "card.devices.more.other": "Show the {count} other devices",
   "card.devices.less": "Show fewer",
+  "card.detail.back": "Back",
+  "card.detail.heading": "Which proxy held it",
+  "card.detail.held_by": "held by {proxy}",
+  "card.detail.connections.one": "connection",
+  "card.detail.connections.other": "connections",
+  "card.detail.changes.one": "proxy change",
+  "card.detail.changes.other": "proxy changes",
+  "card.detail.proxies_used.one": "proxy used",
+  "card.detail.proxies_used.other": "proxies used",
+  "card.detail.loading": "Loading…",
+  "card.detail.error": "The timeline could not be loaded.",
+  "card.detail.empty": "No connection recorded in this period.",
+  "card.detail.truncated": "Only the most recent stays are kept for a device that reconnects this often.",
+  "card.detail.unobserved": "Not watched yet",
+  "card.detail.ago": "{hours} h ago",
+  "card.detail.now": "now",
   "card.dialog.close": "Close",
   "card.editor.title": "Title",
   "card.editor.layout": "Layout",
@@ -201,6 +218,8 @@ const EMBEDDED_EN = {
   "card.editor.layout_full": "Full card",
   "card.editor.layout_tile": "One line",
   "card.editor.layout_rings": "Rings, one per proxy",
+  "card.editor.popup_layout": "Popup shows (one-line layout)",
+  "card.editor.popup_layout_helper": "What the popup shows when you tap the one-line card. Not set: the full card.",
   "card.editor.bounce_threshold": "Proxy changes before a device is outlined",
   "card.editor.bounce_threshold_helper": "Rings layout: a device that changed proxy at least this often in 24 h gets an amber outline. Display only, nothing is raised. Not set: 5.",
   "card.editor.show_devices": "Name the device in each slot",
@@ -870,17 +889,29 @@ class BlueSightCard extends HTMLElement {
     this._openCardDialog();
   }
 
+  /** What the one-line card's popup shows: `full` (the default) or `rings`. */
+  _popupLayout() {
+    const value = String((this._config || {}).popup_layout || "")
+      .trim()
+      .toLowerCase();
+    return value === "rings" ? "rings" : "full";
+  }
+
   /**
-   * The full card in a self-contained modal overlay -- no external dependency.
-   * Mounted on document.body so it is never clipped by the tile's grid cell;
-   * Home Assistant's theme variables inherit through the shadow root.
+   * The self-contained modal every popup of this card is built on, with no
+   * external dependency. Mounted on document.body by the caller so it is never
+   * clipped by the card's grid cell; Home Assistant's theme variables inherit
+   * through the shadow root.
    *
    * The scroll is this card's own problem and not the other cards': a fleet of
    * eight proxies is a rack far taller than a phone screen, so the wrapper
    * scrolls rather than overflowing off the viewport.
+   *
+   * `withCardStyles` adds this card's stylesheet to the shadow root, for a
+   * popup that draws its own markup (the device detail) rather than hosting a
+   * card that carries its own.
    */
-  _openCardDialog() {
-    if (this._dialog) return;
+  _dialogShell(ariaLabel, withCardStyles = false) {
     const host = document.createElement("div");
     const sr = host.attachShadow({ mode: "open" });
 
@@ -891,8 +922,8 @@ class BlueSightCard extends HTMLElement {
         animation:bsfade .15s ease; }
       @keyframes bsfade { from{opacity:0} to{opacity:1} }
       .wrap { position:relative; width:100%; max-width:480px; max-height:90vh;
-        overflow:auto; }
-      .x { position:absolute; top:-12px; right:-12px; z-index:1; width:34px; height:34px;
+        box-sizing:border-box; padding:12px 12px 0 0; overflow:auto; }
+      .x { position:absolute; top:0; right:0; z-index:1; width:34px; height:34px;
         border-radius:50%; border:none; cursor:pointer; font-size:17px; line-height:1;
         display:grid; place-items:center;
         background:var(--card-background-color,#fff); color:var(--primary-text-color,#222);
@@ -907,36 +938,69 @@ class BlueSightCard extends HTMLElement {
     wrap.className = "wrap";
     wrap.setAttribute("role", "dialog");
     wrap.setAttribute("aria-modal", "true");
-    wrap.setAttribute("aria-label", this._config.title || "BlueSight");
+    wrap.setAttribute("aria-label", ariaLabel);
     const closeButton = document.createElement("button");
     closeButton.className = "x";
     closeButton.setAttribute("aria-label", this._t("card.dialog.close"));
     closeButton.textContent = "✕";
 
+    scrim.appendChild(wrap);
+    sr.appendChild(style);
+    if (withCardStyles) {
+      const cardStyle = document.createElement("style");
+      cardStyle.textContent = this._css();
+      sr.appendChild(cardStyle);
+    }
+    sr.appendChild(scrim);
+    return { host, sr, scrim, wrap, closeButton };
+  }
+
+  /**
+   * The full card in a popup, for the one-line layout.
+   *
+   * The inner card is told who opened it (`_owner`), so that a tap on one of its
+   * devices changes the screen of this popup instead of opening a second one on
+   * top: one dialog, two screens, a "back" between them.
+   */
+  _openCardDialog() {
+    if (this._dialog) return;
+    // With the card's stylesheet: the inner card carries its own, but the device
+    // detail that replaces it is markup of this popup's, and without these rules
+    // it would be bare text.
+    const { host, scrim, wrap, closeButton } = this._dialogShell(
+      this._config.title || "BlueSight",
+      true
+    );
+
     const card = document.createElement("bluesight-card");
-    card.setConfig({ ...this._config, layout: "full" });
+    card._owner = this;
+    card.setConfig({ ...this._config, layout: this._popupLayout() });
     card.hass = this._hass;
 
     wrap.appendChild(closeButton);
     wrap.appendChild(card);
-    scrim.appendChild(wrap);
-    sr.appendChild(style);
-    sr.appendChild(scrim);
 
     const close = () => this._closeCardDialog();
-    // A click anywhere off the card closes -- the scrim itself, and the empty
-    // area of the wrapper around the card.
+    // A click on the scrim or on the empty area of the wrapper closes. It is
+    // decided by what was hit, not by what the click passed through: the
+    // "back" button removes the detail from the tree before the click reaches
+    // this listener, so a test of the path would find it outside everything.
     scrim.addEventListener("click", (event) => {
-      if (!event.composedPath().includes(card)) close();
+      if (event.target === scrim || event.target === wrap) close();
     });
     closeButton.addEventListener("click", close);
     this._dialogKey = (event) => {
-      if (event.key === "Escape") close();
+      if (event.key !== "Escape") return;
+      // One step back first: a person on the detail screen expects Escape to
+      // return to the list, not to lose both.
+      if (this._detailPanel) this._leaveDetail();
+      else close();
     };
     window.addEventListener("keydown", this._dialogKey);
     document.body.appendChild(host);
     this._dialog = host;
     this._dialogCard = card;
+    this._dialogParts = { wrap, card };
     // Otherwise the next Tab lands on whatever sits behind the scrim.
     closeButton.focus();
   }
@@ -948,13 +1012,321 @@ class BlueSightCard extends HTMLElement {
     this._dialog = null;
     this._dialogCard = null;
     this._dialogKey = null;
+    this._dialogParts = null;
+    this._detailPanel = null;
+    // An answer still on its way must not draw into a popup that is gone.
+    this._detailToken = (this._detailToken || 0) + 1;
     // Back to where the keyboard user was. Only after a real close:
     // `disconnectedCallback` calls this too, with nothing open.
     if (wasOpen && this._tileRow) this._tileRow.focus();
   }
 
+  // ---------------------------------------------------------------------------
+  // The device detail: which proxy held it, hour by hour
+  // ---------------------------------------------------------------------------
+
+  /**
+   * A device tile was tapped. Inside a one-line card's popup the detail replaces
+   * the list in that same popup; anywhere else it opens a popup of its own.
+   */
+  _openDeviceDetail(row, origin) {
+    if (this._owner) {
+      this._owner._showDetailInDialog(row, origin);
+      return;
+    }
+    this._openDetailDialog(row, origin);
+  }
+
+  /** Owner side: swap the card in this popup for the detail, with a way back. */
+  _showDetailInDialog(row, origin) {
+    if (!this._dialogParts || this._detailPanel) return;
+    const { wrap, card } = this._dialogParts;
+    this._detailOrigin = origin;
+    const panel = this._detailPanelFor(row, () => this._leaveDetail());
+    wrap.removeChild(card);
+    wrap.appendChild(panel);
+    this._detailPanel = panel;
+    wrap.scrollTop = 0;
+    if (panel.focusTarget) panel.focusTarget.focus();
+  }
+
+  _leaveDetail() {
+    if (!this._dialogParts || !this._detailPanel) return;
+    const { wrap, card } = this._dialogParts;
+    wrap.removeChild(this._detailPanel);
+    wrap.appendChild(card);
+    this._detailPanel = null;
+    this._detailToken = (this._detailToken || 0) + 1;
+    wrap.scrollTop = 0;
+    if (this._detailOrigin && this._detailOrigin.focus) this._detailOrigin.focus();
+  }
+
+  /** A popup of its own for the detail: the card sits on a dashboard. */
+  _openDetailDialog(row, origin) {
+    if (this._detailDialog) return;
+    const { host, scrim, wrap, closeButton } = this._dialogShell(row.label, true);
+    const panel = this._detailPanelFor(row, null);
+    wrap.appendChild(closeButton);
+    wrap.appendChild(panel);
+
+    const close = () => this._closeDetailDialog();
+    scrim.addEventListener("click", (event) => {
+      if (event.target === scrim || event.target === wrap) close();
+    });
+    closeButton.addEventListener("click", close);
+    this._detailKey = (event) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("keydown", this._detailKey);
+    document.body.appendChild(host);
+    this._detailDialog = host;
+    this._detailOriginOwn = origin;
+    closeButton.focus();
+  }
+
+  _closeDetailDialog() {
+    if (this._detailKey) window.removeEventListener("keydown", this._detailKey);
+    const wasOpen = Boolean(this._detailDialog);
+    if (this._detailDialog) this._detailDialog.remove();
+    this._detailDialog = null;
+    this._detailKey = null;
+    this._detailToken = (this._detailToken || 0) + 1;
+    if (wasOpen && this._detailOriginOwn && this._detailOriginOwn.focus) {
+      this._detailOriginOwn.focus();
+    }
+  }
+
+  /** The detail as a card of its own, with a "back" when it replaces a list. */
+  _detailPanelFor(row, back) {
+    const panel = document.createElement("ha-card");
+    panel.className = "detail-card";
+    panel.focusTarget = null;
+    if (back) {
+      const bar = document.createElement("div");
+      bar.className = "detail-bar";
+      const button = document.createElement("button");
+      button.className = "detail-back";
+      button.setAttribute("type", "button");
+      button.textContent = `← ${this._t("card.detail.back")}`;
+      button.addEventListener("click", back);
+      bar.appendChild(button);
+      panel.appendChild(bar);
+      panel.focusTarget = button;
+    }
+    panel.appendChild(this._buildDetail(row));
+    return panel;
+  }
+
+  /**
+   * The detail of one device: its name and signal, the three numbers the tile
+   * has no room for, and the day as a timeline.
+   *
+   * The numbers come from what the card already holds; the timeline is asked
+   * for, because it changes with every connection in the house and is not worth
+   * pushing to every open dashboard. A backend that cannot answer leaves the
+   * rest of the detail standing.
+   */
+  _buildDetail(row) {
+    const { entry, label, proxy } = row;
+    const path = this._pathDrawn(entry.path) ? entry.path : null;
+    const quality =
+      path && ["good", "fair", "weak"].includes(path.quality) ? path.quality : null;
+    const history = entry.history || {};
+
+    const body = document.createElement("div");
+    body.className = "detail-body";
+
+    const title = document.createElement("div");
+    title.className = "detail-title";
+    title.textContent = label;
+    body.appendChild(title);
+
+    const sub = document.createElement("div");
+    sub.className = quality ? `detail-sub band-${quality}` : "detail-sub";
+    if (quality) sub.appendChild(this._bandBars(quality));
+    const pathLine = this._renderPath(entry.path);
+    const text = document.createElement("span");
+    text.textContent = [
+      pathLine && pathLine.textContent,
+      this._t("card.detail.held_by", { proxy }),
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    sub.appendChild(text);
+    body.appendChild(sub);
+
+    const figures = document.createElement("div");
+    figures.className = "detail-kv";
+    // A figure the card does not have shows a dash and takes the plural, which
+    // is the form of "none" and "unknown" in the languages it ships.
+    const number = (value) => (Number.isFinite(value) ? String(value) : "–");
+    let used = null;
+    for (const [value, count, key] of [
+      [number(history.connections), history.connections, "card.detail.connections"],
+      [number(history.proxy_changes), history.proxy_changes, "card.detail.changes"],
+      ["–", undefined, "card.detail.proxies_used"],
+    ]) {
+      const box = document.createElement("div");
+      const figure = document.createElement("b");
+      figure.textContent = value;
+      const caption = document.createElement("span");
+      caption.textContent = this._t(key, {}, Number.isFinite(count) ? count : 2);
+      box.appendChild(figure);
+      box.appendChild(caption);
+      figures.appendChild(box);
+      used = { value: figure, caption };
+    }
+    body.appendChild(figures);
+
+    const heading = document.createElement("div");
+    heading.className = "devices-heading";
+    heading.textContent = this._t("card.detail.heading");
+    body.appendChild(heading);
+
+    const timeline = document.createElement("div");
+    timeline.className = "detail-timeline";
+    body.appendChild(timeline);
+
+    this._detailToken = (this._detailToken || 0) + 1;
+    this._loadTimeline(entry.address, timeline, used, this._detailToken);
+    return body;
+  }
+
+  /** Ask the backend for the device's stays and draw them when they arrive. */
+  _loadTimeline(address, host, used, token) {
+    const note = (key, className) => {
+      host.innerHTML = "";
+      const line = document.createElement("div");
+      line.className = className;
+      line.textContent = this._t(key);
+      host.appendChild(line);
+    };
+    note("card.detail.loading", "detail-note");
+    const hass = this._hass;
+    const call =
+      hass && typeof hass.callWS === "function"
+        ? hass.callWS({ type: "bluesight/device_timeline", address: String(address) })
+        : Promise.reject(new Error("no WebSocket"));
+    call
+      .then((data) => {
+        if (token !== this._detailToken) return;
+        this._drawTimeline(host, used, data || {});
+      })
+      .catch(() => {
+        if (token !== this._detailToken) return;
+        note("card.detail.error", "detail-note");
+      });
+  }
+
+  /**
+   * One bar for the window, a stay drawn in its proxy's colour at its place on
+   * the line. A stretch the integration had not been watching yet is hatched,
+   * and a gap is a gap: nothing held the device then.
+   */
+  _drawTimeline(host, figure, data) {
+    host.innerHTML = "";
+    const stays = Array.isArray(data.stays) ? data.stays : [];
+    const proxies = Array.isArray(data.proxies) ? data.proxies : [];
+    if (figure) {
+      figure.value.textContent = String(proxies.length);
+      figure.caption.textContent = this._t(
+        "card.detail.proxies_used",
+        {},
+        proxies.length
+      );
+    }
+
+    if (!stays.length) {
+      const empty = document.createElement("div");
+      empty.className = "detail-note";
+      empty.textContent = this._t("card.detail.empty");
+      host.appendChild(empty);
+      return;
+    }
+    const windowS = Number(data.window_s) > 0 ? Number(data.window_s) : 86400;
+    const observed = Math.min(windowS, Number(data.observed_s) || windowS);
+
+    const track = document.createElement("div");
+    track.className = "detail-track";
+    if (observed < windowS) {
+      const unwatched = document.createElement("div");
+      unwatched.className = "detail-unobserved";
+      unwatched.style.left = "0%";
+      unwatched.style.width = `${(((windowS - observed) / windowS) * 100).toFixed(2)}%`;
+      unwatched.setAttribute("title", this._t("card.detail.unobserved"));
+      track.appendChild(unwatched);
+    }
+    const used = new Set();
+    for (const stay of stays) {
+      const [from, to, index] = stay.map(Number);
+      const slot = Number.isFinite(index) ? index : 0;
+      used.add(slot);
+      const seg = document.createElement("div");
+      seg.className = `detail-seg proxy-${slot % 5}`;
+      seg.style.left = `${(((windowS - from) / windowS) * 100).toFixed(2)}%`;
+      // Never thinner than a hairline: a stay of a few seconds is still a stay.
+      seg.style.width = `${Math.max(0.6, ((from - to) / windowS) * 100).toFixed(2)}%`;
+      const span = this._formatAge(from - to);
+      seg.setAttribute(
+        "title",
+        [proxies[slot] || "?", span].filter(Boolean).join(" · ")
+      );
+      track.appendChild(seg);
+    }
+    host.appendChild(track);
+
+    const hours = Math.max(1, Math.round(windowS / 3600));
+    const axis = document.createElement("div");
+    axis.className = "detail-axis";
+    for (const text of [
+      this._t("card.detail.ago", { hours: String(hours) }),
+      `${Math.round(hours / 2)} h`,
+      this._t("card.detail.now"),
+    ]) {
+      const tick = document.createElement("span");
+      tick.textContent = text;
+      axis.appendChild(tick);
+    }
+    host.appendChild(axis);
+
+    const legend = document.createElement("div");
+    legend.className = "detail-legend";
+    for (const slot of [...used].sort((a, b) => a - b)) {
+      const item = document.createElement("span");
+      const swatch = document.createElement("i");
+      swatch.className = `proxy-${slot % 5}`;
+      item.appendChild(swatch);
+      const name = document.createElement("span");
+      name.textContent = proxies[slot] || "?";
+      item.appendChild(name);
+      legend.appendChild(item);
+    }
+    host.appendChild(legend);
+
+    if (data.truncated) {
+      const cut = document.createElement("div");
+      cut.className = "detail-note";
+      cut.textContent = this._t("card.detail.truncated");
+      host.appendChild(cut);
+    }
+  }
+
+  /** The three-bar signal glyph, lit by band (three good, one weak). */
+  _bandBars(quality) {
+    const bars = document.createElement("span");
+    bars.className = "bars";
+    const lit = { good: 3, fair: 2, weak: 1 }[quality] || 0;
+    for (let i = 1; i <= 3; i += 1) {
+      const bar = document.createElement("i");
+      bar.className = i <= lit ? "on" : "";
+      bars.appendChild(bar);
+    }
+    return bars;
+  }
+
   disconnectedCallback() {
     this._closeCardDialog();
+    this._closeDetailDialog();
   }
 
   _computeSignature(proxyEntities, hass, incidentEntity, incidentState, title) {
@@ -1574,6 +1946,18 @@ class BlueSightCard extends HTMLElement {
 
     const tile = document.createElement("div");
     tile.className = row.flagged ? "device-tile flagged" : "device-tile";
+    // A tap opens the device's detail. A bare div takes no focus, so without the
+    // role and the tab stop the keyboard could not reach it.
+    tile.setAttribute("role", "button");
+    tile.setAttribute("tabindex", "0");
+    const open = () => this._openDeviceDetail(row, tile);
+    tile.addEventListener("click", open);
+    tile.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        open();
+      }
+    });
     const pathLine = this._renderPath(entry.path);
     const historyLine = this._renderHistory(entry.history);
     tile.setAttribute(
@@ -1589,15 +1973,7 @@ class BlueSightCard extends HTMLElement {
       badge.setAttribute("role", "img");
       badge.setAttribute("aria-label", this._t(`card.signal.${quality}`));
     }
-    const bars = document.createElement("span");
-    bars.className = "bars";
-    const lit = { good: 3, fair: 2, weak: 1 }[quality] || 0;
-    for (let i = 1; i <= 3; i += 1) {
-      const bar = document.createElement("i");
-      bar.className = i <= lit ? "on" : "";
-      bars.appendChild(bar);
-    }
-    badge.appendChild(bars);
+    badge.appendChild(this._bandBars(quality));
     tile.appendChild(badge);
 
     const text = document.createElement("div");
@@ -2477,6 +2853,13 @@ class BlueSightCard extends HTMLElement {
       .device-tile.flagged {
         border-color: var(--warning-color, #ffa600);
       }
+      .device-tile {
+        cursor: pointer;
+      }
+      .device-tile:focus-visible {
+        outline: 2px solid var(--primary-color, #03a9f4);
+        outline-offset: 1px;
+      }
       .device-badge {
         --c: var(--disabled-text-color, #9e9e9e);
         flex: 0 0 auto;
@@ -2573,6 +2956,158 @@ class BlueSightCard extends HTMLElement {
       }
       .more:focus-visible {
         outline: 2px solid var(--primary-color, #03a9f4);
+      }
+      /* The device detail: a popup of its own, or the second screen of the
+         one-line card's popup. */
+      .detail-bar {
+        padding: 8px 12px 0;
+      }
+      .detail-back {
+        padding: 4px 8px 4px 0;
+        font: inherit;
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: var(--primary-color, #03a9f4);
+        background: transparent;
+        border: 0;
+        cursor: pointer;
+      }
+      .detail-back:focus-visible {
+        outline: 2px solid var(--primary-color, #03a9f4);
+        outline-offset: 2px;
+      }
+      .detail-body {
+        padding: 14px 16px 16px;
+      }
+      .detail-title {
+        font-size: 1.05rem;
+        font-weight: 600;
+        color: var(--primary-text-color);
+      }
+      .detail-sub {
+        --c: var(--disabled-text-color, #9e9e9e);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 2px;
+        font-size: 0.82rem;
+        color: var(--secondary-text-color, #888);
+        font-variant-numeric: tabular-nums;
+      }
+      .detail-sub.band-good {
+        --c: var(--success-color, #43a047);
+      }
+      .detail-sub.band-fair {
+        --c: var(--warning-color, #ffa600);
+      }
+      .detail-sub.band-weak {
+        --c: var(--error-color, #db4437);
+      }
+      .detail-kv {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+        margin: 12px 0;
+      }
+      .detail-kv div {
+        padding: 8px 10px;
+        border-radius: 10px;
+        background: var(--secondary-background-color, rgba(127, 127, 127, 0.08));
+      }
+      .detail-kv b {
+        display: block;
+        font-size: 1.15rem;
+        font-weight: 600;
+        color: var(--primary-text-color);
+        font-variant-numeric: tabular-nums;
+      }
+      .detail-kv span {
+        font-size: 0.72rem;
+        color: var(--secondary-text-color, #888);
+      }
+      .detail-track {
+        position: relative;
+        height: 22px;
+        overflow: hidden;
+        border-radius: 5px;
+        background-color: var(--secondary-background-color, rgba(127, 127, 127, 0.08));
+        background-image: repeating-linear-gradient(
+          90deg,
+          transparent 0,
+          transparent calc(100% / 24 - 1px),
+          var(--divider-color, #cfcfcf) calc(100% / 24 - 1px),
+          var(--divider-color, #cfcfcf) calc(100% / 24)
+        );
+      }
+      .detail-seg {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        border-radius: 3px;
+      }
+      .detail-unobserved {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        background-image: repeating-linear-gradient(
+          45deg,
+          transparent 0,
+          transparent 4px,
+          var(--divider-color, #cfcfcf) 4px,
+          var(--divider-color, #cfcfcf) 5px
+        );
+      }
+      .detail-seg.proxy-0,
+      .detail-legend i.proxy-0 {
+        background: var(--bluesight-proxy-1, #4c9be0);
+      }
+      .detail-seg.proxy-1,
+      .detail-legend i.proxy-1 {
+        background: var(--bluesight-proxy-2, #9a78e0);
+      }
+      .detail-seg.proxy-2,
+      .detail-legend i.proxy-2 {
+        background: var(--bluesight-proxy-3, #2fb3a5);
+      }
+      .detail-seg.proxy-3,
+      .detail-legend i.proxy-3 {
+        background: var(--bluesight-proxy-4, #e8913a);
+      }
+      .detail-seg.proxy-4,
+      .detail-legend i.proxy-4 {
+        background: var(--bluesight-proxy-5, #d65f9c);
+      }
+      .detail-axis {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 3px;
+        font-size: 0.7rem;
+        color: var(--secondary-text-color, #888);
+      }
+      .detail-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 12px;
+        margin-top: 8px;
+        font-size: 0.75rem;
+        color: var(--secondary-text-color, #888);
+      }
+      .detail-legend span {
+        display: inline-flex;
+        align-items: center;
+      }
+      .detail-legend i {
+        display: inline-block;
+        width: 14px;
+        height: 8px;
+        margin-right: 6px;
+        border-radius: 2px;
+      }
+      .detail-note {
+        margin-top: 8px;
+        font-size: 0.8rem;
+        font-style: italic;
+        color: var(--secondary-text-color, #888);
       }
       .empty {
         color: var(--secondary-text-color, #888);
@@ -2833,6 +3368,19 @@ class BlueSightCard extends HTMLElement {
           },
         },
         {
+          name: "popup_layout",
+          default: "full",
+          selector: {
+            select: {
+              mode: "dropdown",
+              options: [
+                option("full", "card.editor.layout_full"),
+                option("rings", "card.editor.layout_rings"),
+              ],
+            },
+          },
+        },
+        {
           name: "incident_entity",
           selector: {
             entity: { filter: { domain: "binary_sensor", integration: "bluesight" } },
@@ -2841,9 +3389,13 @@ class BlueSightCard extends HTMLElement {
       ],
       computeLabel: (schema) => t(`card.editor.${schema.name}`),
       computeHelper: (schema) =>
-        ["layout", "tile_tap", "show_devices", "bounce_threshold"].includes(
-          schema.name
-        )
+        [
+          "layout",
+          "tile_tap",
+          "show_devices",
+          "popup_layout",
+          "bounce_threshold",
+        ].includes(schema.name)
           ? t(`card.editor.${schema.name}_helper`)
           : undefined,
     };

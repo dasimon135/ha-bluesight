@@ -7,6 +7,10 @@
 //   key     — press that key on the tile's row instead, through its listeners
 //   close   — then close whatever the tap or the key opened
 //   more    — click the rings layout's "show the others" button
+//   tapDevice — click the nth device tile on screen (deviceKey: press that key)
+//   back    — then click the detail's "back"
+//   ws / wsError / noWS — what the timeline command answers, fails with, or
+//             absent altogether
 // Prints: { html, size, dialog, attrs, focused, grid, form } — the card's rendered shadow
 // tree, what it answers for `getCardSize()`, the tree of anything mounted on
 // document.body, the attributes of every element that has any (keyed by class
@@ -37,6 +41,8 @@ class FakeElement {
     this.dataset = {};
     this.listeners = {};
     this.attributes = {};
+    // CSSOM-style assignments (`el.style.left = ...`), as the card makes them.
+    this.style = {};
     this._text = "";
     this.classList = {
       add: (...names) => {
@@ -74,6 +80,7 @@ class FakeElement {
 
   appendChild(child) {
     this.children.push(child);
+    child.parent = this;
     return child;
   }
 
@@ -82,7 +89,10 @@ class FakeElement {
     return child;
   }
 
-  remove() {}
+  // Leaves its parent, as in a browser: a closed popup is gone from the body.
+  remove() {
+    if (this.parent) this.parent.children = this.parent.children.filter((c) => c !== this);
+  }
   setAttribute(name, value) {
     this.attributes[name] = String(value);
     // An SVG node takes its class through the attribute (`className` is
@@ -121,11 +131,15 @@ function serialise(el) {
   // step around -- and a class name in a selector is not a class name on a node.
   if (el.tagName === "style") return "<style/>";
   const cls = el.className ? ` class="${el.className}"` : "";
+  const css = Object.keys(el.style || {})
+    .map((key) => `${key}:${el.style[key]}`)
+    .join(";");
+  const inlineStyle = css ? ` style="${css}"` : "";
   // A shadow root is where the popup keeps everything it draws, so it has to be
   // part of what an assertion can see.
   const shadow = el.shadowRoot ? serialise(el.shadowRoot) : "";
   const inner = shadow + el._text + el.children.map(serialise).join("");
-  return `<${el.tagName}${cls}>${inner}</${el.tagName}>`;
+  return `<${el.tagName}${cls}${inlineStyle}>${inner}</${el.tagName}>`;
 }
 
 /** Every element under `el`, shadow roots included. */
@@ -136,6 +150,7 @@ function walk(el, visit) {
   el.children.forEach((child) => walk(child, visit));
 }
 
+global.__wsCalls = [];
 const registry = {};
 global.HTMLElement = FakeElement;
 global.customElements = {
@@ -216,7 +231,23 @@ card.hass = {
   // looks like to the card.
   entities: scenario.entities,
   devices: scenario.devices,
+  // The one WebSocket command the card makes. `ws` is the answer, `wsError`
+  // makes it fail; `__wsCalls` records what was asked.
+  callWS: scenario.noWS
+    ? undefined
+    : (message) => {
+        global.__wsCalls.push(message);
+        return scenario.wsError
+          ? Promise.reject(new Error("boom"))
+          : Promise.resolve(scenario.ws || {});
+      },
 };
+
+// A language other than English is served from disk and applied one turn of
+// the loop later; anything a tap builds should already speak it.
+if (servesCatalogues(scenario.language)) {
+  await new Promise((resolve) => setImmediate(resolve));
+}
 
 if (scenario.tap) {
   card._onTileTap();
@@ -235,6 +266,53 @@ if (scenario.more) {
   walk(card.shadowRoot, (el) => {
     if (!el.className.split(" ").includes("more")) return;
     (el.listeners.click || []).forEach((fn) => fn({}));
+  });
+}
+
+// Click a device tile (by position among every tile on screen, popups
+// included), or press a key on it. One macrotask afterwards lets the timeline
+// answer land.
+function deviceTiles() {
+  const tiles = [];
+  [card.shadowRoot, global.document.body].forEach((root) =>
+    walk(root, (el) => {
+      if (el.className.split(" ").includes("device-tile")) tiles.push(el);
+    })
+  );
+  return tiles;
+}
+function press(el, type, event) {
+  (el.listeners[type] || []).forEach((fn) =>
+    fn({ preventDefault: () => {}, composedPath: () => [], ...event })
+  );
+}
+if (scenario.tapDevice !== undefined) {
+  const tile = deviceTiles()[scenario.tapDevice];
+  if (scenario.deviceKey) press(tile, "keydown", { key: scenario.deviceKey });
+  else press(tile, "click", {});
+  await new Promise((resolve) => setImmediate(resolve));
+}
+if (scenario.back) {
+  // The click bubbles: the button's own listener first, then the popup's
+  // backdrop, which sees the button as the target -- by then already removed
+  // from the tree, which is what once made "back" close the whole popup.
+  walk(global.document.body, (el) => {
+    if (!el.className.split(" ").includes("detail-back")) return;
+    press(el, "click", {});
+    walk(global.document.body, (other) => {
+      if (other.className.split(" ").includes("scrim")) {
+        press(other, "click", { target: el });
+      }
+    });
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+}
+// A click on the empty backdrop of whatever popup is open.
+if (scenario.backdropClick) {
+  walk(global.document.body, (el) => {
+    if (el.className.split(" ").includes("scrim")) {
+      press(el, "click", { target: el });
+    }
   });
 }
 
@@ -279,6 +357,7 @@ process.stdout.write(
     dialog: serialise(global.document.body),
     attrs,
     focused: global.__focused ? global.__focused.className : null,
+    ws: global.__wsCalls,
     grid: card.getGridOptions(),
     form: editorForm(),
   })

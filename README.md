@@ -411,8 +411,8 @@ native fallback YAML — is in **[docs/card.md](docs/card.md)**.
 > slot, coloured by how well the device in it is heard, with the share of the
 > day the proxy was full around it. A strip above sums the fleet up, and the
 > devices follow as tiles with the ones to look at first on top, each with its
-> day as a row of bars. For a fleet where the question is *what needs a look*,
-> not *who holds slot two*. See [docs/card.md](docs/card.md#layout-rings-a-ring-per-proxy).
+> day as a row of bars. Tap one to see which proxy held it, hour by hour. For a
+> fleet where the question is *what needs a look*, not *who holds slot two*. See [docs/card.md](docs/card.md#layout-rings-a-ring-per-proxy).
 
 > Since 0.4.0 the card ships **inside the integration**, so HACS delivers it
 > along with everything else and the integration serves and registers it

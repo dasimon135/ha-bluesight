@@ -297,6 +297,31 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
         """Per-device connections over the last day (read-only use)."""
         return self._history
 
+    def device_timeline(self, address: str) -> dict[str, object]:
+        """One device's stays over the window, in the shape the card draws.
+
+        Asked for on demand through the WebSocket rather than published on a
+        sensor: it changes with every connection, and the card only needs it
+        for the one device a person tapped.
+        """
+        history = self._history
+        timeline = history.timeline(address)
+        names = self.data.proxy_display_names if self.data else {}
+        stays = timeline.stays if timeline else ()
+        sources = sorted({source for _, _, source in stays})
+        index = {source: i for i, source in enumerate(sources)}
+        return {
+            "address": normalize_address(address),
+            "window_s": history.window_s,
+            "observed_s": round(history.stays_observed_s(), 1),
+            "proxies": [names.get(source, source) for source in sources],
+            "stays": [
+                [round(start), round(end), index[source]]
+                for start, end, source in stays
+            ],
+            "truncated": bool(timeline and timeline.truncated),
+        }
+
     @property
     def tracked_sources(self) -> set[str]:
         """Proxy sources seen online at least once since setup."""
