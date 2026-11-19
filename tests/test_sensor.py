@@ -346,6 +346,8 @@ def test_connections_total_the_fleet_and_rank_the_busiest_first() -> None:
             "proxy_changes": 2,
             # Named as the user names the proxy; the address when unnamed.
             "proxies": ["Proxy Salon", "P2"],
+            # All three inside the last hour, so they land in the last bucket.
+            "hourly": [0] * 23 + [3],
         },
         {
             "address": "BB",
@@ -353,6 +355,7 @@ def test_connections_total_the_fleet_and_rank_the_busiest_first() -> None:
             "connections": 1,
             "proxy_changes": 0,
             "proxies": ["Proxy Salon"],
+            "hourly": [0] * 23 + [1],
         },
     ]
     assert attrs["window_s"] == 86400.0

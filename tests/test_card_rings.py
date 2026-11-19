@@ -193,16 +193,16 @@ def test_a_proxy_never_full_has_the_words_but_no_arc() -> None:
 # --- the devices ------------------------------------------------------------
 
 
-def test_each_device_is_a_chip_with_its_name_and_signal() -> None:
+def test_each_device_is_a_tile_with_its_name_and_signal() -> None:
     html = _rings(_proxy("a", 3, 3, THREE))["html"]
     assert "Madoka Buanderie" in html
-    assert 'class="chip-rssi">-91<' in html
-    assert "chip-dot signal-weak" in html
+    assert "-91 dBm" in html
+    assert "device-badge band-weak" in html
 
 
 def test_show_devices_off_leaves_the_ring_alone() -> None:
     html = _rings(_proxy("a", 3, 3, THREE), show_devices=False)["html"]
-    assert "ring-devices" not in html
+    assert "device-tiles" not in html
     assert "ring-gauge" in html
 
 
@@ -256,11 +256,15 @@ def test_the_gauge_says_what_it_shows_without_colour() -> None:
     assert attrs["aria-label"] == "a: 2 of 3 slots"
 
 
-def test_a_chip_carries_the_whole_story_in_its_tooltip() -> None:
+def test_a_tile_carries_the_whole_story_in_its_tooltip() -> None:
     device = _device(
         "Madoka Manon", -83, "fair", history={"connections": 19, "proxy_changes": 7}
     )
-    attrs = _rings(_proxy("a", 1, 3, [device]))["attrs"]["chip"]
+    attrs = next(
+        value
+        for key, value in _rings(_proxy("a", 1, 3, [device]))["attrs"].items()
+        if key.startswith("device-tile")
+    )
     assert "Madoka Manon" in attrs["title"]
     assert "-83 dBm" in attrs["title"]
     assert "19 connections in 24 h" in attrs["title"]

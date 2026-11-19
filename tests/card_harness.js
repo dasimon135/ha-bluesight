@@ -6,6 +6,7 @@
 //   tap     — also fire the tile's tap handler, and serialise what it opened
 //   key     — press that key on the tile's row instead, through its listeners
 //   close   — then close whatever the tap or the key opened
+//   more    — click the rings layout's "show the others" button
 // Prints: { html, size, dialog, attrs, focused, grid, form } — the card's rendered shadow
 // tree, what it answers for `getCardSize()`, the tree of anything mounted on
 // document.body, the attributes of every element that has any (keyed by class
@@ -227,6 +228,13 @@ if (scenario.key) {
     (el.listeners.keydown || []).forEach((fn) =>
       fn({ key: scenario.key, preventDefault: () => {} })
     );
+  });
+}
+
+if (scenario.more) {
+  walk(card.shadowRoot, (el) => {
+    if (!el.className.split(" ").includes("more")) return;
+    (el.listeners.click || []).forEach((fn) => fn({}));
   });
 }
 
