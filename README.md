@@ -32,6 +32,10 @@ Tap a device to see which proxy held it, hour by hour:
 
 ![A device's detail: its signal, how many times it connected and changed proxy in 24 hours, and a bar showing which proxy held it](https://raw.githubusercontent.com/dasimon135/ha-bluesight/main/docs/images/card_detail_en.png)
 
+Tap a ring for the other side of it, which devices held a slot on that proxy:
+
+![A proxy's detail: how full it is, and one bar per device that held a slot on it over the last 24 hours](https://raw.githubusercontent.com/dasimon135/ha-bluesight/main/docs/images/card_proxy_en.png)
+
 ## Will this be useful to me?
 
 **If you run ESPHome Bluetooth proxies**, and especially several of them, yes.
@@ -527,11 +531,12 @@ proxies.
   v1.5 sketch did **not** ship: connection-reject counts, which remain a possible
   addition, and BLE RAM, which is node health rather than connection-layer
   evidence and which ESPHome already exposes on its own.
-- **0.7.0 to 0.11.0: pressure, reach and reading (shipped).** The saturation
+- **0.7.0 to 0.12.0: pressure, reach and reading (shipped).** The saturation
   measurement (0.7), the one-line `tile` layout (0.8), incident
   events and the retirement Repair (0.9), signal quality and reconnection
   counts per device (0.10), and the `rings` layout with device tiles and a
-  per-device timeline (0.11). Release notes are on the
+  per-device timeline (0.11), and a per-proxy one, opened by tapping a ring
+  (0.12). Release notes are on the
   [releases page](https://github.com/dasimon135/ha-bluesight/releases).
 - **v2 — self-healing.** Guided, then automatic remediation: "free this slot" and
   guided re-pair, built on the proven v1 base.
