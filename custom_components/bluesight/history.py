@@ -228,6 +228,26 @@ class ConnectionHistory:
             return None
         return Timeline(stays=tuple(out), truncated=len(stays) >= MAX_STAYS)
 
+    def proxy_timeline(self, source: str) -> dict[str, Timeline]:
+        """Which devices held a slot on one proxy, and when, over the window.
+
+        Each device's :meth:`timeline`, cut down to the stays through that proxy,
+        so the merging and clipping rules are the device view's own and the two
+        cannot disagree about the same stay. A device that never used the proxy
+        is absent. ``truncated`` is the device's: it says its oldest stays were
+        dropped, wherever they were.
+        """
+        source = normalize_address(source)
+        out: dict[str, Timeline] = {}
+        for address in self._stays:
+            timeline = self.timeline(address)
+            if timeline is None:
+                continue
+            mine = tuple(stay for stay in timeline.stays if stay[2] == source)
+            if mine:
+                out[address] = Timeline(stays=mine, truncated=timeline.truncated)
+        return out
+
     def all(self) -> dict[str, DeviceHistory]:
         """Every device that took a slot inside the window."""
         out = {}
