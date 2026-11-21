@@ -377,6 +377,10 @@ And the detail a tap on a device opens:
 
 ![A device's detail](images/card_detail_en.png)
 
+The detail a tap on a ring opens, with the devices that held a slot on that proxy:
+
+![A proxy's detail](images/card_proxy_en.png)
+
 ---
 
 ## Option B — native-card fallback (no custom JavaScript)
