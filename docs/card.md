@@ -264,9 +264,21 @@ The stays are saved with the rest of BlueSight's state, so a restart leaves a
 gap and not a hole in the history; a file from before this version simply has
 none until the first snapshot.
 
+**Tap a ring for the proxy's day.** The other way round: a popup lists the
+devices that held a slot on that proxy over the last 24 hours, longest holders
+first, one bar each on a shared axis, so two devices can be read against each
+other. It answers what the grey arc cannot: *what is sitting on the proxy that is
+always full?* A device Home Assistant cannot name shows its address. At most 12
+devices are listed, and the line under them says how many were left out. An
+offline proxy can be tapped too: what it held before it dropped is the question
+you ask of one. Like the device view, it rests on the stays recorded since 0.11.0,
+and asks for them over `bluesight/proxy_timeline` when you tap. A ring is a
+button only for a proxy that publishes its `source`, which every proxy BlueSight
+creates does.
+
 **`popup_layout`** picks what the one-line card's popup shows: `full` (the
 default) or `rings`. With `rings`, the popup holds the ring layout, and a tap on
-one of its devices **changes that same popup's screen** instead of opening a
+one of its devices or rings **changes that same popup's screen** instead of opening a
 second one on top: the detail replaces the list, with a "Back" (Escape goes back
 first, then closes).
 

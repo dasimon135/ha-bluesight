@@ -8,6 +8,7 @@
 //   close   — then close whatever the tap or the key opened
 //   more    — click the rings layout's "show the others" button
 //   tapDevice — click the nth device tile on screen (deviceKey: press that key)
+//   tapRing — the same for the nth proxy ring (ringKey)
 //   back    — then click the detail's "back"
 //   ws / wsError / noWS — what the timeline command answers, fails with, or
 //             absent altogether
@@ -290,6 +291,23 @@ if (scenario.tapDevice !== undefined) {
   const tile = deviceTiles()[scenario.tapDevice];
   if (scenario.deviceKey) press(tile, "keydown", { key: scenario.deviceKey });
   else press(tile, "click", {});
+  await new Promise((resolve) => setImmediate(resolve));
+}
+// Click a proxy's ring (by position among every ring on screen, popups
+// included), or press a key on it.
+function rings() {
+  const found = [];
+  [card.shadowRoot, global.document.body].forEach((root) =>
+    walk(root, (el) => {
+      if (el.className.split(" ").includes("ring")) found.push(el);
+    })
+  );
+  return found;
+}
+if (scenario.tapRing !== undefined) {
+  const ring = rings()[scenario.tapRing];
+  if (scenario.ringKey) press(ring, "keydown", { key: scenario.ringKey });
+  else press(ring, "click", {});
   await new Promise((resolve) => setImmediate(resolve));
 }
 if (scenario.back) {

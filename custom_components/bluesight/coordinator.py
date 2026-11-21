@@ -108,6 +108,11 @@ _STORE_KEY = f"{DOMAIN}.proxies"
 _STORE_VERSION = 1
 _STORE_SAVE_INTERVAL_S = 300
 
+#: Devices named in a proxy's timeline. Past that the popup is a wall of rows;
+#: the longest holders are the ones worth reading, and the answer says how many
+#: were left out.
+PROXY_TIMELINE_DEVICES = 12
+
 
 def _registry_devices(registry: dr.DeviceRegistry) -> list[dr.DeviceEntry]:
     """Every device entry, on either side of Home Assistant's registry change.
@@ -320,6 +325,43 @@ class BlueSightCoordinator(DataUpdateCoordinator[BlueSightData]):
                 for start, end, source in stays
             ],
             "truncated": bool(timeline and timeline.truncated),
+        }
+
+    def proxy_timeline(self, source: str) -> dict[str, object]:
+        """The devices that held a slot on one proxy, longest holders first.
+
+        The other way round from :meth:`device_timeline`, and asked for on demand
+        for the same reason. Capped at :data:`PROXY_TIMELINE_DEVICES` so that a
+        proxy a hundred sensors passed through does not answer with a hundred
+        rows nobody can read; ``omitted`` says how many were left out.
+        """
+        history = self._history
+        source = normalize_address(source)
+        data = self.data
+        names = data.proxy_display_names if data else {}
+        device_names = data.device_names if data else {}
+        timelines = history.proxy_timeline(source)
+
+        def held_s(timeline) -> float:
+            return sum(start - end for start, end, _ in timeline.stays)
+
+        ranked = sorted(timelines.items(), key=lambda item: (-held_s(item[1]), item[0]))
+        shown = ranked[:PROXY_TIMELINE_DEVICES]
+        return {
+            "source": source,
+            "name": names.get(source, source),
+            "window_s": history.window_s,
+            "observed_s": round(history.stays_observed_s(), 1),
+            "devices": [
+                {
+                    "address": address,
+                    "name": device_names.get(address, ""),
+                    "stays": [[round(start), round(end)] for start, end, _ in tl.stays],
+                    "truncated": tl.truncated,
+                }
+                for address, tl in shown
+            ],
+            "omitted": len(ranked) - len(shown),
         }
 
     @property

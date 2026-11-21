@@ -197,6 +197,10 @@ const EMBEDDED_EN = {
   "card.devices.less": "Show fewer",
   "card.detail.back": "Back",
   "card.detail.heading": "Which proxy held it",
+  "card.proxy_detail.heading": "Who held a slot",
+  "card.proxy_detail.empty": "No device held a slot on this proxy in this period.",
+  "card.proxy_detail.more.one": "and {count} more device",
+  "card.proxy_detail.more.other": "and {count} more devices",
   "card.detail.held_by": "held by {proxy}",
   "card.detail.connections.one": "connection",
   "card.detail.connections.other": "connections",
@@ -1113,7 +1117,9 @@ class BlueSightCard extends HTMLElement {
       panel.appendChild(bar);
       panel.focusTarget = button;
     }
-    panel.appendChild(this._buildDetail(row));
+    panel.appendChild(
+      row.kind === "proxy" ? this._buildProxyDetail(row) : this._buildDetail(row)
+    );
     return panel;
   }
 
@@ -1275,19 +1281,7 @@ class BlueSightCard extends HTMLElement {
     }
     host.appendChild(track);
 
-    const hours = Math.max(1, Math.round(windowS / 3600));
-    const axis = document.createElement("div");
-    axis.className = "detail-axis";
-    for (const text of [
-      this._t("card.detail.ago", { hours: String(hours) }),
-      `${Math.round(hours / 2)} h`,
-      this._t("card.detail.now"),
-    ]) {
-      const tick = document.createElement("span");
-      tick.textContent = text;
-      axis.appendChild(tick);
-    }
-    host.appendChild(axis);
+    host.appendChild(this._axisFor(windowS));
 
     const legend = document.createElement("div");
     legend.className = "detail-legend";
@@ -1304,6 +1298,176 @@ class BlueSightCard extends HTMLElement {
     host.appendChild(legend);
 
     if (data.truncated) {
+      const cut = document.createElement("div");
+      cut.className = "detail-note";
+      cut.textContent = this._t("card.detail.truncated");
+      host.appendChild(cut);
+    }
+  }
+
+  /** The time axis under a timeline: the start of the window, its middle, now. */
+  _axisFor(windowS) {
+    const hours = Math.max(1, Math.round(windowS / 3600));
+    const axis = document.createElement("div");
+    axis.className = "detail-axis";
+    for (const text of [
+      this._t("card.detail.ago", { hours: String(hours) }),
+      `${Math.round(hours / 2)} h`,
+      this._t("card.detail.now"),
+    ]) {
+      const tick = document.createElement("span");
+      tick.textContent = text;
+      axis.appendChild(tick);
+    }
+    return axis;
+  }
+
+  /**
+   * The detail of one proxy: how full it is, and which devices held a slot on
+   * it over the day. The other way round from a device's detail, and asked for
+   * in the same way and for the same reason.
+   */
+  _buildProxyDetail(row) {
+    const { label, source, facts } = row;
+    const body = document.createElement("div");
+    body.className = "detail-body";
+
+    const title = document.createElement("div");
+    title.className = "detail-title";
+    title.textContent = label;
+    body.appendChild(title);
+
+    const sub = document.createElement("div");
+    sub.className = "detail-sub";
+    const text = document.createElement("span");
+    const parts = [];
+    if (facts && !facts.offline) {
+      parts.push(
+        this._t(
+          "card.tile.slots",
+          { used: String(facts.used), total: String(facts.total) },
+          facts.total
+        )
+      );
+      if (facts.saturation !== null) {
+        parts.push(
+          this._t("card.ring.saturation", {
+            percent: String(Math.round(facts.saturation)),
+          })
+        );
+      }
+    } else {
+      parts.push(this._t("card.proxy.offline"));
+    }
+    text.textContent = parts.join(" · ");
+    sub.appendChild(text);
+    body.appendChild(sub);
+
+    const heading = document.createElement("div");
+    heading.className = "devices-heading";
+    heading.textContent = this._t("card.proxy_detail.heading");
+    body.appendChild(heading);
+
+    const list = document.createElement("div");
+    list.className = "detail-timeline";
+    body.appendChild(list);
+
+    this._detailToken = (this._detailToken || 0) + 1;
+    this._loadProxyTimeline(source, list, this._detailToken);
+    return body;
+  }
+
+  /** Ask the backend who held a slot on the proxy and draw it when it arrives. */
+  _loadProxyTimeline(source, host, token) {
+    const note = (key) => {
+      host.innerHTML = "";
+      const line = document.createElement("div");
+      line.className = "detail-note";
+      line.textContent = this._t(key);
+      host.appendChild(line);
+    };
+    note("card.detail.loading");
+    const hass = this._hass;
+    const call =
+      hass && typeof hass.callWS === "function"
+        ? hass.callWS({ type: "bluesight/proxy_timeline", source: String(source) })
+        : Promise.reject(new Error("no WebSocket"));
+    call
+      .then((data) => {
+        if (token !== this._detailToken) return;
+        this._drawProxyTimeline(host, data || {});
+      })
+      .catch(() => {
+        if (token !== this._detailToken) return;
+        note("card.detail.error");
+      });
+  }
+
+  /**
+   * One line per device that held a slot, longest holders first: its name, and
+   * a bar for the window with a segment for each stay. The bars share one axis,
+   * so two devices can be read against each other. A device with no name Home
+   * Assistant can give shows its address, which is what the rack falls back to.
+   */
+  _drawProxyTimeline(host, data) {
+    host.innerHTML = "";
+    const devices = Array.isArray(data.devices) ? data.devices : [];
+    if (!devices.length) {
+      const empty = document.createElement("div");
+      empty.className = "detail-note";
+      empty.textContent = this._t("card.proxy_detail.empty");
+      host.appendChild(empty);
+      return;
+    }
+    const windowS = Number(data.window_s) > 0 ? Number(data.window_s) : 86400;
+    const observed = Math.min(windowS, Number(data.observed_s) || windowS);
+
+    let truncated = false;
+    for (const device of devices) {
+      const line = document.createElement("div");
+      line.className = "proxy-dev";
+      const name = document.createElement("div");
+      name.className = "proxy-dev-name";
+      name.textContent = device.name || device.address || "?";
+      line.appendChild(name);
+
+      const track = document.createElement("div");
+      track.className = "detail-track proxy-dev-track";
+      if (observed < windowS) {
+        const unwatched = document.createElement("div");
+        unwatched.className = "detail-unobserved";
+        unwatched.style.left = "0%";
+        unwatched.style.width = `${(((windowS - observed) / windowS) * 100).toFixed(2)}%`;
+        unwatched.setAttribute("title", this._t("card.detail.unobserved"));
+        track.appendChild(unwatched);
+      }
+      for (const stay of Array.isArray(device.stays) ? device.stays : []) {
+        const [from, to] = stay.map(Number);
+        const seg = document.createElement("div");
+        seg.className = "detail-seg proxy-0";
+        seg.style.left = `${(((windowS - from) / windowS) * 100).toFixed(2)}%`;
+        seg.style.width = `${Math.max(0.6, ((from - to) / windowS) * 100).toFixed(2)}%`;
+        seg.setAttribute("title", this._formatAge(from - to) || "");
+        track.appendChild(seg);
+      }
+      line.appendChild(track);
+      host.appendChild(line);
+      if (device.truncated) truncated = true;
+    }
+    host.appendChild(this._axisFor(windowS));
+
+    const omitted = Number(data.omitted) || 0;
+    if (omitted > 0) {
+      const more = document.createElement("div");
+      more.className = "detail-note";
+      more.textContent = this._t(
+        "card.proxy_detail.more",
+        { count: String(omitted) },
+        omitted
+      );
+      host.appendChild(more);
+    }
+    if (truncated) {
       const cut = document.createElement("div");
       cut.className = "detail-note";
       cut.textContent = this._t("card.detail.truncated");
@@ -1688,6 +1852,24 @@ class BlueSightCard extends HTMLElement {
     cell.className = facts.offline ? "ring offline" : "ring";
 
     const name = facts.missing ? entityId : this._proxyName(stateObj, entityId);
+    // A tap opens who held a slot on this proxy. It needs the proxy's `source`,
+    // which is what the history is keyed by; a proxy that does not publish one
+    // is a plain ring. Offline proxies stay tappable: what they held before they
+    // dropped is the question an owner asks of one.
+    const source = facts.missing ? "" : String((stateObj.attributes || {}).source || "");
+    if (source) {
+      cell.setAttribute("role", "button");
+      cell.setAttribute("tabindex", "0");
+      const row = { kind: "proxy", label: name, source, facts };
+      const open = () => this._openDeviceDetail(row, cell);
+      cell.addEventListener("click", open);
+      cell.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          open();
+        }
+      });
+    }
     cell.appendChild(this._ringGauge(name, facts));
 
     const title = document.createElement("div");
@@ -2732,6 +2914,13 @@ class BlueSightCard extends HTMLElement {
       .ring.offline {
         opacity: 0.5;
       }
+      .ring[role="button"] {
+        cursor: pointer;
+      }
+      .ring[role="button"]:focus-visible {
+        outline: 2px solid var(--primary-color, #03a9f4);
+        outline-offset: 1px;
+      }
       .ring-gauge {
         display: block;
         width: 96px;
@@ -3038,6 +3227,19 @@ class BlueSightCard extends HTMLElement {
           var(--divider-color, #cfcfcf) calc(100% / 24 - 1px),
           var(--divider-color, #cfcfcf) calc(100% / 24)
         );
+      }
+      .detail-sub + .devices-heading {
+        margin-top: 16px;
+      }
+      .proxy-dev-name {
+        margin: 12px 0 4px;
+        font-size: 0.85rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .proxy-dev-track {
+        height: 12px;
       }
       .detail-seg {
         position: absolute;
