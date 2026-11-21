@@ -66,7 +66,7 @@ D'où un **composant ESPHome optionnel**, à poser sur des proxys que vous avez 
 
 ```yaml
 external_components:
-  - source: github://dasimon135/ha-bluesight@v0.11.0
+  - source: github://dasimon135/ha-bluesight@v0.12.0
     components: [bluesight]
 
 bluesight:
