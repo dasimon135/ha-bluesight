@@ -18,12 +18,19 @@ the device holding each one, and flags the three ways they go wrong.
 > proxy, a connection or a pairing, and it needs no firmware reflash — it
 > installs through HACS like any other integration.
 
-![The BlueSight card: four Bluetooth proxies, twelve connection slots, and the device holding each one](https://raw.githubusercontent.com/dasimon135/ha-bluesight/main/docs/images/card_en.png)
+![The BlueSight card in its rings layout: five Bluetooth proxies as rings of connection slots, coloured by how well each device is heard, then the devices as tiles](https://raw.githubusercontent.com/dasimon135/ha-bluesight/main/docs/images/card_en.png)
 
-*Four proxies, twelve slots, and what is actually in them — every held slot
-named by the device holding it, not by a MAC address. One proxy is full while
-two sit empty. "No incidents" is the normal reading: the card stays quiet until
-something is genuinely wrong.*
+*Five proxies, twelve slots. Each ring is a proxy and each segment a slot,
+coloured by how well the device holding it is heard; the grey arc is the share
+of the day the proxy had no free slot. Under the rings, the device that keeps
+changing proxy comes first, outlined in amber. "No incidents" is the normal
+reading: the card stays quiet until something is genuinely wrong. This is the
+`layout: rings` view with example names; the default view is a row per slot,
+described under [Dashboard](#dashboard).*
+
+Tap a device to see which proxy held it, hour by hour:
+
+![A device's detail: its signal, how many times it connected and changed proxy in 24 hours, and a bar showing which proxy held it](https://raw.githubusercontent.com/dasimon135/ha-bluesight/main/docs/images/card_detail_en.png)
 
 ## Will this be useful to me?
 
@@ -76,9 +83,10 @@ It surfaces the state as:
   incident list in its attributes.
 - **Persistent notifications** — a human-readable alert is raised (and cleared)
   as incidents open and resolve.
-- **A Lovelace card** — an optional custom card that draws each proxy's slots as
-  pips and shows a live incident feed, plus a zero-JavaScript native-card
-  fallback. See [Dashboard](#dashboard).
+- **A Lovelace card**: an optional custom card with three layouts (a row per
+  slot, a ring per proxy, or the whole fleet on one line), a live incident feed
+  and a per-device detail, plus a zero-JavaScript native-card fallback. See
+  [Dashboard](#dashboard).
 
 Everything is **read-only**. BlueSight never frees a slot, forces an unbond, or
 reflashes anything. It observes and reports.
@@ -351,7 +359,7 @@ device's connections over the day (`connection_history`).
 | `binary_sensor.<proxy>_online` | binary_sensor (`connectivity`) | `on` while the proxy is a registered scanner | — |
 | `sensor.<proxy>_last_device_seen` | sensor (`duration`, seconds) | seconds since that proxy last heard an advertisement; for an offline proxy, since it was last seen online, across restarts | `device_count`, `connectable`, `online` |
 | `sensor.<proxy>_saturation_24h` | sensor (`%`) | share of the last 24h that proxy spent with **no free slot** | `longest_saturated_s`, `episodes`, `observed_s`, `window_s`, `source` |
-| `sensor.bluesight_connections_24h` | sensor | slots taken across the fleet over the last 24h | `devices` (the 20 busiest: `{address, name, connections, proxy_changes, proxies}`), `observed_s`, `window_s` |
+| `sensor.bluesight_connections_24h` | sensor | slots taken across the fleet over the last 24h | `devices` (the 20 busiest: `{address, name, connections, proxy_changes, proxies, hourly}`, where `hourly` is 24 counts, oldest hour first), `observed_s`, `window_s` |
 | `binary_sensor.bluesight_incident` | binary_sensor (`problem`) | `on` when any incident is open | `incident_count`, `availability_degraded`, `incidents` (list of `{kind, address, device_name, sources, source_names, detail}`, where `device_name` is what Home Assistant calls the peripheral — `""` when it cannot name it — and `source_names` the proxies named the way the detail sentence names them; `kind` ∈ `deadlock` / `ghost_slot` / `storm` / `bond_lost` / `proxy_offline` / `proxy_stalled` / `proxy_reboot_storm`) |
 
 ### Saturation is measured, and only a Repair judges it
@@ -414,6 +422,12 @@ native fallback YAML — is in **[docs/card.md](docs/card.md)**.
 > day as a row of bars. Tap one to see which proxy held it, hour by hour. For a
 > fleet where the question is *what needs a look*, not *who holds slot two*. See [docs/card.md](docs/card.md#layout-rings-a-ring-per-proxy).
 
+> The device detail is not an entity: the card asks for it when you tap, over
+> a read-only WebSocket command, `bluesight/device_timeline`, because it changes
+> with every connection in the house and would otherwise be pushed to every open
+> dashboard. That is why the integration depends on `websocket_api`. Stays are
+> recorded from 0.11.0 on, so the timeline fills over the first 24 hours.
+
 > Since 0.4.0 the card ships **inside the integration**, so HACS delivers it
 > along with everything else and the integration serves and registers it
 > itself — no copying, no resource to declare. YAML-mode dashboards still
@@ -460,7 +474,8 @@ BlueSight is deliberately split into pure logic and a thin Home Assistant
 shell:
 
 - **Pure logic** (`model.py`, `detector.py`, `window.py`, `storm_signal.py`,
-  `availability.py`, `incident_policy.py`, `rendering.py`) takes plain snapshots
+  `availability.py`, `incident_policy.py`, `rendering.py`, `saturation.py`,
+  `history.py`, `path.py`) takes plain snapshots
   of proxy slot state plus the rolling event windows and returns incidents,
   and turns the keys and parameters those incidents carry into prose. It imports
   no Home Assistant code and is unit-tested on its own.
@@ -511,6 +526,12 @@ proxies.
   v1.5 sketch did **not** ship: connection-reject counts, which remain a possible
   addition, and BLE RAM, which is node health rather than connection-layer
   evidence and which ESPHome already exposes on its own.
+- **0.7.0 to 0.11.0: pressure, reach and reading (shipped).** The saturation
+  measurement (0.7), the one-line `tile` layout (0.8), incident
+  events and the retirement Repair (0.9), signal quality and reconnection
+  counts per device (0.10), and the `rings` layout with device tiles and a
+  per-device timeline (0.11). Release notes are on the
+  [releases page](https://github.com/dasimon135/ha-bluesight/releases).
 - **v2 — self-healing.** Guided, then automatic remediation: "free this slot" and
   guided re-pair, built on the proven v1 base.
 

@@ -357,8 +357,13 @@ If no proxies are found the card shows a helpful hint instead of failing.
 
 ### Screenshot
 
-> _Screenshot placeholder — add `docs/card.png` once the card has been rendered
-> in a browser and reference it here._
+The `layout: rings` view, with example names:
+
+![The rings layout](images/card_en.png)
+
+And the detail a tap on a device opens:
+
+![A device's detail](images/card_detail_en.png)
 
 ---
 
